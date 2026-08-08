@@ -3,6 +3,7 @@
 ## 未發布
 
 - 將影片庫身分綁定到使用者選定的 project-local workspace，避免 installed plugin 因同機另一個 INSU 服務或 port 衝突而跨專案沿用資料
+- 將 `$watch-video` 的第一個使用者可見動作改為啟動目前 workspace 首頁，並用 Codex 內建瀏覽器立即開啟
 
 ## v0.2.0 — 2026-08-09
 

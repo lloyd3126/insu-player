@@ -66,6 +66,32 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("Port 衝突不會改變 workspace 身分", workflow)
         self.assertIn("不要因對方已有 runtime、jobs 或正在運作就跨專案沿用", troubleshooting)
 
+    def test_watch_video_opens_the_homepage_before_setup_or_processing(self) -> None:
+        watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
+        workflow = (PLUGIN_ROOT / "skills" / "watch-video" / "references" / "workflow.md").read_text(encoding="utf-8")
+        manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        plugin_agent = (PLUGIN_ROOT / "skills" / "watch-video" / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        bridge_agent = (REPO_ROOT / ".agents" / "skills" / "watch-video" / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        library_agent = (PLUGIN_ROOT / "skills" / "video-library" / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        library_bridge_agent = (
+            REPO_ROOT / ".agents" / "skills" / "video-library" / "agents" / "openai.yaml"
+        ).read_text(encoding="utf-8")
+        start_here = (REPO_ROOT / "START-HERE.md").read_text(encoding="utf-8")
+
+        self.assertIn("first user-visible product action opening", watch_skill)
+        self.assertLess(
+            watch_skill.index("first user-visible product action opening"),
+            watch_skill.index("Run `scripts/portable/doctor.sh`"),
+        )
+        self.assertIn("## 階段 1：先開啟目前 Workspace 的首頁", workflow)
+        self.assertLess(workflow.index("## 階段 1："), workflow.index("## 階段 3：從零盤點環境"))
+        self.assertIn("Codex 內建瀏覽器", manifest["interface"]["defaultPrompt"])
+        self.assertIn("First open this project's INSU Player homepage", plugin_agent)
+        self.assertEqual(plugin_agent, bridge_agent)
+        self.assertIn("First open this project's INSU Player homepage", library_agent)
+        self.assertEqual(library_agent, library_bridge_agent)
+        self.assertIn("第一個動作先啟動 INSU Player 首頁", start_here)
+
     def test_static_page_titles_and_headings_do_not_use_punctuation(self) -> None:
         assets = [
             PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "index.html",

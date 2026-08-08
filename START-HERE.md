@@ -2,7 +2,7 @@
 
 用 Codex 開啟整個解壓縮後的 `insu-player-vVERSION` 資料夾，然後貼上：
 
-> 請使用 $watch-video，先執行 INSU Player 環境檢查。所有工具、模型、cache、影片與字幕都必須留在這個資料夾。說明本機與 OpenAI API 轉錄的差異後，把這支影片加入影片庫：VIDEO_URL
+> 請使用 $watch-video，第一個動作先啟動 INSU Player 首頁並用 Codex 內建瀏覽器開啟，保持首頁開啟後再執行環境檢查。所有工具、模型、cache、影片與字幕都必須留在這個資料夾。說明本機與 OpenAI API 轉錄的差異後，把這支影片加入影片庫：VIDEO_URL
 
 預設工作區是：
 
@@ -13,15 +13,15 @@
 常用指令：
 
 ```bash
+scripts/portable/serve.sh 8000
 scripts/portable/doctor.sh
 scripts/portable/setup.sh --provider local --model medium
-scripts/portable/serve.sh 8000
 scripts/portable/add-video.sh 'VIDEO_URL'
 scripts/portable/update.sh
 scripts/portable/uninstall.sh
 ```
 
-首次本機安裝需要網路、時間與數 GB 空間。API 模式會上傳音訊且可能收費，沒有使用者本次明確同意就不要執行。完成後請用 Codex 內建瀏覽器開啟 `http://127.0.0.1:8000/`。
+第一個動作先用 Codex 內建瀏覽器開啟 `http://127.0.0.1:8000/`，不要等安裝或影片處理完成才開啟。首次本機安裝需要網路、時間與數 GB 空間。API 模式會上傳音訊且可能收費，沒有使用者本次明確同意就不要執行。
 
 首頁的「開始使用」提供 YouTube 對話範例；「支援網站」會讀取 workspace 內 yt-dlp 的實際支援清單；「模型列表」可確認本機模型大小、API SDK 與 API Key 設定狀態；「影片列表」則集中顯示處理進度與播放器。
 

@@ -2,7 +2,7 @@
 
 > 用 Agent，讓影片跨越語言。
 
-INSU Player 是為 Agent 設計的本機字幕影片庫。把想看的影片網址交給 `$watch-video`，Agent 會準備好影片與字幕後，放進 INSU 讓你觀看。
+INSU Player 是為 Agent 設計的本機字幕影片庫。把想看的影片網址交給 `$watch-video`，Agent 會先用 Codex 內建瀏覽器開啟首頁，再準備影片與字幕，讓你從同一頁持續查看與觀看。
 
 首頁集中提供開始使用、進階使用、支援網站、介面設定、環境變數、模型列表與影片列表。觀看時不必離開首頁，每支影片都會在頁面內開啟，處理狀態與播放進度也會持續保留。
 
@@ -14,7 +14,7 @@ INSU Player 是為 Agent 設計的本機字幕影片庫。把想看的影片網�
 2. 解壓縮後，用 Codex 開啟整個資料夾。
 3. 對 Codex 說：
 
-> 請使用 $watch-video，檢查這個 INSU Player 工作區，說明本機與 API 轉錄的差異，然後把這支影片加入影片庫：VIDEO_URL
+> 請使用 $watch-video，先啟動這個工作區的 INSU Player 首頁並用 Codex 內建瀏覽器開啟。保持首頁開啟，接著檢查環境、說明本機與 API 轉錄的差異，然後把這支影片加入影片庫：VIDEO_URL
 
 Codex 會從 `.agents/skills/` 發現技能。工具、模型、cache、影片、字幕、log 與播放進度都留在 `.local/insu-player/`；不需要 `sudo`、Homebrew、全域 pip 或全域 npm。
 
@@ -47,7 +47,7 @@ codex plugin add insu-player@insu-player
 
 | Skill | 用途 |
 | --- | --- |
-| `$watch-video` | 主要入口：新增影片、取得字幕、轉錄、翻譯並開啟影片庫 |
+| `$watch-video` | 主要入口：先開啟首頁，再新增影片、取得字幕、轉錄與翻譯 |
 | `$video-library` | 啟動、檢查、修復與整理既有影片庫 |
 | `$transcribe-media` | 將本機音訊或影片輸出為 JSON、TXT、WebVTT |
 | `$translate-subtitles` | 保留 cue 與時間戳，翻譯為繁體中文並匯入 |
@@ -62,10 +62,13 @@ codex plugin add insu-player@insu-player
 手動入口：
 
 ```bash
-scripts/portable/setup.sh --provider local --model medium
 scripts/portable/serve.sh 8000
+scripts/portable/doctor.sh
+scripts/portable/setup.sh --provider local --model medium
 scripts/portable/add-video.sh 'VIDEO_URL'
 ```
+
+第一步在獨立 terminal／Agent 執行 session 啟動服務並保持運作，立即請 Codex 用內建瀏覽器開啟 `http://127.0.0.1:8000/`。Doctor、安裝與加入影片指令在另一個 session 執行。
 
 API 模式：
 
@@ -76,8 +79,6 @@ scripts/portable/add-video.sh 'VIDEO_URL' --provider openai --allow-api-upload
 ```
 
 也可以先啟動首頁，從 navbar 的「環境變數」把 `OPENAI_API_KEY` 套用到本次本機服務。它不會寫入 `.env` 或其他檔案，停止或重新啟動服務後即清除。無論金鑰從哪裡提供，API 上傳仍必須由 Agent 取得本次明確同意並使用 `--allow-api-upload`。
-
-開啟 `http://127.0.0.1:8000/`，或請 Codex 用內建瀏覽器開啟。
 
 ## 更新與完整移除
 

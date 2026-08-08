@@ -10,12 +10,13 @@ Keep the user on one workspace-scoped localhost library homepage while Codex man
 ## Start Safely
 
 1. Read [references/workflow.md](references/workflow.md) for a first installation, interrupted job, cleanup, or unfamiliar request. Read [references/troubleshooting.md](references/troubleshooting.md) when a check fails.
-2. Confirm that the user has the right to download and process the requested media. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
-3. Resolve and state the workspace before inspecting localhost services or processes. Use the repository-local `.local/insu-player/` for a portable release. For a developer checkout or installed plugin, use the project-local workspace supplied by the user; when none was supplied, default to `<current-project-root>/.local/insu-player/`.
-4. Treat the resolved workspace path as the library identity. Never search outside the current project for a fuller or already-running INSU workspace, and never adopt one merely because it has jobs, a completed runtime, or a server on the default port. Only cross that boundary when the user explicitly selects the other workspace.
-5. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill.
-6. Port `8000` is a default for the selected workspace, not a machine-wide library identity. Reuse a running server only when the selected workspace's `.insu-player-server.pid` and `.insu-environment-session.json` belong to that live process. If another workspace occupies the port, leave it untouched and start the selected workspace on another port such as `8010`.
-7. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
+2. Resolve and state the workspace before inspecting localhost services or processes. Use the repository-local `.local/insu-player/` for a portable release. For a developer checkout or installed plugin, use the project-local workspace supplied by the user; when none was supplied, default to `<current-project-root>/.local/insu-player/`.
+3. Treat the resolved workspace path as the library identity. Never search outside the current project for a fuller or already-running INSU workspace, and never adopt one merely because it has jobs, a completed runtime, or a server on the default port. Only cross that boundary when the user explicitly selects the other workspace.
+4. Port `8000` is a default for the selected workspace, not a machine-wide library identity. Reuse a running server only when the selected workspace's `.insu-player-server.pid` and `.insu-environment-session.json` belong to that live process. If another workspace occupies the port, leave it untouched and start the selected workspace on another port such as `8010`.
+5. Make the first user-visible product action opening the selected workspace homepage in the Codex in-app browser. Start or reuse its server, open the actual localhost URL instead of merely printing it, and keep the page open before running doctor, setup, media inspection, download, transcription, or translation. If the in-app browser is unavailable, report the exact URL immediately. If Python 3 is unavailable and the server cannot start, report that blocker, install only through the workspace setup flow, and open the homepage as soon as its Python exists.
+6. Confirm that the user has the right to download and process the requested media. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
+7. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill while the homepage remains open.
+8. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
 
 ## Choose a Provider
 
@@ -41,6 +42,8 @@ Do not use sudo, Homebrew, apt, a global pip, or a global npm install. The setup
 scripts/portable/serve.sh 8000
 scripts/portable/add-video.sh 'https://www.youtube.com/watch?v=VIDEO_ID'
 ~~~
+
+Start the server and open its homepage in the Codex in-app browser before the setup or add-video commands. The server can use system Python 3 for the initial empty homepage while the workflow-local runtime is still absent. Keep the same page open so setup and job state appear there as they become available.
 
 For explicit OpenAI transcription:
 

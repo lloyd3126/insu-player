@@ -85,6 +85,7 @@ http://127.0.0.1:8000/
 - 不搜尋目前專案之外的 INSU workspace，也不因另一個 workspace 已完成安裝、有影片或正在背景執行而改用它。只有使用者明確指定時才能跨越專案邊界。
 - 只有選定 workspace 內的 `.insu-player-server.pid` 與 `.insu-environment-session.json` 能證明服務屬於該 workspace。單看 localhost port、程序名稱或其他專案的 PID 不足以沿用服務。
 - Port 衝突不會改變 workspace 身分。若 `8000` 已由另一個 workspace 使用，保留兩邊資料與程序，改以 `8010` 或其他可用 localhost port 啟動目前 workspace，並回報實際首頁網址。
+- Workspace 解析完成後，第一個使用者可見動作是啟動或沿用該 workspace 的服務，並用 Codex 內建瀏覽器開啟實際首頁。不要等 doctor、安裝、下載或字幕處理完成才開啟，也不要只把 URL 印在回覆中。
 
 主要狀態：
 
@@ -116,7 +117,27 @@ http://127.0.0.1:8000/
 
 Agent 先讀根目錄 `AGENTS.md` 與本文件。
 
-## 階段 1：確認權利與需求
+## 階段 1：先開啟目前 Workspace 的首頁
+
+解析並回報本次選定的 workspace 絕對路徑後，立即啟動首頁：
+
+```bash
+plugins/insu-player/skills/watch-video/scripts/serve-library.sh \
+  .local/insu-player \
+  8000
+```
+
+讓 `serve-library.sh` 在獨立 terminal／執行 session 持續運作，再用 Codex 內建瀏覽器開啟 <http://127.0.0.1:8000/>，而不是只在訊息中提供網址。這是第一個使用者可見的產品動作；首頁保持開啟，後續 doctor、安裝與 job 狀態會在同一頁逐步更新。
+
+若 `8000` 已由另一個 workspace 占用，不要改用、檢查或停止該服務；以 `8010` 等其他可用 port 重跑目前 workspace 的 `serve-library.sh`，再用內建瀏覽器開啟實際網址。`serve-library.sh` 在 workflow runtime 尚未安裝時可先使用系統 Python 3 顯示空白首頁。若系統沒有 Python 3，先明確回報這個例外阻塞，再執行 workspace 內的安裝流程，workflow Python 一可用就立刻開啟首頁。
+
+Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產、job JSON、唯讀提示 JSON、模型安裝摘要 JSON、環境變數遮罩狀態與同源工作階段寫入、log 尾端、標準化 MP4、縮圖、VTT、player，以及只寫 `ui-state.json` 的播放進度端點。模型摘要只包含名稱、實際大小、provider 狀態與 API Key 是否已設定，不包含 Key、路徑或檔案內容。環境變數的原值不會從公開端點讀回，Agent 的轉錄子程序只能透過服務啟動時建立的短期 capability 取得，而且仍須先有本次 API 上傳同意。它不提供任意目錄瀏覽，也不會公開 `.agent-tools` 或模型。
+
+影片 endpoint 支援 HTTP Range，拖曳時不需重新傳送整支影片。播放器與首頁同源，因此 iframe 能安全交換 ready、播放時間、暫停與接續播放訊息。
+
+關閉 server：回到 terminal 按 `Ctrl+C`。它是前景程序，不安裝背景 daemon 或開機自動啟動。
+
+## 階段 2：確認權利與需求
 
 下載前確認：
 
@@ -128,7 +149,7 @@ Agent 先讀根目錄 `AGENTS.md` 與本文件。
 
 如果只要現成字幕，Agent 應先檢查字幕來源，不必立刻下載 Whisper 模型或影片。
 
-## 階段 2：從零盤點環境
+## 階段 3：從零盤點環境
 
 ```bash
 plugins/insu-player/skills/watch-video/scripts/doctor.sh .local/insu-player
@@ -138,7 +159,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh .local/insu-player
 
 若缺 `curl` 或 `unzip`，停止並說明；這版不會呼叫套件管理器或 `sudo`。Release 的支援環境預期已有作業系統基礎的 HTTPS 下載與 ZIP 解壓能力。
 
-## 階段 3：隔離安裝
+## 階段 4：隔離安裝
 
 ```bash
 plugins/insu-player/skills/watch-video/scripts/setup-environment.sh \
@@ -161,20 +182,6 @@ Deno 不是拿來開網頁伺服器；它提供部分 yt-dlp extractors 所需�
 腳本不修改 shell profile、不取代系統 Python、不把工具加入全域 `PATH`，也不使用 Homebrew、APT、DNF 或 Pacman。執行時把 `HOME`、`TMPDIR`、`UV_*`、完整 XDG config/data/state/cache、`TORCH_HOME`、`TIKTOKEN_CACHE_DIR`、`HF_HOME`、Python bytecode、Deno 與 yt-dlp cache 全部改到 runtime；yt-dlp 加上 `--ignore-config`，不讀使用者全域設定。低資源環境可用 `--model small`；API-only 使用 `--provider openai`，不會安裝 Whisper 或下載模型。
 
 安裝後再次執行 doctor，必須看到 `status: ready`。
-
-## 階段 4：啟動固定首頁
-
-```bash
-plugins/insu-player/skills/watch-video/scripts/serve-library.sh \
-  .local/insu-player \
-  8000
-```
-
-開啟 <http://127.0.0.1:8000/>。若這個 port 已由另一個 workspace 占用，不要改用、檢查或停止該服務；以 `8010` 等其他可用 port 重跑目前 workspace 的 `serve-library.sh`，再開啟實際網址。Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產、job JSON、唯讀提示 JSON、模型安裝摘要 JSON、環境變數遮罩狀態與同源工作階段寫入、log 尾端、標準化 MP4、縮圖、VTT、player，以及只寫 `ui-state.json` 的播放進度端點。模型摘要只包含名稱、實際大小、provider 狀態與 API Key 是否已設定，不包含 Key、路徑或檔案內容。環境變數的原值不會從公開端點讀回，Agent 的轉錄子程序只能透過服務啟動時建立的短期 capability 取得，而且仍須先有本次 API 上傳同意。它不提供任意目錄瀏覽，也不會公開 `.agent-tools` 或模型。
-
-影片 endpoint 支援 HTTP Range，拖曳時不需重新傳送整支影片。播放器與首頁同源，因此 iframe 能安全交換 ready、播放時間、暫停與接續播放訊息。
-
-關閉 server：回到 terminal 按 `Ctrl+C`。它是前景程序，不安裝背景 daemon 或開機自動啟動。
 
 ## 階段 5：處理一支新影片
 
@@ -302,10 +309,11 @@ plugins/insu-player/skills/watch-video/scripts/import-caption.sh \
 環境與 server 只需設定一次。之後每次：
 
 1. 使用者把 yt-dlp 支援的 URL 交給 Agent；未知來源則請 Agent 先研究支援方式。
-2. Agent 執行 `process-video.sh`；首頁自動多一列。
-3. 使用者可以繼續留在首頁，從 navbar 開啟影片列表查看下載／轉錄進度或觀看既有影片。
-4. 待翻譯時 Agent 產生繁中 VTT 並匯入；該列自動變成完成。
-5. 磁碟累積後只清理已完成 job 的中間檔，保留首頁播放需要的檔案。
+2. Agent 先確認目前 workspace 的首頁已用 Codex 內建瀏覽器開啟，沒有開啟就先開啟。
+3. Agent 執行 `process-video.sh`；首頁自動多一列。
+4. 使用者可以繼續留在首頁，從 navbar 開啟影片列表查看下載／轉錄進度或觀看既有影片。
+5. 待翻譯時 Agent 產生繁中 VTT 並匯入；該列自動變成完成。
+6. 磁碟累積後只清理已完成 job 的中間檔，保留首頁播放需要的檔案。
 
 不需要重裝 Python、重下模型、重建 HTML、重開每支影片的 server，也不需要離開首頁找不同 player 目錄。
 
@@ -399,7 +407,7 @@ plugins/insu-player/skills/watch-video/scripts/uninstall.sh \
 
 首次：
 
-> 依照 `$watch-video` 建立本機影片庫。先跑 doctor，列出會安裝的位置、空間與系統影響；取得我同意後完成安裝、啟動固定首頁，再處理這支影片。
+> 依照 `$watch-video` 建立本機影片庫。先啟動目前 workspace 的首頁並用 Codex 內建瀏覽器開啟，保持首頁開啟後再跑 doctor，列出會安裝的位置、空間與系統影響；取得我同意後完成安裝並處理這支影片。
 
 日常：
 

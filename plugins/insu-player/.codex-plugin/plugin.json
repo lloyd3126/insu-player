@@ -19,7 +19,7 @@
       "\u540c\u6e90\u64ad\u653e\u5668\u8207\u7e8c\u64ad\u9032\u5ea6",
       "\u5b89\u5168\u66f4\u65b0\u8207\u5b8c\u6574\u79fb\u9664"
     ],
-    "defaultPrompt": "\u4f7f\u7528 $watch-video \u628a\u5f71\u7247\u52a0\u5165 INSU Player\uff0c\u5b8c\u6210\u5f8c\u958b\u555f\u672c\u6a5f\u5f71\u7247\u5eab\u3002",
+    "defaultPrompt": "\u4f7f\u7528 $watch-video\u3002\u5148\u555f\u52d5\u76ee\u524d\u5c08\u6848\u7684 INSU Player \u9996\u9801\u4e26\u7528 Codex \u5167\u5efa\u700f\u89bd\u5668\u958b\u555f\uff0c\u518d\u628a\u5f71\u7247\u52a0\u5165\u5f71\u7247\u5eab\u3002",
     "brandColor": "#8B7CF6",
     "composerIcon": "./skills/watch-video/assets/library/taiwan-whistling-thrush.png",
     "logo": "./skills/watch-video/assets/library/taiwan-whistling-thrush.png",
