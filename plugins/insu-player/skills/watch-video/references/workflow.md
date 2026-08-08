@@ -2,7 +2,7 @@
 
 ## 最終體驗
 
-這個 skill 把 yt-dlp 目前版本可辨識的單支線上影片收進一個持續使用的本機影片庫。YouTube 是首頁與文件的預設範例，不是唯一支援來源。日常入口不是每支影片各自的 HTML，而是固定首頁：
+這個 skill 把 yt-dlp 目前版本可辨識的單支線上影片收進一個持續使用的本機影片庫。YouTube 是首頁與文件的預設範例，不是唯一支援來源。日常入口不是每支影片各自的 HTML，而是目前 workspace 的固定首頁，預設網址是：
 
 ```text
 http://127.0.0.1:8000/
@@ -11,6 +11,8 @@ http://127.0.0.1:8000/
 首頁是全高入口頁。主視覺與 navbar 的「開始使用」會開啟同一個 YouTube 操作範例。「進階使用」提供可複製的內建情境與「我的提示」，「支援網站」列出 workflow-local yt-dlp 的實際支援清單，「介面設定」可即時更換主色與全頁字體，「環境變數」管理本次服務的白名單變數。「模型列表」會顯示 workspace 實際下載的本機 Whisper 模型、實際檔案大小、API SDK 安裝狀態與 API Key 是否已設定，「影片列表」則以 modal 顯示所有影片的下載、轉錄、翻譯與完成狀態、進度、字幕、容量及最近 log。從列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影片列表，背景任務與狀態輪詢不會中斷。
 
 首頁除了保存播放位置外是唯讀控制台。新增、重試、翻譯、取消、清理與刪除仍由 Agent 或明確的腳本命令執行，避免在瀏覽器誤觸資料變更。
+
+`8000` 只是單一 workspace 的預設 port，不代表這台電腦只能有一個 INSU Player。不同專案可以同時使用不同 workspace 與 port。
 
 ## 目的與成功條件
 
@@ -74,6 +76,15 @@ http://127.0.0.1:8000/
 `status.json` 記錄標題、來源、目前 state/stage、0–100 進度、程序 PID、錯誤、產物、字幕來源與最多 120 筆歷程。寫入採暫存檔加 atomic replace，避免首頁在更新中讀到半份 JSON。
 
 「進階使用」modal 提供內建情境與可直接複製的提示；「我的提示」由 Agent 依 [prompt-library.md](prompt-library.md) 使用專用腳本新增或修改。首頁只提供 `GET /api/prompts`，不允許使用者在瀏覽器直接編輯 workspace。「環境變數」modal 只接受程式白名單中的變數，目前為 `OPENAI_API_KEY`。值只存在本機服務程序，公開 API 只回傳是否已設定，停止服務後即消失。
+
+## Workspace 與服務邊界
+
+- Plugin 安裝只共用 skill 程式碼，不會建立全機共用的影片庫。每個專案的 runtime、jobs、字幕與播放進度都留在該專案選定的 workspace。
+- Portable 模式使用該 repository 的 `.local/insu-player/`。Developer checkout 或 installed plugin 優先使用者明確指定的 project-local workspace；未指定時才使用 `<目前專案根目錄>/.local/insu-player/`。
+- 在執行 doctor、setup、serve 或 process 前先解析一次 workspace 的絕對路徑，回報給使用者，後續每一步固定使用同一路徑。
+- 不搜尋目前專案之外的 INSU workspace，也不因另一個 workspace 已完成安裝、有影片或正在背景執行而改用它。只有使用者明確指定時才能跨越專案邊界。
+- 只有選定 workspace 內的 `.insu-player-server.pid` 與 `.insu-environment-session.json` 能證明服務屬於該 workspace。單看 localhost port、程序名稱或其他專案的 PID 不足以沿用服務。
+- Port 衝突不會改變 workspace 身分。若 `8000` 已由另一個 workspace 使用，保留兩邊資料與程序，改以 `8010` 或其他可用 localhost port 啟動目前 workspace，並回報實際首頁網址。
 
 主要狀態：
 
@@ -159,7 +170,7 @@ plugins/insu-player/skills/watch-video/scripts/serve-library.sh \
   8000
 ```
 
-開啟 <http://127.0.0.1:8000/>。Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產、job JSON、唯讀提示 JSON、模型安裝摘要 JSON、環境變數遮罩狀態與同源工作階段寫入、log 尾端、標準化 MP4、縮圖、VTT、player，以及只寫 `ui-state.json` 的播放進度端點。模型摘要只包含名稱、實際大小、provider 狀態與 API Key 是否已設定，不包含 Key、路徑或檔案內容。環境變數的原值不會從公開端點讀回，Agent 的轉錄子程序只能透過服務啟動時建立的短期 capability 取得，而且仍須先有本次 API 上傳同意。它不提供任意目錄瀏覽，也不會公開 `.agent-tools` 或模型。
+開啟 <http://127.0.0.1:8000/>。若這個 port 已由另一個 workspace 占用，不要改用、檢查或停止該服務；以 `8010` 等其他可用 port 重跑目前 workspace 的 `serve-library.sh`，再開啟實際網址。Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產、job JSON、唯讀提示 JSON、模型安裝摘要 JSON、環境變數遮罩狀態與同源工作階段寫入、log 尾端、標準化 MP4、縮圖、VTT、player，以及只寫 `ui-state.json` 的播放進度端點。模型摘要只包含名稱、實際大小、provider 狀態與 API Key 是否已設定，不包含 Key、路徑或檔案內容。環境變數的原值不會從公開端點讀回，Agent 的轉錄子程序只能透過服務啟動時建立的短期 capability 取得，而且仍須先有本次 API 上傳同意。它不提供任意目錄瀏覽，也不會公開 `.agent-tools` 或模型。
 
 影片 endpoint 支援 HTTP Range，拖曳時不需重新傳送整支影片。播放器與首頁同源，因此 iframe 能安全交換 ready、播放時間、暫停與接續播放訊息。
 

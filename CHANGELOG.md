@@ -1,5 +1,9 @@
 # 版本紀錄
 
+## 未發布
+
+- 將影片庫身分綁定到使用者選定的 project-local workspace，避免 installed plugin 因同機另一個 INSU 服務或 port 衝突而跨專案沿用資料
+
 ## v0.2.0 — 2026-08-09
 
 - 將 plugin ID、marketplace、Release 檔名、workspace 與 runtime 路徑統一為 `insu-player`

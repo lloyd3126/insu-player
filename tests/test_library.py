@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -222,6 +224,37 @@ class LibraryApplicationTests(unittest.TestCase):
             self.assertNotIn("OPENAI_API_KEY", descriptor_path.read_text(encoding="utf-8"))
             application.remove_session_descriptor()
             self.assertFalse(descriptor_path.exists())
+
+    def test_port_conflict_keeps_the_selected_workspace_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, socket.socket() as occupied_port:
+            workspace = Path(temporary) / "selected-workspace"
+            occupied_port.bind(("127.0.0.1", 0))
+            occupied_port.listen()
+            port = occupied_port.getsockname()[1]
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "library_server.py"),
+                    "--workspace",
+                    str(workspace),
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--pid-file",
+                    str(workspace / ".insu-player-server.pid"),
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"port {port} is already in use", result.stdout)
+            self.assertIn(str(workspace.resolve()), result.stdout)
+            self.assertIn("do not reuse another workspace", result.stdout)
 
     def test_environment_rejects_unlisted_names_and_control_characters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

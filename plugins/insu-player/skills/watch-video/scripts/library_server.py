@@ -873,7 +873,7 @@ def main() -> int:
             except (OSError, ValueError):
                 existing_pid = 0
             if process_is_alive(existing_pid):
-                raise SystemExit(f"library server is already running with pid {existing_pid}")
+                raise SystemExit(f"library server for this workspace is already running with pid {existing_pid}")
     for required in (
         args.library_template / "index.html",
         args.library_template / "library.css",
@@ -888,7 +888,15 @@ def main() -> int:
     (args.workspace / "jobs").mkdir(exist_ok=True)
     application = LibraryApplication(args.workspace, args.library_template, args.player_template)
     LibraryRequestHandler.application = application
-    server = ThreadingHTTPServer((args.host, args.port), LibraryRequestHandler)
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), LibraryRequestHandler)
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            raise SystemExit(
+                f"port {args.port} is already in use; keep the selected workspace {workspace} "
+                "and retry with another port such as 8010; do not reuse another workspace"
+            ) from error
+        raise
     server.daemon_threads = True
     application.write_session_descriptor(args.host, args.port)
 

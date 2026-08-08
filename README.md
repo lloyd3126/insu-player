@@ -25,7 +25,7 @@ codex plugin marketplace add https://github.com/lloyd3126/insu-player.git
 codex plugin add insu-player@insu-player
 ```
 
-重新開啟 Codex task 後即可使用 `$watch-video`。Plugin 本身由 Codex 管理；每個影片庫的 runtime 與資料仍安裝到你指定專案的 `.local/insu-player/`。
+重新開啟 Codex task 後即可使用 `$watch-video`。Plugin 本身由 Codex 管理；每個影片庫的 runtime 與資料仍安裝到你指定專案的 `.local/insu-player/`。Plugin 不會把同一台電腦上的其他 INSU workspace 當成全機共用影片庫；即使另一個專案已在 `8000` 運作，目前專案仍沿用自己的 workspace，並改用 `8010` 等其他 localhost port。
 
 產品名稱、plugin ID、marketplace、Release 檔名與 workspace 路徑統一使用 `insu-player`。
 

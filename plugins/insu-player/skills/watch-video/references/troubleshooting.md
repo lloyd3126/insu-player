@@ -105,13 +105,15 @@ CPU 可能較慢，但通常比反覆 crash 更可預期。
 
 ## Port 已被占用
 
+先保留本次已選定的 workspace。Port 被占用不表示應改用該 port 背後的服務或 workspace；不要因對方已有 runtime、jobs 或正在運作就跨專案沿用。
+
 改用其他 port，例如：
 
 ```bash
 serve-library.sh <workspace> 8010
 ```
 
-如果上一個 server 還在執行，先回到其 terminal 按 `Ctrl+C`；不要任意終止不確定來源的程序。
+只有當 `.insu-player-server.pid` 與 `.insu-environment-session.json` 都位於本次選定的 workspace，才能把既有程序視為同一個影片庫。若是另一個 workspace 的 server，讓它繼續運作並使用不同 port。只有確定是本次 workspace 的上一個 server 時，才回到其 terminal 按 `Ctrl+C`；不要任意終止不確定來源的程序。
 
 ## 首頁沒有出現新影片
 

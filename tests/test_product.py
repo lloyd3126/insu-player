@@ -52,6 +52,20 @@ class ProductBoundaryTests(unittest.TestCase):
         legacy_repository = "lloyd3126/" + "xe" + "ruca-player"
         self.assertNotIn(legacy_repository, readme + manager)
 
+    def test_plugin_workspaces_stay_isolated_across_projects(self) -> None:
+        watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
+        library_skill = (PLUGIN_ROOT / "skills" / "video-library" / "SKILL.md").read_text(encoding="utf-8")
+        workflow = (PLUGIN_ROOT / "skills" / "watch-video" / "references" / "workflow.md").read_text(encoding="utf-8")
+        troubleshooting = (
+            PLUGIN_ROOT / "skills" / "watch-video" / "references" / "troubleshooting.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Treat the resolved workspace path as the library identity", watch_skill)
+        self.assertIn("Never search outside the current project", watch_skill)
+        self.assertIn("Never adopt another INSU workspace outside the current project", library_skill)
+        self.assertIn("Port 衝突不會改變 workspace 身分", workflow)
+        self.assertIn("不要因對方已有 runtime、jobs 或正在運作就跨專案沿用", troubleshooting)
+
     def test_static_page_titles_and_headings_do_not_use_punctuation(self) -> None:
         assets = [
             PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "index.html",

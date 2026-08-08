@@ -5,15 +5,17 @@ description: Add an authorized online video to INSU Player and keep the user on 
 
 # INSU Player: Watch Video
 
-Keep the user on one localhost library homepage while Codex manages downloads, captions, transcription, translation, recovery, and cleanup through deterministic scripts.
+Keep the user on one workspace-scoped localhost library homepage while Codex manages downloads, captions, transcription, translation, recovery, and cleanup through deterministic scripts.
 
 ## Start Safely
 
 1. Read [references/workflow.md](references/workflow.md) for a first installation, interrupted job, cleanup, or unfamiliar request. Read [references/troubleshooting.md](references/troubleshooting.md) when a check fails.
 2. Confirm that the user has the right to download and process the requested media. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
-3. Use the repository-local workspace `.local/insu-player/` for a portable release. For a developer checkout or installed plugin, use a dedicated project-local workspace supplied by the user.
-4. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill.
-5. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
+3. Resolve and state the workspace before inspecting localhost services or processes. Use the repository-local `.local/insu-player/` for a portable release. For a developer checkout or installed plugin, use the project-local workspace supplied by the user; when none was supplied, default to `<current-project-root>/.local/insu-player/`.
+4. Treat the resolved workspace path as the library identity. Never search outside the current project for a fuller or already-running INSU workspace, and never adopt one merely because it has jobs, a completed runtime, or a server on the default port. Only cross that boundary when the user explicitly selects the other workspace.
+5. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill.
+6. Port `8000` is a default for the selected workspace, not a machine-wide library identity. Reuse a running server only when the selected workspace's `.insu-player-server.pid` and `.insu-environment-session.json` belong to that live process. If another workspace occupies the port, leave it untouched and start the selected workspace on another port such as `8010`.
+7. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
 
 ## Choose a Provider
 
@@ -51,7 +53,7 @@ When the library server is already running, the user may instead enter `OPENAI_A
 
 Never add "--allow-api-upload" merely because an API key exists. It records that the user authorized this upload.
 
-The homepage is "http://127.0.0.1:8000/". It is a read-mostly status surface: downloads, transcription, translation, failures, logs, provider metadata, storage, captions, and playback progress remain visible. Watching opens a same-origin iframe modal so the user does not leave the library.
+The homepage defaults to "http://127.0.0.1:8000/" and uses the actual selected port when a conflict requires another one. It is a read-mostly status surface: downloads, transcription, translation, failures, logs, provider metadata, storage, captions, and playback progress remain visible. Watching opens a same-origin iframe modal so the user does not leave the library.
 
 ## Translation
 
