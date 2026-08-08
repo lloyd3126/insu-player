@@ -1,7 +1,7 @@
 .DS_Store
 .local/
 .agent-tools/
-.xeruca-player-server.pid
+.insu-player-server.pid
 dist/
 __pycache__/
 *.py[cod]

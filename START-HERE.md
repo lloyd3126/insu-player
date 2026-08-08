@@ -1,20 +1,20 @@
 # 從這裡開始
 
-用 Codex 開啟整個解壓縮後的 `xeruca-player-vVERSION` 資料夾，然後貼上：
+用 Codex 開啟整個解壓縮後的 `insu-player-vVERSION` 資料夾，然後貼上：
 
 > 請使用 $watch-video，先執行 INSU Player 環境檢查。所有工具、模型、cache、影片與字幕都必須留在這個資料夾。說明本機與 OpenAI API 轉錄的差異後，把這支影片加入影片庫：VIDEO_URL
 
 預設工作區是：
 
 ```text
-<解壓縮資料夾>/.local/xeruca-player/
+<解壓縮資料夾>/.local/insu-player/
 ```
 
 常用指令：
 
 ```bash
 scripts/portable/doctor.sh
-scripts/portable/setup.sh --provider local --model turbo
+scripts/portable/setup.sh --provider local --model medium
 scripts/portable/serve.sh 8000
 scripts/portable/add-video.sh 'VIDEO_URL'
 scripts/portable/update.sh

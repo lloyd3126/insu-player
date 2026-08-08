@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "plugins" / "xeruca-player" / "skills" / "transcribe-media" / "scripts" / "transcribe_media.py"
+SCRIPT = REPO_ROOT / "plugins" / "insu-player" / "skills" / "transcribe-media" / "scripts" / "transcribe_media.py"
 SPEC = importlib.util.spec_from_file_location("transcribe_media", SCRIPT)
 assert SPEC and SPEC.loader
 transcribe_media = importlib.util.module_from_spec(SPEC)

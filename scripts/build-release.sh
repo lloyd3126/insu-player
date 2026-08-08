@@ -23,16 +23,16 @@ else
 fi
 
 output_dir=$(mkdir -p "$output_dir" && cd "$output_dir" && pwd -P)
-archive_name="xeruca-player-v${version}-portable.zip"
+archive_name="insu-player-v${version}-portable.zip"
 archive_path="$output_dir/$archive_name"
 checksum_path="$archive_path.sha256"
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
-package_name="xeruca-player-v${version}"
+package_name="insu-player-v${version}"
 package_dir="$stage/$package_name"
 mkdir -p "$package_dir"
 
-if [ "${XERUCA_RELEASE_SOURCE:-commit}" = "commit" ] && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if [ "${INSU_RELEASE_SOURCE:-commit}" = "commit" ] && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git -C "$REPO_ROOT" archive --format=tar HEAD | tar -xf - -C "$package_dir"
 else
   tar \

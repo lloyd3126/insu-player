@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/common.sh"
 
-runtime_python="$PORTABLE_WORKSPACE/.agent-tools/xeruca-player/.venv/bin/python"
+runtime_python="$PORTABLE_WORKSPACE/.agent-tools/insu-player/.venv/bin/python"
 if [ -x "$runtime_python" ]; then
   exec "$runtime_python" "$PORTABLE_MANAGER" update --mode portable "$@"
 fi

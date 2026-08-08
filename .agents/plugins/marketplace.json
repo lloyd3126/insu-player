@@ -1,15 +1,15 @@
 {
-  "name": "xeruca-player",
+  "name": "insu-player",
   "interface": {
     "displayName": "INSU Player",
     "description": "A portable local caption video library for Codex."
   },
   "plugins": [
     {
-      "name": "xeruca-player",
+      "name": "insu-player",
       "source": {
         "source": "local",
-        "path": "./plugins/xeruca-player"
+        "path": "./plugins/insu-player"
       },
       "policy": {
         "installation": "AVAILABLE",

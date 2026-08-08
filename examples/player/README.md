@@ -14,7 +14,7 @@ player/
 └── media-info.txt
 ```
 
-建立方式請依照 [INSU watch-video skill](../../plugins/xeruca-player/skills/watch-video/SKILL.md)，模板說明位於 [player-template.md](../../plugins/xeruca-player/skills/watch-video/references/player-template.md)。
+建立方式請依照 [INSU watch-video skill](../../plugins/insu-player/skills/watch-video/SKILL.md)，模板說明位於 [player-template.md](../../plugins/insu-player/skills/watch-video/references/player-template.md)。
 
 範例不內含媒體的原因：
 

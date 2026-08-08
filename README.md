@@ -10,24 +10,24 @@ INSU Player 是為 Agent 設計的本機字幕影片庫。把想看的影片網�
 
 ### Release ZIP（最完整的可攜體驗）
 
-1. 從 [GitHub Releases](https://github.com/lloyd3126/insu-player/releases) 下載 `xeruca-player-vVERSION-portable.zip` 與同名 `.sha256`。
+1. 從 [GitHub Releases](https://github.com/lloyd3126/insu-player/releases) 下載 `insu-player-vVERSION-portable.zip` 與同名 `.sha256`。
 2. 解壓縮後，用 Codex 開啟整個資料夾。
 3. 對 Codex 說：
 
 > 請使用 $watch-video，檢查這個 INSU Player 工作區，說明本機與 API 轉錄的差異，然後把這支影片加入影片庫：VIDEO_URL
 
-Codex 會從 `.agents/skills/` 發現技能。工具、模型、cache、影片、字幕、log 與播放進度都留在 `.local/xeruca-player/`；不需要 `sudo`、Homebrew、全域 pip 或全域 npm。
+Codex 會從 `.agents/skills/` 發現技能。工具、模型、cache、影片、字幕、log 與播放進度都留在 `.local/insu-player/`；不需要 `sudo`、Homebrew、全域 pip 或全域 npm。
 
 ### Codex plugin
 
 ```bash
 codex plugin marketplace add https://github.com/lloyd3126/insu-player.git
-codex plugin add xeruca-player@xeruca-player
+codex plugin add insu-player@insu-player
 ```
 
-重新開啟 Codex task 後即可使用 `$watch-video`。Plugin 本身由 Codex 管理；每個影片庫的 runtime 與資料仍安裝到你指定專案的 `.local/xeruca-player/`。
+重新開啟 Codex task 後即可使用 `$watch-video`。Plugin 本身由 Codex 管理；每個影片庫的 runtime 與資料仍安裝到你指定專案的 `.local/insu-player/`。
 
-`xeruca-player` 目前保留為 plugin ID、Release 檔名與 workspace 路徑的相容性技術識別，對外產品名稱統一為 INSU Player。
+產品名稱、plugin ID、marketplace、Release 檔名與 workspace 路徑統一使用 `insu-player`。
 
 ## 首頁功能
 
@@ -55,14 +55,14 @@ codex plugin add xeruca-player@xeruca-player
 
 ## 轉錄選項
 
-- `local`：預設且私密。Whisper、Python、FFmpeg、模型與 cache 都安裝在工作區內；首次安裝可能需要數 GB。
+- `local`：預設且私密。Whisper、Python、FFmpeg、模型與 cache 都安裝在工作區內，預設下載 `medium`；首次安裝可能需要數 GB。
 - `openai`：不下載本機 Whisper 模型，但會把音訊片段上傳到 OpenAI，可能產生 API 費用。Agent 必須先取得明確同意，且只有加上 `--allow-api-upload` 才會執行。
 - 現成字幕：若來源已有作者或自動字幕，INSU 會優先使用，不進行語音轉錄。
 
 手動入口：
 
 ```bash
-scripts/portable/setup.sh --provider local --model turbo
+scripts/portable/setup.sh --provider local --model medium
 scripts/portable/serve.sh 8000
 scripts/portable/add-video.sh 'VIDEO_URL'
 ```
@@ -84,8 +84,8 @@ scripts/portable/add-video.sh 'VIDEO_URL' --provider openai --allow-api-upload
 先預覽，再套用：
 
 ```bash
-python3 plugins/xeruca-player/skills/player-manager/scripts/manage.py update
-python3 plugins/xeruca-player/skills/player-manager/scripts/manage.py update --apply
+python3 plugins/insu-player/skills/player-manager/scripts/manage.py update
+python3 plugins/insu-player/skills/player-manager/scripts/manage.py update --apply
 scripts/portable/uninstall.sh
 ```
 
@@ -94,8 +94,8 @@ scripts/portable/uninstall.sh
 Release ZIP 或 Git checkout 模式下，完整移除的最後一步是停止服務後，把「這一個 INSU Player 資料夾」移到垃圾桶。Plugin 模式另執行：
 
 ```bash
-codex plugin remove xeruca-player@xeruca-player
-codex plugin marketplace remove xeruca-player
+codex plugin remove insu-player@insu-player
+codex plugin marketplace remove insu-player
 ```
 
 ## 為什麼叫 INSU
@@ -107,11 +107,11 @@ INSU 取自臺灣紫嘯鶇學名 `Myophonus insularis` 的種小名。這種只�
 ```text
 insu-player/
 ├── .agents/skills/                 # 用資料夾開啟時的 discovery bridge
-├── plugins/xeruca-player/          # 可安裝的 Codex plugin 與完整 skills
+├── plugins/insu-player/            # 可安裝的 Codex plugin 與完整 skills
 ├── scripts/portable/               # Release ZIP 的固定入口
 ├── examples/                       # 播放器與影片庫模板說明
 ├── tests/                          # runtime、伺服器、轉錄、更新與 release 測試
-└── .local/xeruca-player/           # 使用後產生；不進 Git
+└── .local/insu-player/             # 使用後產生；不進 Git
 ```
 
 版本變更請見 [CHANGELOG.md](CHANGELOG.md)。

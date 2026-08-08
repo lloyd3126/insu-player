@@ -5,4 +5,4 @@ description: Add an authorized video to INSU Player and coordinate download, cap
 
 # Repository entrypoint
 
-Read [the canonical plugin skill](../../../plugins/xeruca-player/skills/watch-video/SKILL.md) completely and follow it. Resolve every referenced script, reference, and asset relative to that canonical skill directory.
+Read [the canonical plugin skill](../../../plugins/insu-player/skills/watch-video/SKILL.md) completely and follow it. Resolve every referenced script, reference, and asset relative to that canonical skill directory.

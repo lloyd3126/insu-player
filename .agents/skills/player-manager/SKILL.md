@@ -5,4 +5,4 @@ description: Inspect, safely update, diagnose, or completely remove INSU Player 
 
 # Repository entrypoint
 
-Read [the canonical plugin skill](../../../plugins/xeruca-player/skills/player-manager/SKILL.md) completely and follow it. Resolve its lifecycle reference and manager script relative to that canonical skill directory.
+Read [the canonical plugin skill](../../../plugins/insu-player/skills/player-manager/SKILL.md) completely and follow it. Resolve its lifecycle reference and manager script relative to that canonical skill directory.

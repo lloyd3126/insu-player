@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = REPO_ROOT / "plugins" / "xeruca-player"
+PLUGIN_ROOT = REPO_ROOT / "plugins" / "insu-player"
 EXPECTED_SKILLS = {
     "watch-video",
     "video-library",
@@ -26,14 +26,17 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertEqual(bridges, EXPECTED_SKILLS)
         for name in EXPECTED_SKILLS:
             bridge = (REPO_ROOT / ".agents" / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
-            self.assertIn(f"plugins/xeruca-player/skills/{name}/SKILL.md", bridge)
+            self.assertIn(f"plugins/insu-player/skills/{name}/SKILL.md", bridge)
 
     def test_version_and_plugin_manifest_agree(self) -> None:
         version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(version, manifest["version"])
-        self.assertEqual(manifest["name"], "xeruca-player")
+        self.assertEqual(manifest["name"], "insu-player")
         self.assertEqual(manifest["interface"]["displayName"], "INSU Player")
+        self.assertEqual(manifest["interface"]["brandColor"], "#8B7CF6")
+        self.assertTrue((PLUGIN_ROOT / manifest["interface"]["logo"]).is_file())
+        self.assertIn("用 Agent", manifest["interface"]["shortDescription"])
         self.assertIn("$watch-video", manifest["interface"]["defaultPrompt"])
 
     def test_product_docs_use_the_insu_repository_and_brand(self) -> None:
@@ -44,9 +47,10 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("https://github.com/lloyd3126/insu-player.git", readme)
         self.assertIn("環境變數、模型列表與影片列表", readme)
         self.assertIn("API SDK 與 API Key 設定狀態", readme)
-        self.assertIn("## v0.1.0", changelog)
+        self.assertIn("## v0.2.0", changelog)
         self.assertIn("api.github.com/repos/lloyd3126/insu-player/releases/latest", manager)
-        self.assertNotIn("lloyd3126/xeruca-player", readme + manager)
+        legacy_repository = "lloyd3126/" + "xe" + "ruca-player"
+        self.assertNotIn(legacy_repository, readme + manager)
 
     def test_static_page_titles_and_headings_do_not_use_punctuation(self) -> None:
         assets = [
@@ -163,9 +167,10 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertNotIn("#57d7bf", styles)
         self.assertNotIn("87 215 191", styles)
         self.assertIn("INSU Player", player)
-        self.assertIn("window.XERUCA_PLAYER_CONFIG", player)
+        self.assertIn("window.INSU_PLAYER_CONFIG", player)
         self.assertNotIn("my-agent-playbook", library + styles + player)
-        self.assertNotIn("xeruca player", (library + player).lower())
+        legacy_product = "xe" + "ruca player"
+        self.assertNotIn(legacy_product, (library + player).lower())
         visible_sources = [
             PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "index.html",
             PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "library.js",

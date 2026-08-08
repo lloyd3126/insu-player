@@ -1,10 +1,10 @@
 # INSU Player agent guide
 
-本 repository 以 Codex skills 為唯一操作入口。先選擇 `.agents/skills/` 中符合任務的 skill；該入口會要求完整讀取 `plugins/xeruca-player/skills/` 的 canonical skill。使用者本次明確指示永遠優先。
+本 repository 以 Codex skills 為唯一操作入口。先選擇 `.agents/skills/` 中符合任務的 skill；該入口會要求完整讀取 `plugins/insu-player/skills/` 的 canonical skill。使用者本次明確指示永遠優先。
 
 ## Runtime boundary
 
-- Release ZIP 預設 workspace 是 `.local/xeruca-player/`。
+- Release ZIP 預設 workspace 是 `.local/insu-player/`。
 - Developer checkout 或 plugin 模式必須使用使用者指定專案內的專用 workspace；不要默默寫入 home directory。
 - 禁止 `sudo`、Homebrew、apt、全域 pip 與全域 npm。uv、Python、Deno、FFmpeg、yt-dlp、Whisper、模型及 workflow cache 都必須位於 workspace。
 - `OPENAI_API_KEY` 只能來自目前 process environment；不可寫入檔案、log、metadata 或回覆。
@@ -25,4 +25,4 @@
 - 優先使用來源既有字幕；沒有字幕才轉錄。繁中翻譯必須保留 VTT 時間軸與 cue 順序。
 - 程式修改後執行全部測試、五個 skill validator、plugin validator 與 release 建置測試。
 
-完整 skill 的唯一來源位於 `plugins/xeruca-player/skills/`；`.agents/skills/` 只做 repository discovery bridge，不要複製業務邏輯。
+完整 skill 的唯一來源位於 `plugins/insu-player/skills/`；`.agents/skills/` 只做 repository discovery bridge，不要複製業務邏輯。

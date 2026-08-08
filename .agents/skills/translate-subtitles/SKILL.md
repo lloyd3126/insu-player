@@ -5,4 +5,4 @@ description: Translate WebVTT subtitles into Traditional Chinese while preservin
 
 # Repository entrypoint
 
-Read [the canonical plugin skill](../../../plugins/xeruca-player/skills/translate-subtitles/SKILL.md) completely and follow it. Resolve sibling skill and script paths relative to that canonical skill directory.
+Read [the canonical plugin skill](../../../plugins/insu-player/skills/translate-subtitles/SKILL.md) completely and follow it. Resolve sibling skill and script paths relative to that canonical skill directory.

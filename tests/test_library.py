@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = REPO_ROOT / "plugins" / "xeruca-player" / "skills" / "watch-video"
+SKILL_DIR = REPO_ROOT / "plugins" / "insu-player" / "skills" / "watch-video"
 SCRIPT_DIR = SKILL_DIR / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -82,7 +82,7 @@ class LibraryApplicationTests(unittest.TestCase):
     def test_supported_sites_follow_workspace_ytdlp_extractors(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
-            yt_dlp = workspace / ".agent-tools" / "xeruca-player" / ".venv" / "bin" / "yt-dlp"
+            yt_dlp = workspace / ".agent-tools" / "insu-player" / ".venv" / "bin" / "yt-dlp"
             yt_dlp.parent.mkdir(parents=True)
             yt_dlp.write_text(
                 "#!/bin/sh\n"
@@ -146,7 +146,7 @@ class LibraryApplicationTests(unittest.TestCase):
     def test_model_inventory_uses_actual_workspace_files_and_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"OPENAI_API_KEY": "configured-for-test"}):
             workspace = Path(temporary)
-            runtime = workspace / ".agent-tools" / "xeruca-player"
+            runtime = workspace / ".agent-tools" / "insu-player"
             models = runtime / "models"
             whisper = runtime / ".venv" / "bin" / "whisper"
             models.mkdir(parents=True)
@@ -178,7 +178,7 @@ class LibraryApplicationTests(unittest.TestCase):
     def test_model_inventory_ignores_symlinked_model(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
-            models = workspace / ".agent-tools" / "xeruca-player" / "models"
+            models = workspace / ".agent-tools" / "insu-player" / "models"
             models.mkdir(parents=True)
             outside = workspace / "outside.pt"
             outside.write_bytes(b"not-workspace-owned")

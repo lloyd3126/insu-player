@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-XERUCA_SKILL_DIR = REPO_ROOT / "plugins" / "xeruca-player" / "skills" / "watch-video"
-SCRIPTS = XERUCA_SKILL_DIR / "scripts"
+INSU_SKILL_DIR = REPO_ROOT / "plugins" / "insu-player" / "skills" / "watch-video"
+SCRIPTS = INSU_SKILL_DIR / "scripts"
 SAMPLE_VTT = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nSample caption\n"
 
 
@@ -25,7 +25,7 @@ class WorkflowScriptTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.workspace = Path(self.temporary.name) / "workspace"
-        runtime = self.workspace / ".agent-tools" / "xeruca-player"
+        runtime = self.workspace / ".agent-tools" / "insu-player"
         venv_bin = runtime / ".venv" / "bin"
         workflow_bin = runtime / "bin"
         fake_bin = Path(self.temporary.name) / "fake-bin"
@@ -144,7 +144,7 @@ exit 2
         self.assertFalse((job_dir / "whisper").exists())
 
     def test_uninstall_refuses_while_library_pid_is_alive(self) -> None:
-        pid_file = self.workspace / ".xeruca-player-server.pid"
+        pid_file = self.workspace / ".insu-player-server.pid"
         pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
         preview = self.run_script("uninstall.sh", str(self.workspace))
         self.assertIn("library server: running", preview.stdout)
@@ -159,7 +159,7 @@ exit 2
         )
         self.assertNotEqual(attempted.returncode, 0)
         self.assertIn("library server is still running", attempted.stdout)
-        self.assertTrue((self.workspace / ".agent-tools" / "xeruca-player").is_dir())
+        self.assertTrue((self.workspace / ".agent-tools" / "insu-player").is_dir())
 
     def test_uninstall_removes_stale_environment_session_descriptor(self) -> None:
         descriptor = self.workspace / ".insu-environment-session.json"
@@ -184,7 +184,7 @@ printf '%s\n' "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$DENO_DIR" "$XDG_CACHE_H
             stderr=subprocess.STDOUT,
             check=True,
         )
-        runtime = (self.workspace / ".agent-tools" / "xeruca-player").resolve()
+        runtime = (self.workspace / ".agent-tools" / "insu-player").resolve()
         for output_path in result.stdout.splitlines():
             Path(output_path).resolve().relative_to(runtime)
 
@@ -192,6 +192,25 @@ printf '%s\n' "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$DENO_DIR" "$XDG_CACHE_H
         source = (SCRIPTS / "setup-environment.sh").read_text(encoding="utf-8")
         for forbidden in ("brew install", "apt-get", "sudo ", "dnf install", "pacman -S"):
             self.assertNotIn(forbidden, source)
+
+    def test_medium_is_the_default_local_model(self) -> None:
+        setup_source = (SCRIPTS / "setup-environment.sh").read_text(encoding="utf-8")
+        transcribe_source = (SCRIPTS / "transcribe.sh").read_text(encoding="utf-8")
+        update_source = (SCRIPTS / "update-environment.sh").read_text(encoding="utf-8")
+        transcriber_source = (
+            REPO_ROOT
+            / "plugins"
+            / "insu-player"
+            / "skills"
+            / "transcribe-media"
+            / "scripts"
+            / "transcribe_media.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('model_name="medium"', setup_source)
+        self.assertIn('caption_state_value "$CAPTION_STATE" DEFAULT_MODEL', transcribe_source)
+        self.assertIn('model_name="${model_name:-medium}"', transcribe_source)
+        self.assertIn('model_name="${model_name:-medium}"', update_source)
+        self.assertIn('args.model = args.model or "medium"', transcriber_source)
 
     def test_api_transcription_can_use_the_active_server_session_without_weakening_consent(self) -> None:
         source = (SCRIPTS / "transcribe.sh").read_text(encoding="utf-8")
