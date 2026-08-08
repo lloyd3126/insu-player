@@ -1,0 +1,21 @@
+{
+  "name": "xeruca-player",
+  "interface": {
+    "displayName": "Xeruca Player",
+    "description": "A portable local caption video library for Codex."
+  },
+  "plugins": [
+    {
+      "name": "xeruca-player",
+      "source": {
+        "source": "local",
+        "path": "./plugins/xeruca-player"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "productivity"
+    }
+  ]
+}

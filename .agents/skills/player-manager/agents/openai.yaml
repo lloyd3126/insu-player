@@ -1,0 +1,4 @@
+interface:
+  display_name: "Xeruca 管理員"
+  short_description: "安全檢查、更新或完整移除 Xeruca Player 與本機資料"
+  default_prompt: "Use $player-manager to inspect, update, or remove Xeruca Player safely."

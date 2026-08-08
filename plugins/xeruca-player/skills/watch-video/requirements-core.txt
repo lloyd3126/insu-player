@@ -1,0 +1,4 @@
+# Installed into the workflow-local virtual environment for every provider.
+# Exact resolved versions are recorded in requirements.lock.txt.
+yt-dlp[default]
+imageio-ffmpeg==0.6.0

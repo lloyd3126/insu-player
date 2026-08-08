@@ -1,0 +1,24 @@
+{
+  "name": "xeruca-player",
+  "version": "0.1.0",
+  "description": "A portable local video library for Codex with captions, transcription, translation, and an in-page player.",
+  "author": {
+    "name": "lloyd3126"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Xeruca Player",
+    "shortDescription": "Call in a video. Your agent handles the rest.",
+    "longDescription": "Download authorized videos, reuse available captions, transcribe locally or with explicit OpenAI API consent, translate subtitles, and watch from a persistent localhost library inside Codex.",
+    "developerName": "lloyd3126",
+    "category": "Productivity",
+    "capabilities": [
+      "Portable local video library",
+      "Local Whisper or OpenAI API transcription",
+      "Timestamp-preserving subtitle translation",
+      "Same-origin iframe player with resume progress",
+      "Safe update and complete removal"
+    ],
+    "defaultPrompt": "Use $watch-video to add an authorized video to Xeruca Player and open the local library."
+  }
+}

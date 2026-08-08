@@ -1,0 +1,12 @@
+.DS_Store
+.local/
+.agent-tools/
+.xeruca-player-server.pid
+dist/
+__pycache__/
+*.py[cod]
+*.mp4
+*.webm
+*.mkv
+*.pt
+*.bin
