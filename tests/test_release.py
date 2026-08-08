@@ -35,6 +35,7 @@ class PortableReleaseTests(unittest.TestCase):
                 names = bundle.namelist()
                 prefix = f"xeruca-player-v{version}/"
                 self.assertIn(prefix + "START-HERE.md", names)
+                self.assertIn(prefix + "CHANGELOG.md", names)
                 self.assertIn(prefix + "VERSION", names)
                 self.assertIn(prefix + "MANIFEST.sha256", names)
                 self.assertIn(prefix + "scripts/portable/setup.sh", names)

@@ -1,6 +1,6 @@
 window.XERUCA_PLAYER_CONFIG = {
-  title: "Xeruca Player · 本機字幕放映室",
-  kicker: "Xeruca · local screening",
+  title: "INSU Player · 本機字幕放映室",
+  kicker: "INSU · local screening",
   video: {
     src: "video.mp4",
     type: "video/mp4",

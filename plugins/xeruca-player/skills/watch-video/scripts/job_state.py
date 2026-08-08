@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Durable, atomic job-state storage for the local YouTube library."""
+"""Durable, atomic job-state storage for the local INSU media library."""
 
 from __future__ import annotations
 

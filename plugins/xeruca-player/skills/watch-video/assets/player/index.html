@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#071617" />
-    <title>Xeruca Player · 本機放映室</title>
+    <title>INSU Player 本機放映室</title>
     <style>
       :root {
         color-scheme: dark;
@@ -373,11 +373,11 @@
     <main>
       <header class="masthead">
         <div>
-          <div class="player-brand" aria-label="Xeruca Player">
+          <div class="player-brand" aria-label="INSU Player">
             <svg viewBox="0 0 56 56" aria-hidden="true"><path d="M17 31c0-8 5-14 13-14 4 0 8 2 10 5l7-8c3 8 0 16-7 20-2 7-8 11-15 10-7-1-11-6-8-13Z"/><path class="play-mark" d="m24 24 11 7-11 7Z"/><path d="M18 39 9 47M25 43l-3 9M36 40l8 8"/></svg>
-            <span>XERUCA PLAYER<small>TAIWAN TIDELINE EDITION</small></span>
+            <span>INSU PLAYER<small>TAIWAN INSULARIS EDITION</small></span>
           </div>
-          <p id="kicker" class="kicker">Xeruca · local screening</p>
+          <p id="kicker" class="kicker">INSU · local screening</p>
           <h1 id="page-title">本機字幕放映室</h1>
         </div>
         <span id="runtime-badge" class="runtime-badge">INITIALIZING</span>
@@ -418,8 +418,8 @@
 
         const defaults = {
           videoId: "standalone",
-          title: "Xeruca Player · 本機字幕放映室",
-          kicker: "Xeruca · local screening",
+          title: "INSU Player · 本機字幕放映室",
+          kicker: "INSU · local screening",
           video: { src: "video.mp4", type: "video/mp4" },
           defaultLanguage: "zh-TW",
           captions: [
@@ -604,7 +604,7 @@
           postToParent("player:ready", { duration: video.duration });
         });
         video.addEventListener("playing", () => {
-          setPlaybackStatus("播放中；字幕依本機時間軸同步。", "PLAYING");
+          setPlaybackStatus("播放中。字幕依本機時間軸同步。", "PLAYING");
           cancelAnimationFrame(animationFrame);
           animationFrame = requestAnimationFrame(followPlayback);
           postToParent("player:playing", { time: video.currentTime });
@@ -629,7 +629,7 @@
           postToParent("player:ended", { duration: video.duration });
         });
         video.addEventListener("error", () => {
-          setPlaybackStatus("影片載入失敗；請確認 video.mp4 存在並透過 HTTP 開啟。", "ERROR");
+          setPlaybackStatus("影片載入失敗。請確認 video.mp4 存在並透過 HTTP 開啟。", "ERROR");
           postToParent("player:error", { code: video.error?.code || 0 });
         });
 

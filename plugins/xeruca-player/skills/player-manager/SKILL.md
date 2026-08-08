@@ -1,9 +1,9 @@
 ---
 name: player-manager
-description: Inspect, safely update, diagnose, or remove Xeruca Player across a Git checkout, Codex marketplace installation, or portable Release ZIP. Use when a user asks whether Xeruca is current, wants Codex to self-update, needs installation health, or wants complete removal.
+description: Inspect, safely update, diagnose, or remove INSU Player across a Git checkout, Codex marketplace installation, or portable Release ZIP. Use when a user asks whether INSU is current, wants Codex to self-update, needs installation health, or wants complete removal.
 ---
 
-# Xeruca Player Manager
+# INSU Player Manager
 
 Detect the installation mode and use the matching update lifecycle. Checks are read-only; mutations require the user's explicit request and "--apply".
 

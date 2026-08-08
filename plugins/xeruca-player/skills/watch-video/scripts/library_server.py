@@ -10,7 +10,9 @@ import math
 import mimetypes
 import os
 import re
+import secrets
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -21,6 +23,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from job_state import ACTIVE_STATES, VIDEO_ID_PATTERN, load_status
+from prompt_library import load_prompt_library
 
 
 TRACK_LABELS = {
@@ -33,6 +36,14 @@ TRACK_LABELS = {
 }
 RANGE_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")
 MAX_JSON_BODY = 4096
+MODEL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+ENVIRONMENT_VARIABLES = {
+    "OPENAI_API_KEY": {
+        "label": "OpenAI API 金鑰",
+        "description": "供 OpenAI API 轉錄使用",
+    },
+}
+SESSION_DESCRIPTOR_NAME = ".insu-environment-session.json"
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
@@ -77,6 +88,251 @@ class LibraryApplication:
         self.library_template = library_template.resolve()
         self.player_template = player_template.resolve()
         self.size_cache: dict[str, tuple[float, int]] = {}
+        self.supported_sites_cache: tuple[tuple[str, int], dict[str, object]] | None = None
+        self.environment_lock = threading.RLock()
+        self.environment_sources = {
+            name: "startup" for name in ENVIRONMENT_VARIABLES if os.environ.get(name)
+        }
+        self.session_token = secrets.token_urlsafe(32)
+
+    def yt_dlp_executable(self) -> Path | None:
+        runtime = self.workspace / ".agent-tools" / "xeruca-player" / ".venv"
+        for path in (runtime / "bin" / "yt-dlp", runtime / "Scripts" / "yt-dlp.exe"):
+            if path.is_file() and os.access(path, os.X_OK):
+                return path
+        return None
+
+    def supported_sites(self) -> dict[str, object]:
+        executable = self.yt_dlp_executable()
+        if executable is None:
+            return {
+                "provider": "yt-dlp",
+                "available": False,
+                "version": None,
+                "count": 0,
+                "extractors": [],
+                "message": "yt-dlp is not installed in this workspace",
+            }
+
+        cache_key = (str(executable), executable.stat().st_mtime_ns)
+        if self.supported_sites_cache and self.supported_sites_cache[0] == cache_key:
+            return self.supported_sites_cache[1]
+
+        try:
+            version_result = subprocess.run(
+                [str(executable), "--ignore-config", "--version"],
+                cwd=self.workspace,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            extractor_result = subprocess.run(
+                [str(executable), "--ignore-config", "--list-extractors"],
+                cwd=self.workspace,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {
+                "provider": "yt-dlp",
+                "available": False,
+                "version": None,
+                "count": 0,
+                "extractors": [],
+                "message": "yt-dlp extractor discovery failed",
+            }
+
+        extractors = sorted(
+            {line.strip() for line in extractor_result.stdout.splitlines() if line.strip()},
+            key=str.casefold,
+        )
+        payload: dict[str, object] = {
+            "provider": "yt-dlp",
+            "available": True,
+            "version": version_result.stdout.strip() or None,
+            "count": len(extractors),
+            "extractors": extractors,
+            "message": "support follows the installed yt-dlp extractor set",
+        }
+        self.supported_sites_cache = (cache_key, payload)
+        return payload
+
+    def my_prompts(self) -> dict[str, object]:
+        try:
+            payload = load_prompt_library(self.workspace)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            return {"available": False, "prompts": [], "message": str(error)}
+        return {"available": True, **payload}
+
+    def installed_packages(self) -> dict[str, str]:
+        runtime = self.workspace / ".agent-tools" / "xeruca-player"
+        lock_path = runtime / "requirements.lock.txt"
+        if lock_path.is_symlink() or not lock_path.is_file():
+            return {}
+        try:
+            lines = lock_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return {}
+
+        packages: dict[str, str] = {}
+        for line in lines:
+            requirement = line.strip()
+            if not requirement or requirement.startswith("#"):
+                continue
+            match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)", requirement)
+            if match:
+                name, version = match.groups()
+            else:
+                match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s+@\s+(.+)$", requirement)
+                if not match:
+                    continue
+                name, version = match.groups()
+            normalized_name = re.sub(r"[-_.]+", "-", name).lower()
+            packages[normalized_name] = version
+        return packages
+
+    def model_inventory(self) -> dict[str, object]:
+        runtime = self.workspace / ".agent-tools" / "xeruca-player"
+        packages = self.installed_packages()
+        whisper_executables = (
+            runtime / ".venv" / "bin" / "whisper",
+            runtime / ".venv" / "Scripts" / "whisper.exe",
+        )
+        local_provider_installed = "openai-whisper" in packages and any(
+            executable.is_file() and os.access(executable, os.X_OK) for executable in whisper_executables
+        )
+
+        models: list[dict[str, object]] = []
+        models_dir = runtime / "models"
+        if not models_dir.is_symlink() and models_dir.is_dir():
+            try:
+                candidates = sorted(models_dir.iterdir(), key=lambda path: path.name.casefold())
+            except OSError:
+                candidates = []
+            for path in candidates:
+                if path.is_symlink() or path.suffix.lower() != ".pt" or not MODEL_NAME_PATTERN.fullmatch(path.stem):
+                    continue
+                try:
+                    if not path.is_file():
+                        continue
+                    size_bytes = path.stat().st_size
+                except OSError:
+                    continue
+                if size_bytes <= 0:
+                    continue
+                models.append({
+                    "name": path.stem,
+                    "sizeBytes": size_bytes,
+                    "ready": local_provider_installed,
+                })
+
+        openai_installed = "openai" in packages
+        return {
+            "local": {
+                "providerInstalled": local_provider_installed,
+                "packageVersion": packages.get("openai-whisper"),
+                "modelCount": len(models),
+                "totalSizeBytes": sum(int(model["sizeBytes"]) for model in models),
+                "models": models,
+            },
+            "api": {
+                "providerInstalled": openai_installed,
+                "packageVersion": packages.get("openai"),
+                "keyConfigured": bool(os.environ.get("OPENAI_API_KEY")),
+                "models": [{"name": "whisper-1", "installed": openai_installed}],
+            },
+        }
+
+    def environment_status(self) -> dict[str, object]:
+        packages = self.installed_packages()
+        with self.environment_lock:
+            variables = [
+                {
+                    "name": name,
+                    "label": details["label"],
+                    "description": details["description"],
+                    "configured": bool(os.environ.get(name)),
+                    "source": self.environment_sources.get(name),
+                    "providerInstalled": "openai" in packages if name == "OPENAI_API_KEY" else True,
+                }
+                for name, details in ENVIRONMENT_VARIABLES.items()
+            ]
+        return {"scope": "process", "variables": variables}
+
+    def set_environment_variable(self, payload: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        name = payload.get("name")
+        value = payload.get("value")
+        if name not in ENVIRONMENT_VARIABLES:
+            raise ValueError("environment variable is not allowed")
+        if not isinstance(value, str):
+            raise ValueError("environment variable value must be text")
+        value = value.strip()
+        if not value or len(value) > 2048 or any(ord(character) < 32 for character in value):
+            raise ValueError("environment variable value is invalid")
+        with self.environment_lock:
+            os.environ[name] = value
+            self.environment_sources[name] = "session"
+        return self.environment_status()
+
+    def clear_environment_variable(self, name: str) -> dict[str, object]:
+        if name not in ENVIRONMENT_VARIABLES:
+            raise ValueError("environment variable is not allowed")
+        with self.environment_lock:
+            os.environ.pop(name, None)
+            self.environment_sources.pop(name, None)
+        return self.environment_status()
+
+    def session_environment_value(self, name: str, authorization: str | None) -> str:
+        expected = f"Bearer {self.session_token}"
+        if not secrets.compare_digest(authorization or "", expected) or name not in ENVIRONMENT_VARIABLES:
+            raise FileNotFoundError("session environment variable is unavailable")
+        with self.environment_lock:
+            value = os.environ.get(name)
+        if not value:
+            raise FileNotFoundError("session environment variable is unavailable")
+        return value
+
+    def write_session_descriptor(self, host: str, port: int) -> Path:
+        descriptor_path = self.workspace / SESSION_DESCRIPTOR_NAME
+        if descriptor_path.is_symlink():
+            raise OSError("session descriptor path must not be a symlink")
+        payload = {
+            "host": host,
+            "port": port,
+            "pid": os.getpid(),
+            "token": self.session_token,
+        }
+        temp_path = descriptor_path.with_name(f".{descriptor_path.name}.{os.getpid()}.tmp")
+        descriptor = (json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+        file_descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(file_descriptor, "wb") as handle:
+                handle.write(descriptor)
+            os.replace(temp_path, descriptor_path)
+            os.chmod(descriptor_path, 0o600)
+        except Exception:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+        return descriptor_path
+
+    def remove_session_descriptor(self) -> None:
+        descriptor_path = self.workspace / SESSION_DESCRIPTOR_NAME
+        if descriptor_path.is_symlink() or not descriptor_path.is_file():
+            return
+        try:
+            payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
+            if payload.get("token") == self.session_token:
+                descriptor_path.unlink()
+        except (OSError, json.JSONDecodeError):
+            return
 
     def job_dir(self, video_id: str) -> Path:
         if not VIDEO_ID_PATTERN.fullmatch(video_id):
@@ -222,7 +478,7 @@ class LibraryApplication:
                 stale_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
             if not process_is_alive(process.get("pid")) and (stale_seconds is None or stale_seconds > 45):
                 effective_state = "interrupted"
-                message = "工作程序已停止；可由 Agent 從目前階段繼續"
+                message = "工作程序已停止。可由 Agent 從目前階段繼續"
         if state == "ready" and video is None:
             effective_state = "failed"
             message = "狀態顯示完成，但找不到 video.mp4"
@@ -342,6 +598,54 @@ class LibraryRequestHandler(BaseHTTPRequestHandler):
             self.log_error("write request failed: %s", error)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
 
+    def same_origin_request(self) -> bool:
+        host = self.headers.get("Host", "")
+        origin = self.headers.get("Origin", "")
+        return bool(host) and origin == f"http://{host}"
+
+    def read_json_body(self) -> object:
+        content_type = self.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if content_type != "application/json":
+            raise ValueError("Content-Type must be application/json")
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length <= 0 or content_length > MAX_JSON_BODY:
+            raise ValueError("invalid JSON body size")
+        return json.loads(self.rfile.read(content_length).decode("utf-8"))
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = unquote(urlparse(self.path).path)
+        try:
+            if path != "/api/environment":
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            if not self.same_origin_request():
+                self.send_error(HTTPStatus.FORBIDDEN)
+                return
+            payload = self.read_json_body()
+            self.send_json(self.application.set_environment_variable(payload), head_only=False)
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+        except Exception as error:  # pragma: no cover - defensive HTTP boundary
+            self.log_error("environment request failed: %s", error)
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        path = unquote(urlparse(self.path).path)
+        parts = [part for part in path.split("/") if part]
+        try:
+            if len(parts) != 3 or parts[:2] != ["api", "environment"]:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            if not self.same_origin_request():
+                self.send_error(HTTPStatus.FORBIDDEN)
+                return
+            self.send_json(self.application.clear_environment_variable(parts[2]), head_only=False)
+        except ValueError as error:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+        except Exception as error:  # pragma: no cover - defensive HTTP boundary
+            self.log_error("environment request failed: %s", error)
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+
     def route_request(self, *, head_only: bool) -> None:
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -355,14 +659,33 @@ class LibraryRequestHandler(BaseHTTPRequestHandler):
             if path == "/assets/library.js":
                 self.send_file(self.application.library_template / "library.js", head_only=head_only, cache="no-store")
                 return
+            if path == "/assets/taiwan-whistling-thrush.png":
+                self.send_file(self.application.library_template / "taiwan-whistling-thrush.png", head_only=head_only, cache="private, max-age=3600")
+                return
             if path == "/api/health":
                 self.send_json({"status": "ok"}, head_only=head_only)
                 return
             if path == "/api/jobs":
                 self.send_json({"jobs": self.application.list_jobs(), "serverTime": datetime.now(timezone.utc).isoformat()}, head_only=head_only)
                 return
+            if path == "/api/supported-sites":
+                self.send_json(self.application.supported_sites(), head_only=head_only)
+                return
+            if path == "/api/prompts":
+                self.send_json(self.application.my_prompts(), head_only=head_only)
+                return
+            if path == "/api/models":
+                self.send_json(self.application.model_inventory(), head_only=head_only)
+                return
+            if path == "/api/environment":
+                self.send_json(self.application.environment_status(), head_only=head_only)
+                return
 
             parts = [part for part in path.split("/") if part]
+            if len(parts) == 4 and parts[:3] == ["api", "environment", "session"]:
+                value = self.application.session_environment_value(parts[3], self.headers.get("Authorization"))
+                self.send_json({"name": parts[3], "value": value}, head_only=head_only)
+                return
             if len(parts) == 3 and parts[:2] == ["api", "jobs"]:
                 video_id = parts[2]
                 payload = self.application.summarize_job(self.application.job_dir(video_id), include_history=True)
@@ -555,6 +878,7 @@ def main() -> int:
         args.library_template / "index.html",
         args.library_template / "library.css",
         args.library_template / "library.js",
+        args.library_template / "taiwan-whistling-thrush.png",
         args.player_template / "index.html",
     ):
         if not required.is_file():
@@ -566,6 +890,7 @@ def main() -> int:
     LibraryRequestHandler.application = application
     server = ThreadingHTTPServer((args.host, args.port), LibraryRequestHandler)
     server.daemon_threads = True
+    application.write_session_descriptor(args.host, args.port)
 
     def stop_server(signum: int, _frame: object) -> None:
         print(f"\nreceived signal {signum}; stopping", file=sys.stderr)
@@ -585,6 +910,7 @@ def main() -> int:
         pass
     finally:
         server.server_close()
+        application.remove_session_descriptor()
         if pid_file is not None:
             try:
                 if int(pid_file.read_text(encoding="utf-8").strip()) == os.getpid():

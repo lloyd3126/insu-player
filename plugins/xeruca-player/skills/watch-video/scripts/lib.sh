@@ -71,7 +71,9 @@ caption_set_paths() {
   CAPTION_JOB_STATE="$CAPTION_SKILL_SCRIPT_DIR/job_state.py"
   CAPTION_PROGRESS_RUNNER="$CAPTION_SKILL_SCRIPT_DIR/run_progress.py"
   CAPTION_LIBRARY_SERVER="$CAPTION_SKILL_SCRIPT_DIR/library_server.py"
+  CAPTION_ENVIRONMENT_SESSION="$CAPTION_SKILL_SCRIPT_DIR/environment_session.py"
   CAPTION_LIBRARY_PID="$CAPTION_WORKSPACE/.xeruca-player-server.pid"
+  CAPTION_ENVIRONMENT_DESCRIPTOR="$CAPTION_WORKSPACE/.insu-environment-session.json"
 
   export UV_CACHE_DIR="$CAPTION_UV_CACHE"
   export UV_PYTHON_INSTALL_DIR="$CAPTION_UV_PYTHON"
@@ -119,7 +121,11 @@ caption_require_provider() {
       ;;
     openai)
       "$CAPTION_PYTHON" -c 'import openai' >/dev/null 2>&1 || caption_die "OpenAI SDK is missing: rerun setup-environment.sh --provider openai"
-      [ -n "${OPENAI_API_KEY:-}" ] || caption_die "OPENAI_API_KEY is not set; export it in the current terminal, never save it in this project"
+      if [ -z "${OPENAI_API_KEY:-}" ]; then
+        [ -f "$CAPTION_ENVIRONMENT_SESSION" ] || caption_die "OPENAI_API_KEY is not set in the current process or INSU session"
+        "$CAPTION_PYTHON" "$CAPTION_ENVIRONMENT_SESSION" --workspace "$CAPTION_WORKSPACE" --name OPENAI_API_KEY check >/dev/null 2>&1 || \
+          caption_die "OPENAI_API_KEY is not set in the current process or INSU session"
+      fi
       ;;
     *) caption_die "provider must be local or openai" ;;
   esac

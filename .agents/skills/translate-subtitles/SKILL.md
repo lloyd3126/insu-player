@@ -1,6 +1,6 @@
 ---
 name: translate-subtitles
-description: Translate WebVTT subtitles into Traditional Chinese while preserving every cue and timestamp, validate the result, and import it into Xeruca Player.
+description: Translate WebVTT subtitles into Traditional Chinese while preserving every cue and timestamp, validate the result, and import it into INSU Player.
 ---
 
 # Repository entrypoint

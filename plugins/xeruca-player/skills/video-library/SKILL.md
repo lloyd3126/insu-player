@@ -1,9 +1,9 @@
 ---
 name: video-library
-description: Start, inspect, repair, or explain an existing Xeruca Player localhost library. Use when a user wants to see the library homepage, check downloads or transcription jobs, reopen the player, diagnose a failed or interrupted job, inspect storage, or clean only safe intermediate files without adding a new video.
+description: Start, inspect, repair, or explain an existing INSU Player localhost library. Use when a user wants to see the library homepage, check downloads or transcription jobs, reopen the player, diagnose a failed or interrupted job, inspect storage, or clean only safe intermediate files without adding a new video.
 ---
 
-# Xeruca Video Library
+# INSU Video Library
 
 Operate the durable workspace created by `$watch-video`. Do not duplicate or relocate its runtime.
 

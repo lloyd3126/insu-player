@@ -1,9 +1,9 @@
 ---
 name: watch-video
-description: Add an authorized online video to Xeruca Player and keep the user on one local library page while downloading, obtaining captions, transcribing locally or through the OpenAI API, translating subtitles, resuming work, and watching in an iframe modal. Use whenever a user asks Codex to watch, download, transcribe, translate, subtitle, or reopen a video.
+description: Add an authorized online video to INSU Player and keep the user on one local library page while downloading, obtaining captions, transcribing locally or through the OpenAI API, translating subtitles, resuming work, and watching in an iframe modal. Use whenever a user asks Codex to watch, download, transcribe, translate, subtitle, or reopen a video.
 ---
 
-# Xeruca Player: Watch Video
+# INSU Player: Watch Video
 
 Keep the user on one localhost library homepage while Codex manages downloads, captions, transcription, translation, recovery, and cleanup through deterministic scripts.
 
@@ -17,7 +17,8 @@ Keep the user on one localhost library homepage while Codex manages downloads, c
 
 ## Choose a Provider
 
-- Prefer available author or automatic YouTube captions; they avoid transcription entirely.
+- Prefer captions exposed by the source platform; they avoid transcription entirely.
+- Source support follows the extractor set of the workflow-local yt-dlp version. YouTube is the default example, not the only supported platform. When a URL has no matching extractor, use INSU Player to research the source and a safe implementation path before declaring it unsupported.
 - Use "local" when audio must remain on the device. It installs Whisper, PyTorch, and the selected model inside the workspace.
 - Use "openai" only after explicit user authorization to upload audio. Require "OPENAI_API_KEY" in the process environment and never save or print it. The workflow uses "whisper-1" because timestamped segment output is required.
 - If both are installed, the default remains local unless the user chooses API upload.
@@ -43,8 +44,10 @@ For explicit OpenAI transcription:
 
 ~~~bash
 export OPENAI_API_KEY='set-this-in-the-terminal'
-scripts/portable/add-video.sh 'YOUTUBE_URL' --provider openai --allow-api-upload
+scripts/portable/add-video.sh 'VIDEO_URL' --provider openai --allow-api-upload
 ~~~
+
+When the library server is already running, the user may instead enter `OPENAI_API_KEY` through the navbar's environment modal. The value exists only in that server process and is cleared when the server stops. `transcribe.sh` can launch the API child process with that session value without returning, printing, or writing it. The shell export remains the fallback when the server is not running.
 
 Never add "--allow-api-upload" merely because an API key exists. It records that the user authorized this upload.
 

@@ -55,6 +55,6 @@ caption_job_state subtitle --job-dir "$job_dir" --language "$language_code" --pa
 if [ -f "$job_dir/source/video.mp4" ] && { [ -f "$caption_dir/zh-TW.vtt" ] || [ -f "$caption_dir/zh-Hant.vtt" ]; }; then
   caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與繁體中文字幕已可觀看" --progress 100 --clear-error --record-history >/dev/null
 elif [ -f "$job_dir/source/video.mp4" ]; then
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "字幕已匯入；等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "字幕已匯入。等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
 fi
 caption_note "Caption imported: $destination"

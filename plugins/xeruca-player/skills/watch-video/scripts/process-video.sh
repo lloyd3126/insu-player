@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: process-video.sh <workspace> <youtube-url> [--provider local|openai] [--model NAME] [--language CODE] [--track CODE] [--device cpu|cuda] [--allow-api-upload] [--no-transcribe]\n'
+  printf 'usage: process-video.sh <workspace> <video-url> [--provider local|openai] [--model NAME] [--language CODE] [--track CODE] [--device cpu|cuda] [--allow-api-upload] [--no-transcribe]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }

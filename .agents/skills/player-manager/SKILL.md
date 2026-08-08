@@ -1,6 +1,6 @@
 ---
 name: player-manager
-description: Inspect, safely update, diagnose, or completely remove Xeruca Player across Git, Codex plugin, and portable Release ZIP installations.
+description: Inspect, safely update, diagnose, or completely remove INSU Player across Git, Codex plugin, and portable Release ZIP installations.
 ---
 
 # Repository entrypoint

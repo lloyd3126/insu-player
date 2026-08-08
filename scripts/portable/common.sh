@@ -8,8 +8,8 @@ PORTABLE_MANAGER="$PORTABLE_ROOT/plugins/xeruca-player/skills/player-manager/scr
 
 portable_require_layout() {
   [ -f "$PORTABLE_ROOT/VERSION" ] || { printf 'error: VERSION is missing from %s\n' "$PORTABLE_ROOT" >&2; exit 1; }
-  [ -f "$PORTABLE_SKILL/SKILL.md" ] || { printf 'error: Xeruca watch-video skill is missing\n' >&2; exit 1; }
-  [ -f "$PORTABLE_MANAGER" ] || { printf 'error: Xeruca player manager is missing\n' >&2; exit 1; }
+  [ -f "$PORTABLE_SKILL/SKILL.md" ] || { printf 'error: INSU watch-video skill is missing\n' >&2; exit 1; }
+  [ -f "$PORTABLE_MANAGER" ] || { printf 'error: INSU player manager is missing\n' >&2; exit 1; }
   case "$PORTABLE_WORKSPACE/" in
     "$PORTABLE_ROOT"/.local/*) ;;
     *) printf 'error: portable workspace escaped the repository root\n' >&2; exit 1 ;;

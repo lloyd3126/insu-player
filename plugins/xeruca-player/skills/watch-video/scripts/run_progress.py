@@ -140,7 +140,7 @@ def main() -> int:
             {
                 "state": "interrupted",
                 "stage": args.stage,
-                "message": "工作已由使用者中斷；可從此階段繼續",
+                "message": "工作已由使用者中斷。可從此階段繼續",
                 "process": None,
                 "lastError": "interrupted by user",
             },

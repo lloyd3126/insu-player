@@ -1,4 +1,4 @@
-# YouTube 本機字幕播放器模板
+# INSU 本機字幕播放器模板
 
 這是一個不需要建置工具或外部 CDN 的靜態播放器。它使用瀏覽器原生 `<video controls>` 播放本機 MP4，以 JavaScript 讀取外部 VTT，並依影片時間切換字幕。
 
@@ -20,9 +20,9 @@ player/
 
 ## 從完全沒有工具開始
 
-如果還沒有影片、字幕、Python、FFmpeg、yt-dlp 或 Whisper，請從 [YouTube 本機字幕 skill](../SKILL.md) 開始。該流程會先檢查環境，再把工具安裝到隔離的工作資料夾，並提供完整移除方式。
+如果還沒有影片、字幕、Python、FFmpeg、yt-dlp 或 Whisper，請從 [INSU watch-video skill](../SKILL.md) 開始。該流程會先檢查環境，再把工具安裝到隔離的工作資料夾，並提供完整移除方式。
 
-如果已經有上面五個檔案，只需要一個本機 HTTP server。可以使用 Xeruca workflow 安裝的 Python：
+如果已經有上面五個檔案，只需要一個本機 HTTP server。可以使用 INSU 工作流程安裝的 Python：
 
 ```bash
 plugins/xeruca-player/skills/watch-video/scripts/serve-player.sh \
@@ -76,7 +76,7 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory <player-directory>
 1. 回到 HTTP server terminal 按 `Ctrl+C`。
 2. 只要停止使用，不需要刪除任何檔案。
 3. 要移除播放器時，先確認資料夾內是否有唯一一份影片或字幕備份，再刪除精確的 player 目錄。
-4. 要同時移除 Whisper、yt-dlp、uv、Deno、模型與快取，使用 Xeruca workflow 的 `uninstall.sh` 先做 dry run。
+4. 要同時移除 Whisper、yt-dlp、uv、Deno、模型與快取，使用 INSU 工作流程的 `uninstall.sh` 先做 dry run。
 5. 播放器只包含資料夾內的 HTML、JavaScript、MP4 與 VTT，沒有前端套件需要 uninstall。
 
 使用者影片、字幕和翻譯是產物，預設不會跟著工具移除。

@@ -101,9 +101,17 @@ if [ "$provider_name" = "openai" ]; then transcribe_args+=(--consent-to-upload);
 
 caption_job_state transcription --job-dir "$job_dir" --provider "$provider_name" --model "$model_name" >/dev/null
 caption_note "Transcribing with provider=$provider_name model=$model_name device=$device_name..."
+transcribe_command=("$CAPTION_PYTHON" "${transcribe_args[@]}")
+if [ "$provider_name" = "openai" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+  transcribe_command=(
+    "$CAPTION_PYTHON" "$CAPTION_ENVIRONMENT_SESSION"
+    --workspace "$CAPTION_WORKSPACE" --name OPENAI_API_KEY run --
+    "${transcribe_command[@]}"
+  )
+fi
 "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
   --job-dir "$job_dir" --state transcribing --stage "$provider_name" --message "$provider_name 正在轉錄" --success-message "$provider_name 轉錄完成" -- \
-  "$CAPTION_PYTHON" "${transcribe_args[@]}"
+  "${transcribe_command[@]}"
 
 vtt_file="$provider_output/transcript.vtt"
 caption_validate_vtt "$vtt_file"
@@ -114,7 +122,7 @@ caption_job_state subtitle --job-dir "$job_dir" --language "$track_code" --path 
 if [ -f "$caption_dir/zh-TW.vtt" ]; then
   caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與繁體中文字幕已可觀看" --progress 100 --clear-error --record-history >/dev/null
 else
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "轉錄已完成；等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "轉錄已完成。等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
 fi
 
 trap - ERR

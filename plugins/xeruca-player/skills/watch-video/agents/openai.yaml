@@ -1,4 +1,4 @@
 interface:
-  display_name: "Xeruca Player"
+  display_name: "INSU Player"
   short_description: "將授權影片下載、轉錄、翻譯並在 Codex 影片庫觀看"
-  default_prompt: "Use $watch-video to add this authorized video to Xeruca Player and open the local library."
+  default_prompt: "Use $watch-video to add this authorized video to INSU Player and open the local library."

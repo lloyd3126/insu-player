@@ -1,6 +1,6 @@
 ---
 name: video-library
-description: Start, inspect, repair, or clean an existing Xeruca Player localhost library while preserving durable media, subtitles, status, and playback progress.
+description: Start, inspect, repair, or clean an existing INSU Player localhost library while preserving durable media, subtitles, status, and playback progress.
 ---
 
 # Repository entrypoint

@@ -25,6 +25,8 @@ scripts/portable/setup.sh --provider openai
 
 This installs all dependencies below `.local/xeruca-player/.agent-tools/`. Never store the API key in the repository, an environment file, logs, or generated metadata.
 
+When this skill is invoked through the INSU `watch-video` workflow, the user may provide `OPENAI_API_KEY` through the homepage environment modal. That value remains in the active library server process only, and `transcribe.sh` passes it directly into the authorized child process without writing or printing it. Direct invocation of `transcribe_media.py` still requires the current process environment.
+
 ## Run
 
 Local:

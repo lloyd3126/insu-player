@@ -1,4 +1,4 @@
-# Xeruca Player agent guide
+# INSU Player agent guide
 
 本 repository 以 Codex skills 為唯一操作入口。先選擇 `.agents/skills/` 中符合任務的 skill；該入口會要求完整讀取 `plugins/xeruca-player/skills/` 的 canonical skill。使用者本次明確指示永遠優先。
 

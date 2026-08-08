@@ -1,7 +1,7 @@
 {
   "name": "xeruca-player",
   "interface": {
-    "displayName": "Xeruca Player",
+    "displayName": "INSU Player",
     "description": "A portable local caption video library for Codex."
   },
   "plugins": [

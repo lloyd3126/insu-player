@@ -1,6 +1,6 @@
 ---
 name: watch-video
-description: Add an authorized video to Xeruca Player and coordinate download, captions, transcription, translation, recovery, and local playback from one library homepage.
+description: Add an authorized video to INSU Player and coordinate download, captions, transcription, translation, recovery, and local playback from one library homepage.
 ---
 
 # Repository entrypoint

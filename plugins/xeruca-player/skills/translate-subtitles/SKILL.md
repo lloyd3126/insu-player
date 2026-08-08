@@ -1,6 +1,6 @@
 ---
 name: translate-subtitles
-description: Translate a WebVTT subtitle track into Traditional Chinese while preserving every cue, timestamp, order, and valid VTT structure, then import it into a Xeruca Player job. Use for subtitle translation, bilingual caption preparation, a needs_translation job, or fixing an invalid translated VTT.
+description: Translate a WebVTT subtitle track into Traditional Chinese while preserving every cue, timestamp, order, and valid VTT structure, then import it into an INSU Player job. Use for subtitle translation, bilingual caption preparation, a needs_translation job, or fixing an invalid translated VTT.
 ---
 
 # Translate Subtitles

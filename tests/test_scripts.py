@@ -161,6 +161,13 @@ exit 2
         self.assertIn("library server is still running", attempted.stdout)
         self.assertTrue((self.workspace / ".agent-tools" / "xeruca-player").is_dir())
 
+    def test_uninstall_removes_stale_environment_session_descriptor(self) -> None:
+        descriptor = self.workspace / ".insu-environment-session.json"
+        descriptor.write_text('{"token":"stale"}\n', encoding="utf-8")
+        descriptor.chmod(0o600)
+        self.run_script("uninstall.sh", str(self.workspace), "--yes")
+        self.assertFalse(descriptor.exists())
+
     def test_runtime_cache_environment_stays_under_workspace(self) -> None:
         command = f"""
 set -eu
@@ -185,6 +192,36 @@ printf '%s\n' "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$DENO_DIR" "$XDG_CACHE_H
         source = (SCRIPTS / "setup-environment.sh").read_text(encoding="utf-8")
         for forbidden in ("brew install", "apt-get", "sudo ", "dnf install", "pacman -S"):
             self.assertNotIn(forbidden, source)
+
+    def test_api_transcription_can_use_the_active_server_session_without_weakening_consent(self) -> None:
+        source = (SCRIPTS / "transcribe.sh").read_text(encoding="utf-8")
+        helper = (SCRIPTS / "environment_session.py").read_text(encoding="utf-8")
+        self.assertIn("--allow-api-upload", source)
+        self.assertIn("--consent-to-upload", source)
+        self.assertIn("CAPTION_ENVIRONMENT_SESSION", source)
+        self.assertIn("os.execvpe", helper)
+        self.assertNotIn("print(value", helper)
+
+        check = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "environment_session.py"),
+                "--workspace",
+                str(self.workspace),
+                "--name",
+                "OPENAI_API_KEY",
+                "check",
+            ],
+            cwd=REPO_ROOT,
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(check.returncode, 0)
+        self.assertNotIn("usage:", check.stdout)
+        self.assertIn("environment session", check.stdout)
 
 
 if __name__ == "__main__":

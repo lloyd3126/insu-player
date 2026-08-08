@@ -1,4 +1,4 @@
-# YouTube 本機字幕流程：故障排除
+# yt-dlp 來源字幕流程：故障排除
 
 先執行：
 
@@ -16,7 +16,7 @@ plugins/xeruca-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 ## yt-dlp 顯示 JavaScript runtime 或 EJS 警告
 
-目前完整 YouTube 支援可能需要 `yt-dlp-ejs` 和 JavaScript runtime。此 Xeruca workflow 安裝 `yt-dlp[default]`，並在工作 runtime 內放置 Deno。確認：
+目前完整 YouTube 支援可能需要 `yt-dlp-ejs` 和 JavaScript runtime。此 INSU 工作流程安裝 `yt-dlp[default]`，並在工作 runtime 內放置 Deno。確認：
 
 ```bash
 <workspace>/.agent-tools/xeruca-player/bin/deno --version
@@ -29,13 +29,13 @@ plugins/xeruca-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 - 停止高速重試，確認 yt-dlp 是否為最新版。
 - 先在一般瀏覽器確認影片確實可由使用者觀看。
-- 年齡、會員、私人或地區限制不能靠本 Xeruca workflow 規避。
+- 年齡、會員、私人或地區限制不能靠本 INSU 工作流程規避。
 - `--cookies-from-browser` 會讀取登入工作階段，屬於敏感權限；只有使用者明確要求、理解風險且有權存取時才使用。
 - 不匯出 cookie 到 repository，不把 cookie 貼進聊天；完成後依需要登出或撤銷工作階段。
 
 ## 找不到繁體中文字幕
 
-先列出實際可用字幕，不要假設語言代碼一定存在。依序採用：作者字幕、YouTube 自動字幕、Whisper 原文轉錄，再由 Agent 保留時間戳翻譯。Whisper 的翻譯任務目標是英文，不會直接產生繁中。
+先列出實際可用字幕，不要假設語言代碼一定存在。依序採用：來源作者字幕、來源自動字幕、Whisper 原文轉錄，再由 Agent 保留時間戳翻譯。Whisper 的翻譯任務目標是英文，不會直接產生繁中。
 
 ## VTT 已下載但播放器顯示 0 cues
 

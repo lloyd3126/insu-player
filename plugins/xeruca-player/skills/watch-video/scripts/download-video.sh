@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: download-video.sh <workspace> <youtube-url>\n'
+  printf 'usage: download-video.sh <workspace> <video-url>\n'
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then usage; exit 0; fi
@@ -40,7 +40,7 @@ caption_dir="$job_dir/captions"
 mkdir -p "$source_dir" "$youtube_caption_dir" "$caption_dir" "$job_dir/logs"
 
 caption_job_state init --job-dir "$job_dir" --video-id "$video_id" --source-url "$video_url" --title "$video_title" >/dev/null
-caption_job_state update --job-dir "$job_dir" --state checking --stage subtitles --message "正在檢查 YouTube 字幕" --progress 0 --clear-error --record-history >/dev/null
+caption_job_state update --job-dir "$job_dir" --state checking --stage subtitles --message "正在檢查來源字幕" --progress 0 --clear-error --record-history >/dev/null
 
 fail_job() {
   local exit_code=$?
@@ -52,7 +52,7 @@ trap fail_job ERR
 
 caption_note "Attempting to download available English and Traditional Chinese subtitles..."
 if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-  --job-dir "$job_dir" --state checking --stage subtitles --message "正在取得 YouTube 字幕" --success-message "字幕來源檢查完成" --allow-failure -- \
+  --job-dir "$job_dir" --state checking --stage subtitles --message "正在取得來源字幕" --success-message "字幕來源檢查完成" --allow-failure -- \
   "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-subs --write-auto-subs \
   --sub-langs 'en.*,zh-Hant.*,zh-TW.*' --sub-format vtt --output "$youtube_caption_dir/%(id)s.%(ext)s" "$video_url"; then
   caption_note "warning: subtitle download was incomplete; media download will continue"
@@ -134,9 +134,9 @@ caption_job_state asset --job-dir "$job_dir" --name manifest --path "$job_dir/ma
 if [ -f "$caption_dir/zh-TW.vtt" ]; then
   caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與繁體中文字幕已可觀看" --progress 100 --clear-error --record-history >/dev/null
 elif [ -f "$caption_dir/en.vtt" ]; then
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "影片與英文字幕已就緒；等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "影片與英文字幕已就緒。等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
 else
-  caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage transcription --message "影片已就緒；沒有可用字幕，等待本機轉錄" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage transcription --message "影片已就緒。沒有可用字幕，等待本機轉錄" --progress 0 --clear-error --record-history >/dev/null
 fi
 
 trap - ERR

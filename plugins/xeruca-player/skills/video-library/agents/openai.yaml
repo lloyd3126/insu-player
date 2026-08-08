@@ -1,4 +1,4 @@
 interface:
   display_name: "影片庫"
-  short_description: "啟動、檢查、修復與管理 Xeruca 本機影片庫服務"
-  default_prompt: "Use $video-library to inspect and open my Xeruca Player library."
+  short_description: "啟動、檢查、修復與管理 INSU 本機影片庫服務"
+  default_prompt: "Use $video-library to inspect and open my INSU Player library."

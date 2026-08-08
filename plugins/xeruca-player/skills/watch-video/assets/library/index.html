@@ -4,138 +4,259 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#071617" />
-    <title>Xeruca Player · 本機影片庫</title>
+    <meta name="theme-color" content="#111213" />
+    <title>INSU Player 本機影片列表</title>
     <link rel="stylesheet" href="/assets/library.css" />
     <script src="/assets/library.js" defer></script>
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
     <header class="site-header">
-      <a class="brand" href="/" aria-label="回到影片庫首頁">
-        <svg class="brand-mark" viewBox="0 0 56 56" aria-hidden="true">
-          <path d="M17 31c0-8 5-14 13-14 4 0 8 2 10 5l7-8c3 8 0 16-7 20-2 7-8 11-15 10-7-1-11-6-8-13Z" />
-          <path class="brand-play" d="m24 24 11 7-11 7Z" />
-          <path d="M18 39 9 47M25 43l-3 9M36 40l8 8" />
-        </svg>
+      <a class="brand" href="/" aria-label="回到 INSU Player 首頁">
+        <img class="brand-mark" src="/assets/taiwan-whistling-thrush.png?v=3" alt="" />
         <span>
-          <strong>XERUCA PLAYER</strong>
-          <small>臺灣招潮播放器 · LOCAL LIBRARY</small>
+          <strong>INSU PLAYER</strong>
         </span>
       </a>
-      <div class="server-state">
-        <span id="server-lamp" class="server-lamp" aria-hidden="true"></span>
-        <span id="server-label">正在連接本機服務</span>
-        <time id="server-time"></time>
-      </div>
+      <nav class="primary-nav" aria-label="主要導覽">
+        <button id="open-usage-example-nav" class="nav-link" type="button" aria-haspopup="dialog" aria-controls="usage-example-dialog">開始使用</button>
+        <button id="open-advanced-usage" class="nav-link" type="button" aria-haspopup="dialog" aria-controls="advanced-usage-dialog">進階使用</button>
+        <button id="open-supported-sites" class="nav-link" type="button" aria-haspopup="dialog" aria-controls="supported-sites-dialog">支援網站</button>
+        <button id="open-settings" class="nav-link" type="button" aria-haspopup="dialog" aria-controls="settings-dialog">介面設定</button>
+        <button id="open-environment" class="nav-link" type="button" aria-haspopup="dialog" aria-controls="environment-dialog">環境變數</button>
+        <button id="open-models" class="nav-link" type="button" aria-haspopup="dialog" aria-controls="models-dialog">模型列表</button>
+        <button id="open-library" class="nav-link nav-library" type="button" aria-haspopup="dialog" aria-controls="library-dialog">
+          <span>影片列表</span><strong id="nav-library-count">—</strong>
+        </button>
+      </nav>
     </header>
 
-    <main>
+    <main class="landing">
       <section class="hero" aria-labelledby="page-title">
-        <div>
-          <p class="eyebrow">CALL / CAPTURE / CAPTION / PLAY</p>
-          <h1 id="page-title">Call in a video.<br /><em>Your agent handles the rest.</em></h1>
-          <p class="hero-copy">把有權處理的影片交給 Agent。下載、轉錄、翻譯與觀看狀態都留在這個首頁；播放器在頁面內開啟，不打斷正在進行的工作。</p>
+        <div class="hero-message">
+          <p class="eyebrow">交付影片 / 準備字幕 / 開始播放</p>
+          <h1 id="page-title">用 Agent<br /><span class="accent-line">讓影片跨越語言</span></h1>
+          <p class="hero-copy">把想看的影片網址交給 Agent，Agent 會準備好影片與字幕後，放進 INSU 讓你觀看。</p>
+          <button id="open-usage-example" class="hero-direction" type="button" aria-haspopup="dialog" aria-controls="usage-example-dialog">開始使用</button>
         </div>
-        <div class="system-note">
-          <span>TIDELINE / LOCAL SAFE</span>
-          <p>首頁只把播放位置寫回影片 job。新增、重試、翻譯與清理交給 Agent，所有工作流資產留在 Xeruca workspace。</p>
-        </div>
-      </section>
-
-      <section class="metrics" aria-label="影片庫摘要">
-        <article>
-          <span>全部項目</span>
-          <strong id="metric-total">—</strong>
-          <small>ARCHIVE</small>
-        </article>
-        <article>
-          <span>處理中</span>
-          <strong id="metric-active">—</strong>
-          <small>IN FLIGHT</small>
-        </article>
-        <article>
-          <span>需要處理</span>
-          <strong id="metric-attention">—</strong>
-          <small>ATTENTION</small>
-        </article>
-        <article>
-          <span>可觀看</span>
-          <strong id="metric-watchable">—</strong>
-          <small>SCREENABLE</small>
-        </article>
-        <article class="storage-metric">
-          <span>媒體容量</span>
-          <strong id="metric-storage">—</strong>
-          <small>LOCAL STORAGE</small>
-        </article>
-      </section>
-
-      <section class="library" aria-labelledby="library-title">
-        <div class="library-heading">
-          <div>
-            <p class="section-index">01 / XERUCA TIDELINE</p>
-            <h2 id="library-title">影片與處理狀態</h2>
-          </div>
-          <div class="toolbar">
-            <label class="search-field">
-              <span class="sr-only">搜尋影片</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
-              <input id="search-input" type="search" placeholder="搜尋標題或影片 ID" autocomplete="off" />
-            </label>
-            <label class="filter-field">
-              <span class="sr-only">篩選狀態</span>
-              <select id="state-filter">
-                <option value="all">全部狀態</option>
-                <option value="active">處理中</option>
-                <option value="attention">需要處理</option>
-                <option value="watchable">可觀看</option>
-                <option value="ready">已完成</option>
-              </select>
-            </label>
-            <button id="refresh-button" class="icon-button" type="button" title="立即重新整理" aria-label="立即重新整理">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
-            </button>
-          </div>
-        </div>
-
-        <div id="table-status" class="table-status" role="status">正在讀取影片庫……</div>
-        <div class="table-frame">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">影片</th>
-                <th scope="col">目前狀態</th>
-                <th scope="col">字幕</th>
-                <th scope="col">更新</th>
-                <th scope="col">容量</th>
-                <th scope="col"><span class="sr-only">操作</span></th>
-              </tr>
-            </thead>
-            <tbody id="job-rows"></tbody>
-          </table>
-          <div id="empty-state" class="empty-state" hidden>
-            <span>LOW TIDE · NO MATERIAL</span>
-            <h3>目前沒有符合條件的影片</h3>
-            <p>請 Agent 使用 <code>$watch-video</code> 新增影片；任務建立後會自動出現在這裡。</p>
-          </div>
+        <div class="hero-emblem" aria-hidden="true">
+          <div class="hero-orbit"><img src="/assets/taiwan-whistling-thrush.png?v=3" alt="臺灣紫嘯鶇品牌標誌" /></div>
         </div>
       </section>
-
-      <footer>
-        <span>XERUCA PLAYER · LOCALHOST ONLY · SAME-ORIGIN MEDIA</span>
+      <footer class="landing-footer">
+        <span class="server-state">
+          <span id="server-lamp" class="server-lamp" aria-hidden="true"></span>
+          <span id="server-label">正在連接本機服務</span>
+        </span>
+        <span class="footer-middle">
+          <span class="footer-message">© <span id="footer-year"></span> INSU</span>
+          <button id="open-usage-policy" class="footer-policy-link" type="button" aria-haspopup="dialog" aria-controls="usage-policy-dialog">使用規範</button>
+        </span>
         <span id="last-updated">尚未同步</span>
       </footer>
     </main>
 
+    <dialog id="usage-example-dialog" class="example-dialog" aria-labelledby="usage-example-title">
+      <div class="dialog-bar">
+        <div>
+          <span>00 / START WITH YOUTUBE</span>
+          <h2 id="usage-example-title">從 YouTube 開始</h2>
+        </div>
+        <button id="close-usage-example" class="close-button" type="button" aria-label="關閉 YouTube 範例">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div class="example-content">
+        <div class="handoff-copy">
+          <p class="section-index">YOUTUBE / EXAMPLE</p>
+          <h3>把網址貼到對話</h3>
+          <p>選一支想看的 YouTube 影片，把網址貼回對話並告訴 Agent。Agent 準備完成後，影片就會出現在 INSU Player。</p>
+          <div class="handoff-actions">
+            <button id="copy-youtube-prompt" class="primary-action" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11"></rect><path d="M16 8V5H5v11h3"></path></svg>
+              <span>複製 YouTube 範例</span>
+            </button>
+          </div>
+          <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="prompt-card" aria-label="YouTube 對話範例">
+          <div class="prompt-card-head">
+            <span class="youtube-signal"><i aria-hidden="true"></i>YOUTUBE</span>
+            <span>01 / SUPPORTED</span>
+          </div>
+          <ol class="handoff-steps">
+            <li><span>01</span><div><strong>複製影片網址</strong><small>從 YouTube 選擇一支影片作為開始</small></div></li>
+            <li><span>02</span><div><strong>回到 Agent 對話</strong><small>貼上網址並用自然語言告訴 Agent</small></div></li>
+          </ol>
+          <div class="prompt-block">
+            <span>PASTE INTO AGENT</span>
+            <code id="youtube-prompt-example">請把這支 YouTube 影片加入 INSU Player：<br />https://www.youtube.com/watch?v=VIDEO_ID</code>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="advanced-usage-dialog" class="advanced-dialog" aria-labelledby="advanced-usage-title">
+      <div class="dialog-bar">
+        <div>
+          <span>01 / ADVANCED USE</span>
+          <h2 id="advanced-usage-title">進階使用</h2>
+        </div>
+        <button id="close-advanced-usage" class="close-button" type="button" aria-label="關閉進階使用">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div id="advanced-usage-content" class="advanced-usage-content">
+        <section class="advanced-section" aria-labelledby="situations-title">
+          <div class="advanced-section-heading">
+            <div><span>READY TO COPY</span><h3 id="situations-title">使用情境</h3></div>
+            <small>BUILT-IN PLAYBOOK</small>
+          </div>
+          <div class="usage-prompt-grid">
+            <article class="usage-prompt-card">
+              <div class="usage-prompt-head"><span>01 / WATCH</span><h4>準備影片與繁中字幕</h4></div>
+              <p>想直接觀看一支影片，並優先沿用來源已經提供的字幕。</p>
+              <div class="advanced-prompt-block">
+                <code>請把這支影片加入 INSU Player。優先使用來源既有字幕。沒有字幕時再轉錄，並準備繁體中文字幕：&#10;VIDEO_URL</code>
+                <button class="copy-advanced-prompt" type="button" data-copy-prompt><span>複製提示</span></button>
+              </div>
+            </article>
+            <article class="usage-prompt-card">
+              <div class="usage-prompt-head"><span>02 / LEARN</span><h4>保留雙語字幕</h4></div>
+              <p>用影片學習語言，希望播放器中可以切換原文與繁體中文。</p>
+              <div class="advanced-prompt-block">
+                <code>請把這支影片加入 INSU Player，保留原文字幕並準備繁體中文字幕，讓我可以在播放器中切換：&#10;VIDEO_URL</code>
+                <button class="copy-advanced-prompt" type="button" data-copy-prompt><span>複製提示</span></button>
+              </div>
+            </article>
+            <article class="usage-prompt-card">
+              <div class="usage-prompt-head"><span>03 / QUEUE</span><h4>整理多支單一影片</h4></div>
+              <p>一次交付多個單支影片網址，各自保留狀態，不展開播放清單。</p>
+              <div class="advanced-prompt-block">
+                <code>請把以下每一支影片分別加入 INSU Player，不要展開播放清單。逐一準備可觀看影片與繁體中文字幕：&#10;VIDEO_URL_1&#10;VIDEO_URL_2</code>
+                <button class="copy-advanced-prompt" type="button" data-copy-prompt><span>複製提示</span></button>
+              </div>
+            </article>
+            <article class="usage-prompt-card">
+              <div class="usage-prompt-head"><span>04 / RECOVER</span><h4>接續中斷的工作</h4></div>
+              <p>下載、轉錄或翻譯停住時，先保留已完成成果，再從正確階段繼續。</p>
+              <div class="advanced-prompt-block">
+                <code>請檢查 INSU Player 中這支影片的狀態與最近紀錄，保留已完成的影片與字幕，並從中斷的階段繼續：&#10;VIDEO_TITLE_OR_ID</code>
+                <button class="copy-advanced-prompt" type="button" data-copy-prompt><span>複製提示</span></button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="advanced-section my-prompts-section" aria-labelledby="my-prompts-title">
+          <div class="advanced-section-heading">
+            <div><span>YOUR PLAYBOOK</span><h3 id="my-prompts-title">我的提示</h3></div>
+            <small id="my-prompts-count">READ ONLY</small>
+          </div>
+          <div id="my-prompts-list" class="my-prompts-list" aria-live="polite">
+            <div class="my-prompts-empty"><span>正在讀取我的提示……</span></div>
+          </div>
+        </section>
+
+        <section class="advanced-explore" aria-labelledby="advanced-explore-title">
+          <div class="advanced-explore-copy">
+            <span>MAKE IT YOURS</span>
+            <h3 id="advanced-explore-title">和 Agent 探索更多用法</h3>
+            <p>想到新的流程，就請 Agent 把它整理進「我的提示」。這裡只負責閱讀與複製，新增與修改仍由 Agent 完成。</p>
+          </div>
+          <div class="prompt-management-grid">
+            <article>
+              <span>ADD TO MY PROMPTS</span>
+              <strong>新增一則提示</strong>
+              <code>請把下面的使用情境加入 INSU Player 的「我的提示」。請整理成清楚、可直接複製的提示：&#10;&#10;名稱：PROMPT_NAME&#10;使用情境：WHEN_TO_USE&#10;提示內容：PROMPT_TEXT</code>
+              <button class="copy-advanced-prompt" type="button" data-copy-prompt><span>複製新增指令</span></button>
+            </article>
+            <article>
+              <span>REFINE WITH THE AGENT</span>
+              <strong>修改既有提示</strong>
+              <code>請修改 INSU Player「我的提示」中的「PROMPT_NAME」。保留原本用途，並依照下面要求更新成可直接複製的版本：&#10;&#10;修改要求：CHANGE_REQUEST</code>
+              <button class="copy-advanced-prompt" type="button" data-copy-prompt><span>複製修改指令</span></button>
+            </article>
+          </div>
+          <p id="advanced-copy-status" class="advanced-copy-status" role="status" aria-live="polite"></p>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog id="library-dialog" class="library-dialog" aria-labelledby="library-title">
+      <div class="dialog-bar">
+        <div>
+          <span>LOCAL LIBRARY · LIVE</span>
+          <h2 id="library-title">影片列表</h2>
+        </div>
+        <button id="close-library" class="close-button" type="button" aria-label="關閉影片列表">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div class="library-content">
+        <section class="metrics" aria-label="影片列表摘要">
+          <article><span>全部項目</span><strong id="metric-total">—</strong><small>ARCHIVE</small></article>
+          <article><span>處理中</span><strong id="metric-active">—</strong><small>IN FLIGHT</small></article>
+          <article><span>需要處理</span><strong id="metric-attention">—</strong><small>ATTENTION</small></article>
+          <article><span>可觀看</span><strong id="metric-watchable">—</strong><small>SCREENABLE</small></article>
+          <article class="storage-metric"><span>媒體容量</span><strong id="metric-storage">—</strong><small>LOCAL STORAGE</small></article>
+        </section>
+
+        <section class="library" aria-labelledby="library-list-title">
+          <div class="library-heading">
+            <div>
+              <p class="section-index">01 / INSU COLLECTION</p>
+              <h2 id="library-list-title">影片與處理狀態</h2>
+            </div>
+            <div class="toolbar">
+              <label class="search-field">
+                <span class="sr-only">搜尋影片</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+                <input id="search-input" type="search" placeholder="搜尋標題或影片 ID" autocomplete="off" />
+              </label>
+              <label class="filter-field">
+                <span class="sr-only">篩選狀態</span>
+                <select id="state-filter">
+                  <option value="all">全部狀態</option>
+                  <option value="active">處理中</option>
+                  <option value="attention">需要處理</option>
+                  <option value="watchable">可觀看</option>
+                  <option value="ready">已完成</option>
+                </select>
+              </label>
+              <button id="refresh-button" class="icon-button" type="button" title="立即重新整理" aria-label="立即重新整理">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="table-status" class="table-status" role="status">正在讀取影片列表……</div>
+          <div class="table-frame">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">影片</th><th scope="col">目前狀態</th><th scope="col">字幕</th><th scope="col">更新</th><th scope="col">容量</th><th scope="col"><span class="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody id="job-rows"></tbody>
+            </table>
+            <div id="empty-state" class="empty-state" hidden>
+              <span>LOW TIDE · NO MATERIAL</span>
+              <h3>目前還沒有影片</h3>
+              <p>先回到首頁開始使用，或瀏覽 yt-dlp 支援的其他網站。任務建立後會自動出現在這裡。</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </dialog>
+
     <dialog id="player-dialog" class="player-dialog" aria-labelledby="modal-title">
       <div class="dialog-bar">
         <div>
-          <span id="modal-kicker">XERUCA SCREENING</span>
+          <span id="modal-kicker">INSU SCREENING</span>
           <h2 id="modal-title">影片播放器</h2>
         </div>
         <button id="close-player" class="close-button" type="button" aria-label="關閉播放器">
-          <span>ESC</span>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
         </button>
       </div>
@@ -159,11 +280,250 @@
           <h2 id="detail-title">任務紀錄</h2>
         </div>
         <button id="close-detail" class="close-button" type="button" aria-label="關閉任務紀錄">
-          <span>ESC</span>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
         </button>
       </div>
       <div id="detail-content" class="detail-content"></div>
+    </dialog>
+
+    <dialog id="supported-sites-dialog" class="sources-dialog" aria-labelledby="supported-sites-title">
+      <div class="dialog-bar">
+        <div>
+          <span>SOURCE DIRECTORY · YT-DLP</span>
+          <h2 id="supported-sites-title">支援的影片網站</h2>
+        </div>
+        <button id="close-supported-sites" class="close-button" type="button" aria-label="關閉支援網站清單">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div class="sources-content">
+        <div class="sources-intro">
+          <p class="section-index">CURRENT COVERAGE</p>
+          <p>INSU Player 的來源支援由 <strong>yt-dlp</strong> 提供。只要目前安裝版本有對應的網站解析器，INSU 就會接受該平台的單支影片網址。</p>
+        </div>
+        <section class="popular-sources" aria-labelledby="popular-sources-title">
+          <div class="source-section-heading">
+            <div><span>QUICK REFERENCE</span><h3 id="popular-sources-title">常見平台</h3></div>
+            <small>EXAMPLES · NOT EXHAUSTIVE</small>
+          </div>
+          <ul>
+            <li><strong>YouTube</strong><small>影片 · Shorts</small></li>
+            <li><strong>Vimeo</strong><small>影片 · Showcase</small></li>
+            <li><strong>Twitch</strong><small>VOD · Clips</small></li>
+            <li><strong>TikTok</strong><small>單支影片</small></li>
+            <li><strong>X / Twitter</strong><small>貼文影片</small></li>
+            <li><strong>Instagram</strong><small>Reels · Posts</small></li>
+            <li><strong>Facebook</strong><small>影片 · Reels</small></li>
+            <li><strong>SoundCloud</strong><small>音訊</small></li>
+          </ul>
+        </section>
+        <section class="extractor-directory" aria-labelledby="extractor-directory-title">
+          <div class="source-section-heading">
+            <div><span>LIVE FROM WORKSPACE</span><h3 id="extractor-directory-title">yt-dlp 網站解析器清單</h3></div>
+            <small id="yt-dlp-version">DETECTING VERSION</small>
+          </div>
+          <div class="source-toolbar">
+            <label class="source-search">
+              <span class="sr-only">搜尋支援網站或網站解析器</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+              <input id="source-search-input" type="search" placeholder="搜尋 YouTube、Vimeo、Twitch…" autocomplete="off" />
+            </label>
+            <span id="source-list-status" role="status" aria-live="polite">正在讀取目前版本……</span>
+          </div>
+          <div id="source-list-loading" class="source-list-message"><i aria-hidden="true"></i><span>正在詢問 workspace 內的 yt-dlp</span></div>
+          <div id="source-list-unavailable" class="source-list-message unavailable" hidden>
+            <span>這個 workspace 尚未安裝 yt-dlp。完成環境設定後，重新開啟此視窗就會顯示目前版本的完整清單。</span>
+          </div>
+          <ul id="supported-sites-list" class="supported-sites-list" hidden></ul>
+        </section>
+        <section class="research-callout" aria-labelledby="research-title">
+          <div>
+            <span>NOT LISTED? CALL THE AGENT.</span>
+            <h3 id="research-title">研究還沒支援的平台</h3>
+            <p>把來源網址交給 Agent，請 Agent 使用 INSU PLAYER 檢查 yt-dlp、公開介面與媒體格式，找出安全可行的支援方式。</p>
+          </div>
+          <div class="research-prompt">
+            <code>請使用 INSU PLAYER 研究這個平台是否能支援：<br />PLATFORM_URL</code>
+            <button id="copy-research-prompt" type="button">複製研究指令</button>
+            <span id="research-copy-status" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog id="models-dialog" class="models-dialog" aria-labelledby="models-title">
+      <div class="dialog-bar">
+        <div>
+          <span>TRANSCRIPTION MODELS</span>
+          <h2 id="models-title">模型列表</h2>
+        </div>
+        <button id="close-models" class="close-button" type="button" aria-label="關閉模型列表">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div class="models-content">
+        <section class="model-group" aria-labelledby="local-models-title">
+          <div class="model-group-heading">
+            <div><span>LOCAL · WHISPER</span><h3 id="local-models-title">本機模型</h3></div>
+            <small id="local-models-summary">正在確認安裝狀態</small>
+          </div>
+          <div class="model-table-frame">
+            <table class="model-table">
+              <thead><tr><th scope="col">模型</th><th scope="col">狀態</th><th scope="col">實際下載大小</th></tr></thead>
+              <tbody id="local-model-rows"><tr class="model-message-row"><td colspan="3">正在讀取 workspace</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="model-group api-model-group" aria-labelledby="api-models-title">
+          <div class="model-group-heading">
+            <div><span>OPENAI API</span><h3 id="api-models-title">API 模型</h3></div>
+            <small id="api-models-summary">正在確認安裝狀態</small>
+          </div>
+          <div class="model-table-frame">
+            <table class="model-table">
+              <thead><tr><th scope="col">模型</th><th scope="col">支援狀態</th><th scope="col">API Key</th></tr></thead>
+              <tbody id="api-model-rows"><tr class="model-message-row"><td colspan="3">正在讀取 workspace</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog id="environment-dialog" class="environment-dialog" aria-labelledby="environment-title">
+      <div class="dialog-bar">
+        <div>
+          <span>SESSION ENVIRONMENT</span>
+          <h2 id="environment-title">環境變數</h2>
+        </div>
+        <button id="close-environment" class="close-button" type="button" aria-label="關閉環境變數">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div class="environment-content">
+        <section class="environment-intro" aria-labelledby="environment-intro-title">
+          <span>CURRENT SERVICE ONLY</span>
+          <h3 id="environment-intro-title">只在本次服務中使用</h3>
+          <p>停止或重新啟動本機服務後會自動清除。已套用的值不會再次顯示，只能覆寫或清除。</p>
+        </section>
+        <form id="environment-form" class="environment-form" autocomplete="off">
+          <div class="environment-variable-head">
+            <div>
+              <span>OPENAI_API_KEY</span>
+              <h3>OpenAI API 金鑰</h3>
+            </div>
+            <span id="environment-variable-status" class="environment-variable-status" data-tone="muted">正在確認</span>
+          </div>
+          <p>供 OpenAI API 轉錄使用</p>
+          <label class="environment-input-field" for="environment-value">
+            <span>新的值</span>
+            <input id="environment-value" name="session-secret" type="password" placeholder="輸入新的金鑰" autocomplete="off" autocapitalize="none" spellcheck="false" />
+          </label>
+          <div class="environment-actions">
+            <button id="save-environment" type="submit">套用到本次服務</button>
+            <button id="clear-environment" type="button">清除</button>
+          </div>
+          <p id="environment-provider-status" class="environment-provider-status"></p>
+          <p id="environment-action-status" class="environment-action-status" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+      <div class="dialog-bar">
+        <div>
+          <span>APPEARANCE</span>
+          <h2 id="settings-title">介面設定</h2>
+        </div>
+        <button id="close-settings" class="close-button" type="button" aria-label="關閉介面設定">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div class="settings-content">
+        <section class="species-card" aria-labelledby="species-title">
+          <div class="species-emblem" aria-hidden="true"><img src="/assets/taiwan-whistling-thrush.png?v=3" alt="" /></div>
+          <div>
+            <span>TAIWAN ENDEMIC SPECIES</span>
+            <h3 id="species-title">臺灣紫嘯鶇</h3>
+            <p>只分布於臺灣的溪谷鳥類，以帶金屬光澤的藍紫羽色作為 INSU Player 的代表色。</p>
+          </div>
+        </section>
+        <section class="accent-settings" aria-labelledby="accent-settings-title">
+          <div class="advanced-section-heading">
+            <div><span>LIVE THEME</span><h3 id="accent-settings-title">主色</h3></div>
+            <output id="accent-color-value" for="accent-color-input">#8B7CF6</output>
+          </div>
+          <div class="accent-swatches" aria-label="紫色系主色預設">
+            <button type="button" data-accent-color="#8B7CF6" aria-label="紫嘯紫" title="紫嘯紫"><i style="--swatch: #8B7CF6"></i><span>紫嘯紫</span></button>
+            <button type="button" data-accent-color="#7567D9" aria-label="暮溪紫" title="暮溪紫"><i style="--swatch: #7567D9"></i><span>暮溪紫</span></button>
+            <button type="button" data-accent-color="#9C72E8" aria-label="羽光紫" title="羽光紫"><i style="--swatch: #9C72E8"></i><span>羽光紫</span></button>
+            <button type="button" data-accent-color="#677FE8" aria-label="溪谷藍紫" title="溪谷藍紫"><i style="--swatch: #677FE8"></i><span>溪谷藍紫</span></button>
+          </div>
+          <div class="custom-accent-row">
+            <label for="accent-color-input"><span>自訂主色</span><small>選擇後立即套用</small></label>
+            <input id="accent-color-input" type="color" value="#8b7cf6" aria-label="選擇自訂主色" />
+          </div>
+          <button id="reset-accent-color" class="reset-accent-button" type="button">恢復紫嘯紫</button>
+        </section>
+        <section class="font-settings" aria-labelledby="font-settings-title">
+          <div class="advanced-section-heading">
+            <div><span>ONE TYPEFACE</span><h3 id="font-settings-title">字體</h3></div>
+            <output id="font-setting-value" for="font-preset">系統介面</output>
+          </div>
+          <label class="font-preset-field" for="font-preset">
+            <span>選擇整個頁面的字體</span>
+            <select id="font-preset">
+              <optgroup label="本機字體">
+                <option value="system">系統介面</option>
+                <option value="pingfang">蘋方－繁</option>
+                <option value="songti">宋體－繁</option>
+                <option value="kaiti">標楷體</option>
+              </optgroup>
+              <optgroup label="Google Fonts">
+                <option value="noto-sans-tc">Noto Sans TC</option>
+                <option value="noto-serif-tc">Noto Serif TC</option>
+                <option value="lxgw-wenkai-tc">LXGW WenKai TC</option>
+              </optgroup>
+              <option value="custom" hidden>自訂本機字體</option>
+            </select>
+          </label>
+          <div class="local-font-row">
+            <label for="local-font-input"><span>其他本機字體</span><small>輸入這台電腦已安裝的字體名稱</small></label>
+            <div>
+              <input id="local-font-input" type="text" maxlength="80" placeholder="例如：jf open 粉圓" autocomplete="off" />
+              <button id="apply-local-font" type="button">套用</button>
+            </div>
+          </div>
+          <p id="font-setting-status" class="font-setting-status" role="status" aria-live="polite">所有標題、內文與提示都使用同一種字體。</p>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog id="usage-policy-dialog" class="policy-dialog" aria-labelledby="usage-policy-title">
+      <div class="dialog-bar">
+        <div>
+          <span>USER AGREEMENT</span>
+          <h2 id="usage-policy-title">INSU Player 使用規範</h2>
+        </div>
+        <button id="close-usage-policy" class="close-button" type="button" aria-label="關閉使用規範">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div class="policy-content">
+        <div class="policy-scroll">
+          <p class="policy-lead">使用 INSU Player 前，請確認你了解並同意以下規範。</p>
+          <ol class="policy-rules">
+            <li><span>01</span><div><strong>內容權利</strong><p>你應只下載、轉錄、翻譯或保存自己擁有權利、已取得授權，或法律允許處理的內容。</p></div></li>
+            <li><span>02</span><div><strong>存取限制</strong><p>不得使用 INSU Player 繞過 DRM、付費牆、會員資格、私人存取、地區限制、帳號控制或其他技術保護。</p></div></li>
+            <li><span>03</span><div><strong>平台規範</strong><p>來源網站的服務條款與所在地法律仍然適用。yt-dlp 有可用的網站解析器，不代表自動取得內容使用權。</p></div></li>
+            <li><span>04</span><div><strong>轉錄與資料</strong><p>本機轉錄留在 workspace。選擇 OpenAI API 時會上傳音訊並可能產生費用。</p></div></li>
+            <li><span>05</span><div><strong>研究新來源</strong><p>Agent 可以研究尚未支援的平台，但研究與實作同樣不得規避存取控制或取得未授權內容。</p></div></li>
+            <li><span>06</span><div><strong>服務與免責</strong><p>INSU Player 依「現狀」與「可用狀態」提供，不提供任何明示或默示保證，包括可用性、準確性、完整性、不中斷、特定用途適用性或不侵權。在適用法律允許的最大範圍內，開發者不對因使用或無法使用 INSU Player 所生的直接、間接、附帶、特殊或衍生損害負責。</p></div></li>
+          </ol>
+        </div>
+        <div class="policy-actions">
+          <button id="accept-usage-policy" type="button">我了解並同意</button>
+        </div>
+      </div>
     </dialog>
 
     <template id="job-row-template">

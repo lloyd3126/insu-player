@@ -1,4 +1,4 @@
 interface:
   display_name: "字幕翻譯"
   short_description: "保留原始字幕時間軸並翻譯成繁體中文後安全匯入影片庫"
-  default_prompt: "Use $translate-subtitles to translate these subtitles into Traditional Chinese and import them into Xeruca Player."
+  default_prompt: "Use $translate-subtitles to translate these subtitles into Traditional Chinese and import them into INSU Player."

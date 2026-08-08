@@ -7,7 +7,7 @@
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "Xeruca Player",
+    "displayName": "INSU Player",
     "shortDescription": "Call in a video. Your agent handles the rest.",
     "longDescription": "Download authorized videos, reuse available captions, transcribe locally or with explicit OpenAI API consent, translate subtitles, and watch from a persistent localhost library inside Codex.",
     "developerName": "lloyd3126",
@@ -19,6 +19,6 @@
       "Same-origin iframe player with resume progress",
       "Safe update and complete removal"
     ],
-    "defaultPrompt": "Use $watch-video to add an authorized video to Xeruca Player and open the local library."
+    "defaultPrompt": "Use $watch-video to add an authorized video to INSU Player and open the local library."
   }
 }

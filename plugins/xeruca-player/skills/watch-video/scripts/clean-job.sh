@@ -36,7 +36,7 @@ if [ -f "$job_dir/status.json" ] && [ -x "$CAPTION_PYTHON" ]; then
       if [ -n "$process_pid" ] && kill -0 "$process_pid" 2>/dev/null; then
         caption_die "job is active ($current_state, pid $process_pid); stop it before cleaning"
       fi
-      caption_job_state update --job-dir "$job_dir" --state interrupted --stage "$current_state" --message "工作程序已停止；清理前標記為中斷" --record-history >/dev/null
+      caption_job_state update --job-dir "$job_dir" --state interrupted --stage "$current_state" --message "工作程序已停止。清理前標記為中斷" --record-history >/dev/null
       ;;
   esac
 fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect, update, or uninstall Xeruca Player without silent mutations."""
+"""Inspect, update, or uninstall INSU Player without silent mutations."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from typing import Any
 
 PLUGIN_NAME = "xeruca-player"
 MARKETPLACE_NAME = "xeruca-player"
-LATEST_RELEASE_API = "https://api.github.com/repos/lloyd3126/xeruca-player/releases/latest"
+LATEST_RELEASE_API = "https://api.github.com/repos/lloyd3126/insu-player/releases/latest"
 
 
 def plugin_root() -> Path:
