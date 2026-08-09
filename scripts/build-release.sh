@@ -32,6 +32,10 @@ package_name="insu-player-v${version}"
 package_dir="$stage/$package_name"
 mkdir -p "$package_dir"
 
+if [ "${INSU_RELEASE_SOURCE:-commit}" = "working-tree" ]; then
+  "$REPO_ROOT/scripts/build-web.sh"
+fi
+
 if [ "${INSU_RELEASE_SOURCE:-commit}" = "commit" ] && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git -C "$REPO_ROOT" archive --format=tar HEAD | tar -xf - -C "$package_dir"
 else
@@ -39,6 +43,9 @@ else
     --exclude='./.git' \
     --exclude='./.local' \
     --exclude='./dist' \
+    --exclude='./node_modules' \
+    --exclude='./playwright-report' \
+    --exclude='./test-results' \
     --exclude='./.DS_Store' \
     --exclude='*/__pycache__' \
     --exclude='*.pyc' \
@@ -47,6 +54,13 @@ else
     --exclude='./.env.*' \
     -cf - -C "$REPO_ROOT" . | tar -xf - -C "$package_dir"
 fi
+
+for required_path in \
+  "plugins/insu-player/skills/watch-video/assets/library/app/index.html" \
+  "plugins/insu-player/skills/watch-video/assets/server/insu-player-server.js" \
+  "plugins/insu-player/skills/watch-video/assets/server/drizzle/meta/_journal.json"; do
+  [ -f "$package_dir/$required_path" ] || { printf 'error: release is missing %s\n' "$required_path" >&2; exit 1; }
+done
 
 (
   cd "$package_dir"

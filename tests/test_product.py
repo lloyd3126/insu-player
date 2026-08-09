@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import html
+import json
 import re
 import unittest
 from pathlib import Path
@@ -19,11 +19,11 @@ EXPECTED_SKILLS = {
 
 
 class ProductBoundaryTests(unittest.TestCase):
-    def test_plugin_and_repository_bridges_expose_the_same_five_skills(self) -> None:
+    def test_repository_exposes_every_canonical_product_skill_bridge(self) -> None:
         canonical = {path.name for path in (PLUGIN_ROOT / "skills").iterdir() if path.is_dir()}
         bridges = {path.name for path in (REPO_ROOT / ".agents" / "skills").iterdir() if path.is_dir()}
         self.assertEqual(canonical, EXPECTED_SKILLS)
-        self.assertEqual(bridges, EXPECTED_SKILLS)
+        self.assertTrue(EXPECTED_SKILLS.issubset(bridges))
         for name in EXPECTED_SKILLS:
             bridge = (REPO_ROOT / ".agents" / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn(f"plugins/insu-player/skills/{name}/SKILL.md", bridge)
@@ -45,7 +45,7 @@ class ProductBoundaryTests(unittest.TestCase):
         manager = (PLUGIN_ROOT / "skills" / "player-manager" / "scripts" / "manage.py").read_text(encoding="utf-8")
         self.assertIn("# INSU Player", readme)
         self.assertIn("https://github.com/lloyd3126/insu-player.git", readme)
-        self.assertIn("環境變數、模型列表與影片列表", readme)
+        self.assertIn("使用說明、功能設定與影音中心", readme)
         self.assertIn("API SDK 與 API Key 設定狀態", readme)
         self.assertIn("## v0.2.0", changelog)
         self.assertIn("api.github.com/repos/lloyd3126/insu-player/releases/latest", manager)
@@ -92,9 +92,48 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertEqual(library_agent, library_bridge_agent)
         self.assertIn("第一個動作先啟動 INSU Player 首頁", start_here)
 
+    def test_library_selects_and_records_an_available_port(self) -> None:
+        watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
+        library_skill = (PLUGIN_ROOT / "skills" / "video-library" / "SKILL.md").read_text(encoding="utf-8")
+        workflow = (PLUGIN_ROOT / "skills" / "watch-video" / "references" / "workflow.md").read_text(encoding="utf-8")
+        server = (REPO_ROOT / "src" / "server" / "bun.ts").read_text(encoding="utf-8")
+        serve = (PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "serve-library.sh").read_text(encoding="utf-8")
+        portable_serve = (REPO_ROOT / "scripts" / "portable" / "serve.sh").read_text(encoding="utf-8")
+
+        self.assertIn(".insu-player-server.json", watch_skill + library_skill + workflow + server)
+        self.assertIn("--auto-port", serve)
+        self.assertIn('exec "$CAPTION_BUN" "$CAPTION_WEB_SERVER"', serve)
+        self.assertIn("portIsAvailable", server)
+        self.assertIn("server = startServer(selectedPort)", server)
+        self.assertIn("const actualPort = server.port", server)
+        self.assertIn('runtime: "hono-bun"', server)
+        self.assertIn('if [ "$#" -eq 0 ]', portable_serve)
+        self.assertNotIn("another port such as `8010`", watch_skill + library_skill)
+
+    def test_translation_mode_uses_model_word_timing_and_sentence_aligned_pair_import(self) -> None:
+        watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
+        translate_skill = (PLUGIN_ROOT / "skills" / "translate-subtitles" / "SKILL.md").read_text(encoding="utf-8")
+        transcriber = (PLUGIN_ROOT / "skills" / "transcribe-media" / "scripts" / "transcribe_media.py").read_text(encoding="utf-8")
+        download = (PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "download-video.sh").read_text(encoding="utf-8")
+        portable_add = (REPO_ROOT / "scripts" / "portable" / "add-video.sh").read_text(encoding="utf-8")
+        reflow = PLUGIN_ROOT / "skills" / "translate-subtitles" / "scripts" / "reflow_subtitles.py"
+        pair_import = PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "import-bilingual-captions.sh"
+
+        self.assertIn("Before inspecting or downloading subtitles, ask", watch_skill)
+        self.assertIn("must not inspect or download platform captions", translate_skill)
+        self.assertIn("local or OpenAI", translate_skill)
+        self.assertIn("skipping all source subtitles", download)
+        self.assertNotIn("json3", download.lower())
+        self.assertIn('"timestamp_granularities": ["segment", "word"]', transcriber)
+        self.assertIn("--translate zh-TW or --no-translate", portable_add)
+        self.assertIn("translation requires asking the user to choose --provider", portable_add)
+        self.assertTrue(reflow.is_file())
+        self.assertTrue(pair_import.is_file())
+        self.assertIn("share one complete-sentence timeline", translate_skill)
+
     def test_static_page_titles_and_headings_do_not_use_punctuation(self) -> None:
         assets = [
-            PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "index.html",
+            PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "app" / "index.html",
             PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "player" / "index.html",
         ]
         forbidden = set("，。！？、；：·,.;:!?")
@@ -106,120 +145,144 @@ class ProductBoundaryTests(unittest.TestCase):
                 used = sorted(forbidden.intersection(title))
                 self.assertFalse(used, f"{source}: title uses punctuation {used}: {title}")
 
-    def test_library_and_player_assets_keep_the_insu_product_contract(self) -> None:
-        library = (PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "index.html").read_text(encoding="utf-8")
-        library_script = (PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "library.js").read_text(encoding="utf-8")
-        styles = (PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "library.css").read_text(encoding="utf-8")
-        server = (PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "library_server.py").read_text(encoding="utf-8")
+    def test_react_library_and_player_keep_the_insu_product_contract(self) -> None:
+        library_root = PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library"
+        legacy_assets = [
+            library_root / "index.html",
+            library_root / "library.css",
+            library_root / "library.js",
+        ]
+        built_home = library_root / "app" / "index.html"
+        app_icon = library_root / "taiwan-whistling-thrush.png"
         player = (PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "player" / "index.html").read_text(encoding="utf-8")
-        app_icon = PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "taiwan-whistling-thrush.png"
-        self.assertIn("INSU PLAYER", library)
-        self.assertIn("交給 Agent", library)
+        player_config = (PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "player" / "config.js").read_text(encoding="utf-8")
+        react_app = (REPO_ROOT / "src" / "client" / "app" / "App.tsx").read_text(encoding="utf-8")
+        overlays = (REPO_ROOT / "src" / "client" / "app" / "OverlayCoordinator.tsx").read_text(encoding="utf-8")
+        library_component = (
+            REPO_ROOT / "src" / "client" / "features" / "library" / "LibraryDialog.tsx"
+        ).read_text(encoding="utf-8")
+        usage_component = (
+            REPO_ROOT / "src" / "client" / "features" / "home" / "UsageGuideDialog.tsx"
+        ).read_text(encoding="utf-8")
+        settings_component = (
+            REPO_ROOT / "src" / "client" / "features" / "settings" / "FeatureSettingsDialog.tsx"
+        ).read_text(encoding="utf-8")
+        environment_component = (
+            REPO_ROOT / "src" / "client" / "features" / "settings" / "EnvironmentDialog.tsx"
+        ).read_text(encoding="utf-8")
+        models_component = (
+            REPO_ROOT / "src" / "client" / "features" / "resources" / "ModelsDialog.tsx"
+        ).read_text(encoding="utf-8")
+        detail_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobDetailDialog.tsx"
+        ).read_text(encoding="utf-8")
+        detail_about_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobAboutPanel.tsx"
+        ).read_text(encoding="utf-8")
+        detail_subtitle_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobSubtitlePanel.tsx"
+        ).read_text(encoding="utf-8")
+        detail_activity_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobActivityPanel.tsx"
+        ).read_text(encoding="utf-8")
+        detail_history_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobHistoryCard.tsx"
+        ).read_text(encoding="utf-8")
+        app_dialog = (
+            REPO_ROOT / "src" / "client" / "components" / "shared" / "AppDialog.tsx"
+        ).read_text(encoding="utf-8")
+        server_app = (REPO_ROOT / "src" / "server" / "app.ts").read_text(encoding="utf-8")
+        server_entry = (REPO_ROOT / "src" / "server" / "bun.ts").read_text(encoding="utf-8")
+        serve_script = (
+            PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "serve-library.sh"
+        ).read_text(encoding="utf-8")
+        python_server = (
+            PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "library_server.py"
+        ).read_text(encoding="utf-8")
+        package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(all(not path.exists() for path in legacy_assets))
+        self.assertNotIn("legacyLibraryRoot", server_app + server_entry)
+        self.assertNotIn("legacy-library-template", server_entry + serve_script)
+        self.assertIn('path.join(options.libraryAppRoot, "assets")', server_app)
+        self.assertIn('"assets" / "library" / "app"', python_server)
+        self.assertTrue(built_home.is_file())
+        self.assertIn('id="root"', built_home.read_text(encoding="utf-8"))
         self.assertTrue(app_icon.is_file())
         self.assertEqual(app_icon.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
-        self.assertIn('id="player-dialog"', library)
-        self.assertIn('id="player-frame"', library)
-        self.assertIn('id="open-supported-sites"', library)
-        self.assertIn('id="supported-sites-dialog"', library)
-        self.assertIn('id="open-models"', library)
-        self.assertIn('id="models-dialog"', library)
-        self.assertIn("模型列表", library)
-        self.assertIn('id="local-model-rows"', library)
-        self.assertIn('id="api-model-rows"', library)
-        self.assertIn("實際下載大小", library)
-        self.assertIn("API Key", library)
-        self.assertNotIn("本機下載", library)
-        self.assertIn('api.keyConfigured ? "已設定" : "尚未設定"', library_script)
-        self.assertIn('"keyConfigured": bool(os.environ.get("OPENAI_API_KEY"))', server)
-        self.assertIn('fetch("/api/models"', library_script)
-        self.assertIn('path == "/api/models"', server)
-        self.assertIn('"name": "whisper-1"', server)
-        self.assertNotIn("model-grid", library + styles)
-        self.assertNotIn("api-model-card", library + styles)
-        self.assertNotIn("CHOOSE WITH THE AGENT", library)
-        self.assertNotIn("沒有字幕時再選擇轉錄模型", library)
-        self.assertNotIn("models-intro", library + styles)
-        nav_labels = ["開始使用", "進階使用", "支援網站", "介面設定", "環境變數", "模型列表", "影片列表"]
-        nav = library[library.index('<nav class="primary-nav"'):library.index("</nav>")]
-        self.assertEqual([nav.index(label) for label in nav_labels], sorted(nav.index(label) for label in nav_labels))
-        self.assertNotIn("使用規範", nav)
-        self.assertIn('id="open-usage-example"', library)
-        self.assertIn('id="open-usage-example-nav"', library)
-        self.assertIn('id="usage-example-dialog"', library)
-        self.assertIn('id="open-advanced-usage"', library)
-        self.assertIn('id="advanced-usage-dialog"', library)
-        self.assertIn('id="my-prompts-list"', library)
-        self.assertIn('id="open-settings"', library)
-        self.assertIn('id="settings-dialog"', library)
-        self.assertIn("介面設定", library)
-        self.assertIn('id="open-environment"', library)
-        self.assertIn('id="environment-dialog"', library)
-        self.assertIn('id="environment-form"', library)
-        self.assertIn("環境變數", library)
-        self.assertIn('fetch("/api/environment"', library_script)
-        self.assertIn("elements.environmentDialog.open", library_script)
-        self.assertIn("只在本次服務中使用", library)
-        self.assertNotIn(".env", library)
-        self.assertIn("影片列表", library)
-        self.assertIn('id="font-preset"', library)
-        self.assertIn('id="local-font-input"', library)
-        self.assertIn("臺灣紫嘯鶇", library)
-        self.assertIn(".example-dialog, .advanced-dialog, .models-dialog, .settings-dialog, .environment-dialog, .library-dialog, .player-dialog, .detail-dialog, .sources-dialog", styles)
-        self.assertIn(".example-content { display: grid; grid-template-columns: 1fr;", styles)
-        self.assertNotIn("grid-template-columns: minmax(280px, .82fr) minmax(430px, 1.18fr)", styles)
-        self.assertIn(".policy-dialog { width: min(720px, calc(100% - 42px)); }", styles)
-        self.assertIn(".example-dialog, .advanced-dialog, .models-dialog, .settings-dialog, .environment-dialog, .library-dialog, .player-dialog, .detail-dialog, .sources-dialog, .policy-dialog", styles)
-        self.assertIn(">開始使用</button>", library)
-        self.assertIn("把想看的影片網址交給 Agent，Agent 會準備好影片與字幕後，放進 INSU 讓你觀看。", library)
-        self.assertNotIn("點擊開始", library)
-        self.assertNotIn("<span>ESC</span>", library)
-        self.assertNotIn("USE THE AGENT AS THE INTERFACE", library)
-        self.assertNotIn("advanced-intro", library)
-        self.assertNotIn("說出想完成的事", library)
-        self.assertNotIn("font-style: italic", styles)
-        self.assertNotIn("<em", library)
-        self.assertNotIn("Codex", library)
-        self.assertIn('id="open-library"', library)
-        self.assertIn('id="library-dialog"', library)
-        self.assertIn('class="landing"', library)
-        self.assertIn('id="usage-policy-dialog"', library)
-        self.assertIn('id="open-usage-policy"', library)
-        footer = library[library.index('<footer class="landing-footer">'):library.index("</footer>")]
-        self.assertIn('id="open-usage-policy"', footer)
-        self.assertIn('© <span id="footer-year"></span> INSU', footer)
-        self.assertNotIn("ASK THE AGENT · WATCH IN INSU", footer)
-        self.assertNotIn("© 2026 INSU", footer)
-        self.assertIn("new Date().getFullYear()", library_script)
-        self.assertIn("USER AGREEMENT", library)
-        self.assertNotIn("USER AGREEMENT · V2", library)
-        self.assertIn("服務與免責", library)
-        self.assertIn("依「現狀」與「可用狀態」提供", library)
-        self.assertIn("研究還沒支援的平台", library)
-        self.assertIn("https://www.youtube.com/watch?v=VIDEO_ID", library)
-        self.assertNotIn("有權處理的", library)
-        self.assertNotIn('id="server-time"', library)
-        self.assertIn("--claw: #8b7cf6", styles)
-        self.assertNotIn("#ff6542", styles)
-        self.assertNotIn("255 101 66", styles)
-        self.assertNotIn("1240px", styles)
-        self.assertNotIn("width: min(900px", styles)
-        self.assertNotIn("width: min(820px", styles)
-        self.assertNotIn("#57d7bf", styles)
-        self.assertNotIn("87 215 191", styles)
+
+        self.assertIn("讓影音跨越語言", react_app)
+        self.assertIn("OverlayCoordinator", react_app)
+        self.assertIn('className="hero-artwork"', react_app)
+        self.assertIn('className="primary-nav"', react_app)
+        self.assertIn("使用說明", react_app)
+        self.assertIn("功能設定", react_app)
+        self.assertIn("影音中心", react_app)
+        self.assertNotIn("AppearanceDialog", overlays)
+        self.assertIn("lazy(", overlays)
+
+        self.assertIn('value="grid"', library_component)
+        self.assertIn('value="list"', library_component)
+        self.assertIn("我的影音", library_component)
+        self.assertIn("詳細資訊", library_component)
+        self.assertIn("CaptionLanguageSelect", library_component)
+        self.assertIn("video-grid-card__duration", library_component)
+        self.assertIn('className="job-table"', library_component)
+        self.assertIn("搜尋影音", library_component)
+
+        self.assertIn('value="getting-started"', usage_component)
+        self.assertIn('value="my-prompts"', usage_component)
+        self.assertIn('value="supported-sites"', usage_component)
+        self.assertIn("開始使用", usage_component)
+        self.assertIn("我的提示", usage_component)
+        self.assertIn("支援網站", usage_component)
+
+        self.assertIn('value="environment"', settings_component)
+        self.assertIn('value="local-models"', settings_component)
+        self.assertIn('value="cloud-models"', settings_component)
+        self.assertIn("PromptActionCard", environment_component)
+        self.assertIn("不要讀取 Key 原值", environment_component)
+        self.assertIn("environment-table", environment_component)
+        self.assertIn("PromptActionCard", models_component)
+        self.assertIn("ApiKeySelect", models_component)
+        self.assertIn("實際下載大小", models_component)
+
+        self.assertIn('value="about"', detail_component)
+        self.assertIn('value="subtitle"', detail_component)
+        self.assertIn('value="segmentation"', detail_component)
+        self.assertIn('value="activity"', detail_component)
+        self.assertIn("JobHistoryCard", detail_about_component)
+        self.assertIn("ScrollArea", detail_history_component)
+        self.assertIn("useJobCaptions", detail_subtitle_component)
+        self.assertIn("useJobLog", detail_activity_component)
+        self.assertNotIn("狀態歷程", detail_activity_component)
+        self.assertIn("Workflow log", detail_activity_component)
+
+        tabbed_dialogs = usage_component + settings_component + library_component + detail_component
+        self.assertEqual(tabbed_dialogs.count('layout="tabbed"'), 4)
+        self.assertEqual(tabbed_dialogs.count("app-dialog-tabs"), 4)
+        self.assertIn("app-dialog__body--tabbed", app_dialog)
+        self.assertIn('app.get("/api/jobs"', server_app)
+        self.assertIn('app.get("/api/models"', server_app)
+        self.assertIn('app.get("/api/environment"', server_app)
+        self.assertIn("react", package["dependencies"])
+        self.assertIn("hono", package["dependencies"])
+        self.assertIn("drizzle-orm", package["dependencies"])
+
         self.assertIn("INSU Player", player)
         self.assertIn("window.INSU_PLAYER_CONFIG", player)
-        self.assertNotIn("my-agent-playbook", library + styles + player)
-        legacy_product = "xe" + "ruca player"
-        self.assertNotIn(legacy_product, (library + player).lower())
+        self.assertIn("INSU_PLAYER_CONFIG", player_config)
+        for opening in re.findall(r"<svg\b[^>]*>", player):
+            self.assertIn('class="lucide ', opening)
+
         visible_sources = [
-            PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "index.html",
-            PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "library" / "library.js",
             PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "player" / "index.html",
             PLUGIN_ROOT / "skills" / "watch-video" / "assets" / "player" / "config.js",
             *sorted((PLUGIN_ROOT / "skills" / "watch-video" / "scripts").glob("*")),
+            *sorted((REPO_ROOT / "src" / "client").rglob("*.tsx")),
         ]
         for source in visible_sources:
-            if source.is_file() and source.suffix in {".html", ".js", ".py", ".sh"}:
+            if source.is_file():
                 self.assertNotIn("；", source.read_text(encoding="utf-8"), source)
 
 

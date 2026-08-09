@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: transcribe.sh <workspace> <video-id> [--provider local|openai] [--model NAME] [--language CODE] [--track CODE] [--device cpu|cuda] [--allow-api-upload]\n'
+  printf 'usage: transcribe.sh <workspace> <video-id> [--provider local|openai] [--model NAME] [--language CODE] [--track CODE] [--device cpu|cuda] [--allow-api-upload] [--no-translate]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -21,6 +21,7 @@ language_code=""
 track_code=""
 device_name="cpu"
 allow_api_upload=0
+no_translate=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -30,6 +31,7 @@ while [ "$#" -gt 0 ]; do
     --track) [ "$#" -ge 2 ] || caption_die "--track requires a value"; track_code="$2"; shift 2 ;;
     --device) [ "$#" -ge 2 ] || caption_die "--device requires a value"; device_name="$2"; shift 2 ;;
     --allow-api-upload) allow_api_upload=1; shift ;;
+    --no-translate) no_translate=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) caption_die "unknown option: $1" ;;
   esac
@@ -105,6 +107,11 @@ if [ -n "$language_code" ]; then transcribe_args+=(--language "$language_code");
 if [ "$provider_name" = "openai" ]; then transcribe_args+=(--consent-to-upload); fi
 
 caption_job_state transcription --job-dir "$job_dir" --provider "$provider_name" --model "$model_name" >/dev/null
+if [ "$no_translate" -eq 1 ]; then
+  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source model --stage model_transcription --provider "$provider_name" --model "$model_name" >/dev/null
+else
+  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage model_transcription --provider "$provider_name" --model "$model_name" >/dev/null
+fi
 caption_note "Transcribing with provider=$provider_name model=$model_name device=$device_name..."
 transcribe_command=("$CAPTION_PYTHON" "${transcribe_args[@]}")
 if [ "$provider_name" = "openai" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -120,15 +127,35 @@ fi
 
 vtt_file="$provider_output/transcript.vtt"
 caption_validate_vtt "$vtt_file"
-cp "$vtt_file" "$caption_dir/$track_code.vtt"
-caption_validate_vtt "$caption_dir/$track_code.vtt"
-caption_job_state subtitle --job-dir "$job_dir" --language "$track_code" --path "$caption_dir/$track_code.vtt" --source "$provider_name" --label "$track_code" >/dev/null
 
-if [ -f "$caption_dir/zh-TW.vtt" ]; then
-  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與繁體中文字幕已可觀看" --progress 100 --clear-error --record-history >/dev/null
+if [ "$no_translate" -eq 1 ]; then
+  cp "$vtt_file" "$caption_dir/$track_code.vtt"
+  caption_validate_vtt "$caption_dir/$track_code.vtt"
+  caption_job_state subtitle --job-dir "$job_dir" --language "$track_code" --path "$caption_dir/$track_code.vtt" --source "$provider_name" --label "$track_code" >/dev/null
+  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source model --stage complete --provider "$provider_name" --model "$model_name" >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與轉錄字幕已可觀看。不需要繁中翻譯" --progress 100 --clear-error --record-history >/dev/null
 else
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "轉錄已完成。等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
+  transcript_json="$provider_output/transcript.json"
+  subtitle_work_dir="$job_dir/subtitle-work"
+  subtitle_manifest="$subtitle_work_dir/bilingual-sentences.json"
+  english_sentence_vtt="$subtitle_work_dir/en.sentence.vtt"
+  reflow_script="$SCRIPT_DIR/../../translate-subtitles/scripts/reflow_subtitles.py"
+  caption_require_file "$transcript_json"
+  caption_require_file "$reflow_script"
+  mkdir -p "$subtitle_work_dir"
+  "$CAPTION_PYTHON" "$reflow_script" prepare \
+    --source-transcript "$transcript_json" \
+    --manifest "$subtitle_manifest" \
+    --english-output "$english_sentence_vtt"
+  caption_validate_vtt "$english_sentence_vtt"
+  cp "$english_sentence_vtt" "$caption_dir/en.vtt"
+  caption_validate_vtt "$caption_dir/en.vtt"
+  caption_job_state subtitle --job-dir "$job_dir" --language en --path "$caption_dir/en.vtt" --source "${provider_name}-model-sentence-reflow" --label "English" >/dev/null
+  caption_job_state asset --job-dir "$job_dir" --name wordTranscript --path "$transcript_json" >/dev/null
+  caption_job_state asset --job-dir "$job_dir" --name subtitlePlan --path "$subtitle_manifest" >/dev/null
+  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage draft_translation --provider "$provider_name" --model "$model_name" >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage draft_translation --message "模型詞級轉錄與完整句時間軸已完成。等待繁中初譯" --progress 0 --clear-error --record-history >/dev/null
 fi
 
 trap - ERR
-caption_note "Transcription complete: $caption_dir/$track_code.vtt"
+caption_note "Transcription complete: $provider_output/transcript.json"

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from urllib.request import urlopen
 from unittest.mock import patch
 
 
@@ -55,7 +58,7 @@ class LibraryApplicationTests(unittest.TestCase):
     def make_application(self, workspace: Path) -> LibraryApplication:
         return LibraryApplication(
             workspace,
-            SKILL_DIR / "assets" / "library",
+            SKILL_DIR / "assets" / "library" / "app",
             SKILL_DIR / "assets" / "player",
         )
 
@@ -68,7 +71,13 @@ class LibraryApplicationTests(unittest.TestCase):
             (job_dir / "source" / "video.mp4").write_bytes(b"video-bytes")
             caption = job_dir / "captions" / "zh-TW.vtt"
             caption.write_text(SAMPLE_VTT, encoding="utf-8")
-            initialize_job(job_dir, "video-id", "https://example.test", "Sample video")
+            initialize_job(
+                job_dir,
+                "video-id",
+                "https://example.test",
+                "Sample video",
+                duration_seconds=125.9,
+            )
             set_subtitle(job_dir, "zh-TW", "ready", caption, "test", "繁體中文")
             patch_status(job_dir, {"state": "ready", "message": "完成"})
 
@@ -77,6 +86,7 @@ class LibraryApplicationTests(unittest.TestCase):
             config = application.player_config("video-id")
             self.assertTrue(summary["watchable"])
             self.assertEqual(summary["captionCodes"], ["zh-TW"])
+            self.assertEqual(summary["durationSeconds"], 125.9)
             self.assertEqual(config["defaultLanguage"], "zh-TW")
             self.assertEqual(config["video"]["src"], "/media/video-id/video")
             self.assertEqual(summary["playback"]["time"], 0.0)
@@ -143,7 +153,10 @@ class LibraryApplicationTests(unittest.TestCase):
             self.assertFalse(payload["local"]["providerInstalled"])
             self.assertFalse(payload["api"]["providerInstalled"])
             self.assertFalse(payload["api"]["keyConfigured"])
-            self.assertEqual(payload["api"]["models"], [{"name": "whisper-1", "installed": False}])
+            self.assertEqual(payload["api"]["models"], [{
+                "name": "whisper-1", "displayName": "OpenAI whisper-1", "installed": False,
+                "apiKeyName": "OPENAI_API_KEY", "apiKeyConfigured": False,
+            }])
 
     def test_model_inventory_uses_actual_workspace_files_and_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"OPENAI_API_KEY": "configured-for-test"}):
@@ -169,12 +182,16 @@ class LibraryApplicationTests(unittest.TestCase):
             self.assertEqual(payload["local"]["modelCount"], 1)
             self.assertEqual(payload["local"]["totalSizeBytes"], len(model_bytes))
             self.assertEqual(payload["local"]["models"], [{
-                "name": "turbo", "sizeBytes": len(model_bytes), "ready": True,
+                "name": "turbo", "displayName": "OpenAI Whisper turbo",
+                "sizeBytes": len(model_bytes), "ready": True,
             }])
             self.assertTrue(payload["api"]["providerInstalled"])
             self.assertEqual(payload["api"]["packageVersion"], "2.8.1")
             self.assertTrue(payload["api"]["keyConfigured"])
-            self.assertEqual(payload["api"]["models"], [{"name": "whisper-1", "installed": True}])
+            self.assertEqual(payload["api"]["models"], [{
+                "name": "whisper-1", "displayName": "OpenAI whisper-1", "installed": True,
+                "apiKeyName": "OPENAI_API_KEY", "apiKeyConfigured": True,
+            }])
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
     def test_model_inventory_ignores_symlinked_model(self) -> None:
@@ -255,6 +272,86 @@ class LibraryApplicationTests(unittest.TestCase):
             self.assertIn(f"port {port} is already in use", result.stdout)
             self.assertIn(str(workspace.resolve()), result.stdout)
             self.assertIn("do not reuse another workspace", result.stdout)
+
+    def test_auto_port_records_and_reuses_the_actual_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, socket.socket() as occupied_port:
+            workspace = Path(temporary) / "selected-workspace"
+            pid_file = workspace / ".insu-player-server.pid"
+            server_file = workspace / ".insu-player-server.json"
+            occupied_port.bind(("127.0.0.1", 0))
+            occupied_port.listen()
+            preferred_port = occupied_port.getsockname()[1]
+            command = [
+                sys.executable,
+                str(SCRIPT_DIR / "library_server.py"),
+                "--workspace",
+                str(workspace),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(preferred_port),
+                "--auto-port",
+                "--pid-file",
+                str(pid_file),
+            ]
+            process = subprocess.Popen(
+                command,
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not server_file.is_file() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                if not server_file.is_file():
+                    output, _ = process.communicate(timeout=2)
+                    self.fail(f"server descriptor was not created: {output}")
+
+                descriptor = json.loads(server_file.read_text(encoding="utf-8"))
+                self.assertEqual(descriptor["host"], "127.0.0.1")
+                self.assertEqual(descriptor["pid"], process.pid)
+                self.assertNotEqual(descriptor["port"], preferred_port)
+                self.assertEqual(server_file.stat().st_mode & 0o077, 0)
+                session_descriptor = json.loads(
+                    (workspace / ".insu-environment-session.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(session_descriptor["port"], descriptor["port"])
+                actual_url = f"http://127.0.0.1:{descriptor['port']}/"
+                with urlopen(actual_url, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    markup = response.read().decode("utf-8")
+                self.assertIn('<div id="root"></div>', markup)
+                asset_path = re.search(r'(?:src|href)="(/assets/[^"]+)"', markup)
+                self.assertIsNotNone(asset_path)
+                with urlopen(actual_url.rstrip("/") + asset_path.group(1), timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+
+                reused = subprocess.run(
+                    command,
+                    cwd=REPO_ROOT,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    timeout=5,
+                )
+                self.assertEqual(reused.returncode, 0, reused.stdout)
+                self.assertIn(actual_url, reused.stdout)
+                self.assertIn(f"Already running with pid {process.pid}", reused.stdout)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=5)
+
+            self.assertFalse(server_file.exists())
+            self.assertFalse((workspace / ".insu-environment-session.json").exists())
+            self.assertFalse(pid_file.exists())
 
     def test_environment_rejects_unlisted_names_and_control_characters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

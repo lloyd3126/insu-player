@@ -2,7 +2,12 @@
 .local/
 .agent-tools/
 .insu-player-server.pid
+.insu-player-server.json
 dist/
+node_modules/
+playwright-report/
+test-results/
+coverage/
 __pycache__/
 *.py[cod]
 *.mp4

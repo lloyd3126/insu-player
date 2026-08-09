@@ -94,7 +94,7 @@ fi
 if [ -d "$CAPTION_RUNTIME" ]; then
   rm -rf -- "$CAPTION_RUNTIME"
 fi
-rm -f -- "$CAPTION_LIBRARY_PID" "$CAPTION_ENVIRONMENT_DESCRIPTOR"
+rm -f -- "$CAPTION_LIBRARY_PID" "$CAPTION_LIBRARY_DESCRIPTOR" "$CAPTION_ENVIRONMENT_DESCRIPTOR"
 
 if [ "$include_generated" -eq 1 ] && [ -d "$CAPTION_WORKSPACE/jobs" ]; then
   rm -rf -- "$CAPTION_WORKSPACE/jobs"

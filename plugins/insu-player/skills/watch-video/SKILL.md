@@ -12,15 +12,16 @@ Keep the user on one workspace-scoped localhost library homepage while Codex man
 1. Read [references/workflow.md](references/workflow.md) for a first installation, interrupted job, cleanup, or unfamiliar request. Read [references/troubleshooting.md](references/troubleshooting.md) when a check fails.
 2. Resolve and state the workspace before inspecting localhost services or processes. Use the repository-local `.local/insu-player/` for a portable release. For a developer checkout or installed plugin, use the project-local workspace supplied by the user; when none was supplied, default to `<current-project-root>/.local/insu-player/`.
 3. Treat the resolved workspace path as the library identity. Never search outside the current project for a fuller or already-running INSU workspace, and never adopt one merely because it has jobs, a completed runtime, or a server on the default port. Only cross that boundary when the user explicitly selects the other workspace.
-4. Port `8000` is a default for the selected workspace, not a machine-wide library identity. Reuse a running server only when the selected workspace's `.insu-player-server.pid` and `.insu-environment-session.json` belong to that live process. If another workspace occupies the port, leave it untouched and start the selected workspace on another port such as `8010`.
+4. Port `8000` is only the preferred starting port, not a machine-wide library identity. Start normally without an explicit port. If `8000` is occupied, the server must atomically bind an OS-selected free localhost port and record the actual `host`, `port`, and `pid` in the selected workspace's `.insu-player-server.json`. Reuse a running server only when that workspace-owned descriptor identifies a live process; leave every other workspace untouched. Treat an explicitly supplied port as strict.
 5. Make the first user-visible product action opening the selected workspace homepage in the Codex in-app browser. Start or reuse its server, open the actual localhost URL instead of merely printing it, and keep the page open before running doctor, setup, media inspection, download, transcription, or translation. If the in-app browser is unavailable, report the exact URL immediately. If Python 3 is unavailable and the server cannot start, report that blocker, install only through the workspace setup flow, and open the homepage as soon as its Python exists.
-6. Confirm that the user has the right to download and process the requested media. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
-7. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill while the homepage remains open.
-8. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
+6. Before inspecting or downloading subtitles, ask whether the user wants Traditional Chinese translation. After yes, require an explicit `local` or `openai` provider and pass `--translate zh-TW --provider PROVIDER`; translation mode must not inspect or download any platform caption format and must obtain English word timing by transcribing the original audio with that model. After no, pass `--no-translate` and platform playback captions may be used.
+7. Confirm that the user has the right to download and process the requested media. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
+8. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill while the homepage remains open.
+9. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
 
 ## Choose a Provider
 
-- Prefer captions exposed by the source platform; they avoid transcription entirely.
+- When translation is not requested, prefer captions exposed by the source platform; they avoid transcription entirely.
 - Source support follows the extractor set of the workflow-local yt-dlp version. YouTube is the default example, not the only supported platform. When a URL has no matching extractor, use INSU Player to research the source and a safe implementation path before declaring it unsupported.
 - Use "local" when audio must remain on the device. It installs Whisper, PyTorch, and the selected model inside the workspace.
 - Use "openai" only after explicit user authorization to upload audio. Require "OPENAI_API_KEY" in the process environment and never save or print it. The workflow uses "whisper-1" because timestamped segment output is required.
@@ -39,36 +40,35 @@ Do not use sudo, Homebrew, apt, a global pip, or a global npm install. The setup
 ## Run the Library
 
 ~~~bash
-scripts/portable/serve.sh 8000
-scripts/portable/add-video.sh 'https://www.youtube.com/watch?v=VIDEO_ID'
+scripts/portable/serve.sh
+scripts/portable/add-video.sh 'https://www.youtube.com/watch?v=VIDEO_ID' --translate zh-TW --provider local
 ~~~
 
-Start the server and open its homepage in the Codex in-app browser before the setup or add-video commands. The server can use system Python 3 for the initial empty homepage while the workflow-local runtime is still absent. Keep the same page open so setup and job state appear there as they become available.
+Start the server and open the exact homepage URL it reports in the Codex in-app browser before the setup or add-video commands. The same endpoint is recorded in `.insu-player-server.json`. The server can use system Python 3 for the initial empty homepage while the workflow-local runtime is still absent. Keep the same page open so setup and job state appear there as they become available.
 
 For explicit OpenAI transcription:
 
 ~~~bash
 export OPENAI_API_KEY='set-this-in-the-terminal'
-scripts/portable/add-video.sh 'VIDEO_URL' --provider openai --allow-api-upload
+scripts/portable/add-video.sh 'VIDEO_URL' --translate zh-TW --provider openai --allow-api-upload
 ~~~
 
 When the library server is already running, the user may instead enter `OPENAI_API_KEY` through the navbar's environment modal. The value exists only in that server process and is cleared when the server stops. `transcribe.sh` can launch the API child process with that session value without returning, printing, or writing it. The shell export remains the fallback when the server is not running.
 
 Never add "--allow-api-upload" merely because an API key exists. It records that the user authorized this upload.
 
-The homepage defaults to "http://127.0.0.1:8000/" and uses the actual selected port when a conflict requires another one. It is a read-mostly status surface: downloads, transcription, translation, failures, logs, provider metadata, storage, captions, and playback progress remain visible. Watching opens a same-origin iframe modal so the user does not leave the library.
+The homepage prefers "http://127.0.0.1:8000/". When that port is occupied, use the actual URL reported by the server and recorded in `.insu-player-server.json`; do not guess a fallback port. The homepage is a read-mostly status surface: downloads, transcription, translation, failures, logs, provider metadata, storage, captions, and playback progress remain visible. Watching opens a same-origin iframe modal so the user does not leave the library.
 
 ## Translation
 
-Use an existing target-language track when available. Otherwise follow `$translate-subtitles`: translate cue text while preserving every VTT timestamp and cue order, validate the VTT, then import it:
+When translation was requested, follow `$translate-subtitles`: transcribe the original audio with the explicitly selected local or OpenAI model, use its normalized word timing to reconstruct complete English sentences, translate once as a draft, polish by complete sentence, render English and Traditional Chinese with one shared sentence timeline, then import both tracks together:
 
 ~~~bash
-plugins/insu-player/skills/watch-video/scripts/import-caption.sh \
-  .local/insu-player VIDEO_ID zh-TW translated.vtt \
-  --source agent-translation --label '繁體中文'
+plugins/insu-player/skills/watch-video/scripts/import-bilingual-captions.sh \
+  .local/insu-player VIDEO_ID en.final.vtt zh-TW.final.vtt --force
 ~~~
 
-Do not claim that Whisper translated into Traditional Chinese; Whisper's translation task targets English.
+Do not inspect or download platform captions in translation mode. Final VTT tracks must have identical complete-sentence cue intervals, one sentence per line, and commas/periods replaced by ASCII spaces. Do not claim that Whisper translated into Traditional Chinese; Whisper's translation task targets English.
 
 ## Recovery, Updating, and Removal
 

@@ -22,7 +22,8 @@
 - `$watch-video` 是對使用者的主要入口。
 - 固定首頁是唯一觀看入口；播放器在同源 iframe modal 內開啟。
 - `status.json`、job history 與 log 是中斷復原的事實來源。
-- 優先使用來源既有字幕；沒有字幕才轉錄。繁中翻譯必須保留 VTT 時間軸與 cue 順序。
+- 不需要翻譯時優先使用來源既有字幕；沒有字幕才轉錄。
+- 取得字幕前先確認是否需要繁中翻譯。需要翻譯時再要求選擇本機或 OpenAI 模型，且禁止取得任何平台字幕；模型從原始音訊產生英文詞級時間，重建完整英文句子並完成初譯與潤色後，英文與繁中共用句級時間段，逗號與句號改為半形空格，再成對匯入兩軌。
 - 程式修改後執行全部測試、五個 skill validator、plugin validator 與 release 建置測試。
 
 完整 skill 的唯一來源位於 `plugins/insu-player/skills/`；`.agents/skills/` 只做 repository discovery bridge，不要複製業務邏輯。

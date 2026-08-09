@@ -35,7 +35,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 ## 找不到繁體中文字幕
 
-先列出實際可用字幕，不要假設語言代碼一定存在。依序採用：來源作者字幕、來源自動字幕、Whisper 原文轉錄，再由 Agent 保留時間戳翻譯。Whisper 的翻譯任務目標是英文，不會直接產生繁中。
+先確認使用者是否在字幕取得前選擇翻譯。翻譯模式不得檢查或下載任何平台字幕，必須由使用者明確選擇本機或 OpenAI 模型，再從原始音訊產生英文詞級時間。若 `transcript.json` 沒有 words，使用相同 provider 重新轉錄並檢查詞級時間；Whisper 的翻譯任務目標是英文，不會直接產生繁中。
 
 ## VTT 已下載但播放器顯示 0 cues
 
@@ -55,7 +55,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 請使用 `serve-library.sh`。一般靜態 server 沒有 job API，也不保證正確處理 Range request。
 
 ```bash
-plugins/insu-player/skills/watch-video/scripts/serve-library.sh <workspace> 8000
+plugins/insu-player/skills/watch-video/scripts/serve-library.sh <workspace>
 ```
 
 確認瀏覽器 network 中 `/media/VIDEO_ID/video` 回傳 `200` 或 `206`，並查看 job 的 `media-info.txt` 是否列出視訊與音訊 stream。影片庫只認固定路徑 `<workspace>/jobs/VIDEO_ID/source/video.mp4`。
@@ -107,13 +107,15 @@ CPU 可能較慢，但通常比反覆 crash 更可預期。
 
 先保留本次已選定的 workspace。Port 被占用不表示應改用該 port 背後的服務或 workspace；不要因對方已有 runtime、jobs 或正在運作就跨專案沿用。
 
-改用其他 port，例如：
+一般啟動不要指定 port：
 
 ```bash
-serve-library.sh <workspace> 8010
+serve-library.sh <workspace>
 ```
 
-只有當 `.insu-player-server.pid` 與 `.insu-environment-session.json` 都位於本次選定的 workspace，才能把既有程序視為同一個影片庫。若是另一個 workspace 的 server，讓它繼續運作並使用不同 port。只有確定是本次 workspace 的上一個 server 時，才回到其 terminal 按 `Ctrl+C`；不要任意終止不確定來源的程序。
+Hono/Bun 服務會先獨占探測 `8000`；若已被占用，就由作業系統分配可用 localhost port，並將實際 `host`、`port`、`pid` 與 runtime 寫入 `<workspace>/.insu-player-server.json`。讀取啟動輸出或該檔案後開啟實際網址，不要猜測下一個 port。
+
+只有當 `.insu-player-server.pid`、`.insu-player-server.json` 與 live process 都屬於本次選定的 workspace，才能把既有程序視為同一個影片庫。若是另一個 workspace 的 server，讓它繼續運作。只有確定是本次 workspace 的上一個 server 時，才回到其 terminal 按 `Ctrl+C`；不要任意終止不確定來源的程序。
 
 ## 首頁沒有出現新影片
 
@@ -132,4 +134,4 @@ serve-library.sh <workspace> 8010
 
 ## 翻譯檔匯入失敗
 
-`import-caption.sh` 要求 UTF-8 VTT、`WEBVTT` header 與至少一個 `-->` cue。目的 track 已存在時預設拒絕覆蓋；確認新檔正確後才加 `--force`。語言代碼使用 `zh-TW`，檔案會成為 `captions/zh-TW.vtt`。
+翻譯模式使用 `reflow_subtitles.py validate-pair` 與 `import-bilingual-captions.sh`，不是單軌 `import-caption.sh`。英文與繁中必須有相同 cue ID、數量與時間，且每個 cue 只有一個完整句子與一行文字。逗號、句號、空文字、時間重疊、換行或 `XQZCUE` 等內部 marker 都會拒絕匯入。確認兩軌都正確後才加 `--force`。

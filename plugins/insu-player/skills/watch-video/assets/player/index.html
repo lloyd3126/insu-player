@@ -94,8 +94,6 @@
         stroke-linejoin: round;
       }
 
-      .player-brand .play-mark { fill: var(--ink); stroke: none; }
-
       .player-brand small {
         display: block;
         margin-top: 5px;
@@ -374,7 +372,7 @@
       <header class="masthead">
         <div>
           <div class="player-brand" aria-label="INSU Player">
-            <svg viewBox="0 0 56 56" aria-hidden="true"><path d="M17 31c0-8 5-14 13-14 4 0 8 2 10 5l7-8c3 8 0 16-7 20-2 7-8 11-15 10-7-1-11-6-8-13Z"/><path class="play-mark" d="m24 24 11 7-11 7Z"/><path d="M18 39 9 47M25 43l-3 9M36 40l8 8"/></svg>
+            <svg class="lucide lucide-circle-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
             <span>INSU PLAYER<small>TAIWAN INSULARIS EDITION</small></span>
           </div>
           <p id="kicker" class="kicker">INSU · local screening</p>
@@ -383,7 +381,7 @@
         <span id="runtime-badge" class="runtime-badge">INITIALIZING</span>
       </header>
 
-      <section class="player-shell" aria-label="本機影片播放器">
+      <section class="player-shell" aria-label="本機影音播放器">
         <div class="player-wrap">
           <video id="player" playsinline controls preload="metadata"></video>
           <div id="custom-caption" class="custom-caption" aria-live="polite" hidden></div>
@@ -392,7 +390,7 @@
         <div class="control-deck">
           <div class="status-panel">
             <span class="label">Playback status</span>
-            <p id="status" class="status">正在讀取影片設定……</p>
+            <p id="status" class="status">正在讀取影音設定……</p>
           </div>
 
           <div class="caption-panel">
@@ -470,7 +468,7 @@
         const offOption = new Option("關閉字幕", "off");
         captionLanguage.add(offOption);
         config.captions.forEach((track) => {
-          captionLanguage.add(new Option(track.label, track.code));
+          captionLanguage.add(new Option(track.code, track.code));
         });
 
         function parseTimecode(value) {
@@ -600,7 +598,7 @@
 
         video.addEventListener("loadedmetadata", () => {
           const duration = Number.isFinite(video.duration) ? Math.round(video.duration) : 0;
-          setPlaybackStatus(`影片已載入，長度約 ${duration} 秒。`, "READY");
+          setPlaybackStatus(`影音已載入，長度約 ${duration} 秒。`, "READY");
           postToParent("player:ready", { duration: video.duration });
         });
         video.addEventListener("playing", () => {
@@ -629,7 +627,7 @@
           postToParent("player:ended", { duration: video.duration });
         });
         video.addEventListener("error", () => {
-          setPlaybackStatus("影片載入失敗。請確認 video.mp4 存在並透過 HTTP 開啟。", "ERROR");
+          setPlaybackStatus("影音載入失敗。請確認 video.mp4 存在並透過 HTTP 開啟。", "ERROR");
           postToParent("player:error", { code: video.error?.code || 0 });
         });
 

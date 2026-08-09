@@ -70,6 +70,7 @@ def main() -> int:
     recent_lines: deque[str] = deque(maxlen=12)
     last_progress = -1.0
     last_update = 0.0
+    progress = 0.0
 
     try:
         assert process.stdout is not None

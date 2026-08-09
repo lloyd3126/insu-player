@@ -1,4 +1,4 @@
 interface:
   display_name: "字幕翻譯"
-  short_description: "保留原始字幕時間軸並翻譯成繁體中文後安全匯入影片庫"
-  default_prompt: "Use $translate-subtitles to translate these subtitles into Traditional Chinese and import them into INSU Player."
+  short_description: "以詞級時間重建完整句子並輸出同步的英繁字幕"
+  default_prompt: "Use $translate-subtitles with local or OpenAI model word timing to create polished English and Traditional Chinese tracks on one shared complete-sentence timeline, then import both into INSU Player."

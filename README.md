@@ -1,98 +1,156 @@
 # INSU Player
 
-> 用 Agent，讓影片跨越語言。
+> 用 Agent，讓影音跨越語言。
 
-INSU Player 是為 Agent 設計的本機字幕影片庫。把想看的影片網址交給 `$watch-video`，Agent 會先用 Codex 內建瀏覽器開啟首頁，再準備影片與字幕，讓你從同一頁持續查看與觀看。
+INSU Player 是為 Codex Agent 設計的本機影音與字幕工作台。把你有權處理的單支影音網址交給 `$watch-video`，Agent 會開啟目前專案的首頁，再協調下載、轉錄、翻譯、字幕重排與播放。
 
-首頁集中提供開始使用、進階使用、支援網站、介面設定、環境變數、模型列表與影片列表。觀看時不必離開首頁，每支影片都會在頁面內開啟，處理狀態與播放進度也會持續保留。
+產品以一個固定的 React 首頁為中心，導覽只保留使用說明、功能設定與影音中心。播放器、詳情、字幕對照和處理進度都在同一頁內開啟，不會為每支影音另建一個首頁，也不保留舊版首頁或資產 fallback。
 
-## 最快開始
-
-### Release ZIP（最完整的可攜體驗）
-
-1. 從 [GitHub Releases](https://github.com/lloyd3126/insu-player/releases) 下載 `insu-player-vVERSION-portable.zip` 與同名 `.sha256`。
-2. 解壓縮後，用 Codex 開啟整個資料夾。
-3. 對 Codex 說：
-
-> 請使用 $watch-video，先啟動這個工作區的 INSU Player 首頁並用 Codex 內建瀏覽器開啟。保持首頁開啟，接著檢查環境、說明本機與 API 轉錄的差異，然後把這支影片加入影片庫：VIDEO_URL
-
-Codex 會從 `.agents/skills/` 發現技能。工具、模型、cache、影片、字幕、log 與播放進度都留在 `.local/insu-player/`；不需要 `sudo`、Homebrew、全域 pip 或全域 npm。
-
-### Codex plugin
+## 安裝 Codex plugin
 
 ```bash
 codex plugin marketplace add https://github.com/lloyd3126/insu-player.git
 codex plugin add insu-player@insu-player
 ```
 
-重新開啟 Codex task 後即可使用 `$watch-video`。Plugin 本身由 Codex 管理；每個影片庫的 runtime 與資料仍安裝到你指定專案的 `.local/insu-player/`。Plugin 不會把同一台電腦上的其他 INSU workspace 當成全機共用影片庫；即使另一個專案已在 `8000` 運作，目前專案仍沿用自己的 workspace，並改用 `8010` 等其他 localhost port。
+安裝後重新開啟 Codex task，在要建立影音庫的專案中輸入：
 
-產品名稱、plugin ID、marketplace、Release 檔名與 workspace 路徑統一使用 `insu-player`。
+> 使用 $watch-video。先啟動目前專案的 INSU Player 首頁並用 Codex 內建瀏覽器開啟，在取得字幕前先問我是否需要繁中翻譯；最後把這支影音加入影音庫：VIDEO_URL
+
+每個專案都有自己的 `.local/insu-player/` workspace。Plugin 不會因為同一台電腦上有其他 INSU Player 服務，就改用別的專案資料。
+
+## 實際工作流程
+
+Agent 處理一支影音時會：
+
+1. 解析目前專案的 workspace，啟動或沿用它自己的服務。
+2. 先用 Codex 內建瀏覽器開啟首頁，讓後續進度持續可見。
+3. 確認使用者有權下載與處理該媒體。
+4. 在檢查或取得字幕前，先詢問是否需要繁體中文翻譯。
+5. 根據翻譯決定選擇字幕來源與模型，並將處理狀態寫入 job 紀錄。
+6. 完成後在影音中心開啟播放，後續可從原進度續播。
+
+### 字幕來源決定
+
+| 需求 | 處理方式 |
+| --- | --- |
+| 不需要繁中翻譯 | 優先使用來源平台已有字幕；沒有可用字幕時才需要轉錄 |
+| 需要繁中翻譯 | 必須明確選擇本機或 OpenAI 模型，且不檢查、不下載任何平台字幕；改由選定模型從原始音訊產生英文詞級時間 |
+
+### 翻譯與字幕重排
+
+翻譯不是只替換字幕文字。完整流程會：
+
+1. 以模型產生的英文字詞時間軸重建完整句子。
+2. 完成繁中初譯，再以完整句進行潤色與切分。
+3. 讓英文與繁中共用同一組句級時間段。
+4. 移除逗號與句號，改用半形空格。
+5. 通過共享時間軸、句數與格式驗證後，成對匯入 `en` 與 `zh-TW` 字幕軌。
+
+### 模型選擇
+
+- 本機模型：媒體不離開電腦。Whisper、PyTorch、FFmpeg、模型與 cache 都安裝在 workspace，預設模型為 `medium`，首次安裝可能使用數 GB 空間。
+- OpenAI 模型：不下載本機 Whisper 模型，但會將音訊片段上傳到 API，可能產生費用。每次上傳都需要使用者明確同意，並由 Agent 帶入 `--allow-api-upload`。
 
 ## 首頁功能
 
-| 入口 | 功能 |
+| 入口 | 內容 |
 | --- | --- |
-| 開始使用 | 開啟以 YouTube 為例的 Agent 對話提示 |
-| 進階使用 | 複製內建使用情境，並查看由 Agent 維護的「我的提示」 |
-| 支援網站 | 瀏覽目前 workspace 內 yt-dlp 實際支援的網站，未知來源可交給 Agent 研究 |
-| 介面設定 | 即時切換主色與全站字體，可選 Google Fonts 或這台電腦已安裝的本機字體 |
-| 環境變數 | 將白名單內的 API Key 套用到本次本機服務，不寫入 `.env` 或其他檔案 |
-| 模型列表 | 確認本機模型、實際下載大小、API SDK 與 API Key 設定狀態 |
-| 影片列表 | 查看下載、轉錄、翻譯與字幕狀態，並在首頁內播放與續播 |
+| 使用說明 | 以 tabs 整合「開始使用」、「我的提示」與「支援網站」 |
+| 開始使用 | 複製範例提示，把影音網址交給 Agent |
+| 我的提示 | 複製常用的處理、雙語字幕與中斷復原提示，顯示由 Agent 維護的 workspace 提示，也可複製建立提示 |
+| 支援網站 | 依目前 workspace 內 yt-dlp 的 extractor 顯示實際支援來源，並提供詢問 Agent 是否支援的整合提示 |
+| 功能設定 | 以 tabs 整合「環境變數」、「本機模型」與「雲端模型」 |
+| 環境變數 | 以安全提示卡與表格管理白名單內的 API Key，停止服務即清除 |
+| 本機模型 | 顯示完整模型名稱、安裝狀態與實際下載大小，並提供請 Agent 準備模型的提示卡 |
+| 雲端模型 | 顯示完整模型名稱、API SDK 與 API Key 設定狀態，並提供安全檢查設定的提示卡 |
+| 影音中心 | 以頂部 tabs 切換「我的影音」與「詳細資訊」 |
+| 我的影音 | 只顯示全寬搜尋列與影音卡片；有影音時預設開啟，網格最多三欄 |
+| 詳細資訊 | 顯示摘要統計、狀態篩選與固定欄寬列表；空庫時預設開啟 |
 
-使用規範集中放在頁尾連結。所有 modal 採一致高度與兩種寬度，桌面與窄螢幕皆可操作。
+「詳細資訊」的列表會顯示影音、目前狀態、字幕語言碼與操作。每筆影音的詳情內有「關於」、「字幕」、「切分」與「處理紀錄」tabs：
 
-## 五個技能
+- 「關於」顯示目前狀態、來源、時長、容量、影音 ID、建立、更新、完成時間與狀態歷程；頁面本身固定，只有狀態歷程清單獨立捲動。
+- 「字幕」顯示語言碼、轉錄模型、字幕流程，並以共享時間軸並排多語字幕。
+- 「切分」目前是預留的元件位置，尚未提供編輯工具。
+- 「處理紀錄」顯示目前處理階段與全寬 Workflow log。
+
+字幕內容與 Workflow log 只在第一次切到對應分頁時載入，開啟「關於」不會先抓取這兩份較大的資料。
+
+目前狀態欄使用簡明的影音進度，並在字幕處理時直接顯示「模型詞級轉錄」、「繁中初次翻譯」、「完整句潤色」、「字幕重排」與「雙語成對驗證」等實際階段。
+
+## 五個產品 skills
 
 | Skill | 用途 |
 | --- | --- |
-| `$watch-video` | 主要入口：先開啟首頁，再新增影片、取得字幕、轉錄與翻譯 |
-| `$video-library` | 啟動、檢查、修復與整理既有影片庫 |
-| `$transcribe-media` | 將本機音訊或影片輸出為 JSON、TXT、WebVTT |
-| `$translate-subtitles` | 保留 cue 與時間戳，翻譯為繁體中文並匯入 |
-| `$player-manager` | 檢查版本、安全更新或移除 INSU Player |
+| `$watch-video` | 主要入口：開啟首頁，新增影音，並協調字幕、轉錄與翻譯 |
+| `$video-library` | 啟動、檢查、修復或安全整理現有影音庫 |
+| `$transcribe-media` | 將本機音訊或影音轉成正規化 JSON、純文字與 WebVTT |
+| `$translate-subtitles` | 以英文詞級時間重建完整句子，輸出共享時間軸的英繁字幕 |
+| `$player-manager` | 檢查安裝狀態、安全更新或完整移除 INSU Player |
 
-## 轉錄選項
+`plugins/insu-player/skills/` 是業務規則的唯一來源；repository 內的 `.agents/skills/` 只負責將 Codex 導向對應的 canonical skill。
 
-- `local`：預設且私密。Whisper、Python、FFmpeg、模型與 cache 都安裝在工作區內，預設下載 `medium`；首次安裝可能需要數 GB。
-- `openai`：不下載本機 Whisper 模型，但會把音訊片段上傳到 OpenAI，可能產生 API 費用。Agent 必須先取得明確同意，且只有加上 `--allow-api-upload` 才會執行。
-- 現成字幕：若來源已有作者或自動字幕，INSU 會優先使用，不進行語音轉錄。
+## Workspace 與安全邊界
 
-手動入口：
+- 影音庫身分由專案內的 workspace 路徑決定，不由 port 或同機其他服務決定。
+- 服務優先使用 `127.0.0.1:8000`。若 port 已被占用，作業系統會分配可用 port，並將實際 `host`、`port` 與 `pid` 記錄在 `.local/insu-player/.insu-player-server.json`。
+- uv、Python、Bun、FFmpeg、yt-dlp、Whisper、模型與 workflow cache 都保留在 workspace；不使用 `sudo`、Homebrew、apt、全域 pip 或全域 npm。
+- `OPENAI_API_KEY` 只能來自當前 process environment 或首頁的本次服務設定，不會寫入 `.env`、`app.db`、log、job metadata 或 API 回應。
+- 服務只綁定 localhost，不對 LAN 或 Internet 開放。
+- INSU Player 不繞過 DRM、付費牆、會員、私人存取、地區限制或帳號控制。
+- 清理預設只移除可重建中間檔，保留影音、字幕、狀態、log 與播放進度。
 
-```bash
-scripts/portable/serve.sh 8000
-scripts/portable/doctor.sh
-scripts/portable/setup.sh --provider local --model medium
-scripts/portable/add-video.sh 'VIDEO_URL'
+## 應用程式架構
+
+| 層級 | 技術 | 職責 |
+| --- | --- | --- |
+| 前端 | React、Vite、shadcn/ui、Lucide | 固定首頁、共用對話框、影音中心、字幕對照與同源播放器 |
+| API | Hono on Bun | localhost JSON API、媒體 Range request、WebVTT、播放進度與本次服務環境變數 |
+| 查詢投影 | Drizzle、Bun SQLite | 將工作流程資料投影到 workspace 的 `app.db`，供首頁快速查詢 |
+| 工作流程 | `status.json`、history、log | 作為中斷復原與 job 狀態的事實來源，不被 `app.db` 反向覆寫 |
+| 執行環境 | project-local workspace | 保存 runtime、媒體、字幕、模型、cache 與播放進度 |
+
+## 專案結構
+
+```text
+insu-player/
+├── .agents/skills/                 # repository discovery bridge
+├── plugins/insu-player/            # Codex plugin 與 canonical skills
+├── src/client/                     # React 元件化首頁
+├── src/server/                     # Hono API、Drizzle schema 與 Bun server
+├── src/shared/                     # 前後端共用契約與 domain logic
+├── tests/e2e/                      # Playwright 使用者流程
+├── tests/                          # runtime、安全、字幕與產品回歸測試
+└── .local/insu-player/             # 使用後產生，不進 Git
 ```
 
-第一步在獨立 terminal／Agent 執行 session 啟動服務並保持運作，立即請 Codex 用內建瀏覽器開啟 `http://127.0.0.1:8000/`。Doctor、安裝與加入影片指令在另一個 session 執行。
+## 開發與驗證
 
-API 模式：
-
-```bash
-export OPENAI_API_KEY='只放在目前 shell；不要寫進專案'
-scripts/portable/setup.sh --provider openai
-scripts/portable/add-video.sh 'VIDEO_URL' --provider openai --allow-api-upload
-```
-
-也可以先啟動首頁，從 navbar 的「環境變數」把 `OPENAI_API_KEY` 套用到本次本機服務。它不會寫入 `.env` 或其他檔案，停止或重新啟動服務後即清除。無論金鑰從哪裡提供，API 上傳仍必須由 Agent 取得本次明確同意並使用 `--allow-api-upload`。
-
-## 更新與完整移除
-
-先預覽，再套用：
+`scripts/build-web.sh` 會在需要時建立 workspace-local Bun，安裝鎖定依賴，執行 TypeScript 檢查，並建置前後端：
 
 ```bash
-python3 plugins/insu-player/skills/player-manager/scripts/manage.py update
-python3 plugins/insu-player/skills/player-manager/scripts/manage.py update --apply
-scripts/portable/uninstall.sh
+scripts/build-web.sh
 ```
 
-`uninstall.sh --yes` 只移除可重建的 runtime 與 cache，保留影片庫；只有在使用者明確要求時才使用 `--include-generated --yes` 移除影片、字幕、log 與進度。
+完整驗證入口：
 
-Release ZIP 或 Git checkout 模式下，完整移除的最後一步是停止服務後，把「這一個 INSU Player 資料夾」移到垃圾桶。Plugin 模式另執行：
+```bash
+INSU_BUN="$PWD/.local/insu-player/.agent-tools/insu-player/bun-runtime/bin/bun"
+"$INSU_BUN" run check
+"$INSU_BUN" test src
+"$INSU_BUN" run build
+INSU_BUN="$INSU_BUN" "$INSU_BUN" run test:e2e --workers=1
+python3 -m unittest discover -s tests -v
+```
+
+程式修改完成後，還需通過五個 skill validator 與 plugin validator。介面圖示統一使用 [Lucide](https://lucide.dev/)，執行時不載入圖示 CDN。
+
+## 更新與移除
+
+請交給 `$player-manager` 先檢查安裝模式與資料邊界，再預覽更新或移除範圍。更新必須保留 `.local/`、jobs、影音、字幕與播放進度；移除產生資料前必須另行取得使用者確認。
+
+移除 Codex plugin：
 
 ```bash
 codex plugin remove insu-player@insu-player
@@ -103,18 +161,4 @@ codex plugin marketplace remove insu-player
 
 INSU 取自臺灣紫嘯鶇學名 `Myophonus insularis` 的種小名。這種只分布於臺灣溪谷的特有鳥類，藍紫色金屬光澤也成為產品的代表色。物種資料可參考[臺灣國家公園主題網](https://www.taiwan.nps.gov.tw/home/zh-tw/eco-gallery/21399.html)與[林業保育署物種介紹](https://taichung.forest.gov.tw/0000253)。
 
-## 專案結構
-
-```text
-insu-player/
-├── .agents/skills/                 # 用資料夾開啟時的 discovery bridge
-├── plugins/insu-player/            # 可安裝的 Codex plugin 與完整 skills
-├── scripts/portable/               # Release ZIP 的固定入口
-├── examples/                       # 播放器與影片庫模板說明
-├── tests/                          # runtime、伺服器、轉錄、更新與 release 測試
-└── .local/insu-player/             # 使用後產生；不進 Git
-```
-
-版本變更請見 [CHANGELOG.md](CHANGELOG.md)。
-
-只下載或處理你有權使用的媒體。INSU Player 不應用於繞過 DRM、付費牆、會員、私人存取、地區限制或帳號控制。
+只下載或處理你有權使用的媒體。

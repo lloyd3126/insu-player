@@ -10,7 +10,7 @@ Operate the durable workspace created by `$watch-video`. Do not duplicate or rel
 ## Open Before Inspecting
 
 1. Resolve and state the exact workspace. Portable mode defaults to `.local/insu-player/`; otherwise use the project-local workspace the user selected, or `<current-project-root>/.local/insu-player/` when no path was supplied.
-2. Never adopt another INSU workspace outside the current project because it is non-empty or already serving localhost. A running service is the selected library only when its PID and session descriptor are inside the resolved workspace. Another service on the requested port is a port conflict, not a workspace candidate.
+2. Never adopt another INSU workspace outside the current project because it is non-empty or already serving localhost. A running service is the selected library only when its live PID and `.insu-player-server.json` endpoint descriptor are inside the resolved workspace. Another service on the preferred port is a port conflict, not a workspace candidate.
 3. Make opening this workspace's homepage in the Codex in-app browser the first user-visible product action. Keep it open while inspection, repair, or cleanup continues.
 
 ## Start the Selected Workspace Homepage
@@ -18,16 +18,16 @@ Operate the durable workspace created by `$watch-video`. Do not duplicate or rel
 From a portable repository root:
 
 ```bash
-scripts/portable/serve.sh 8000
+scripts/portable/serve.sh
 ```
 
 From an installed plugin skill:
 
 ```bash
-../watch-video/scripts/serve-library.sh WORKSPACE 8000
+../watch-video/scripts/serve-library.sh WORKSPACE
 ```
 
-Open `http://127.0.0.1:8000/` in the Codex in-app browser when available. If another workspace already owns port `8000`, do not inspect, reuse, or stop it; start the selected workspace on another port such as `8010` and open that exact URL. Keep the user on this workspace's page; watching must open the same-origin iframe modal.
+Open the exact URL reported by `serve-library.sh` in the Codex in-app browser when available. The server prefers port `8000`; if it is occupied, it binds an OS-selected free localhost port and writes the actual `host`, `port`, and `pid` to `WORKSPACE/.insu-player-server.json`. Do not guess a fallback port, inspect the service occupying `8000`, or stop it. Keep the user on this workspace's page; watching must open the same-origin iframe modal.
 
 ## Inspect While the Homepage Is Open
 

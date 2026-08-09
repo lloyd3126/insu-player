@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -35,6 +36,22 @@ class TranscriptionTests(unittest.TestCase):
         self.assertIn("00:11:01.500 --> 00:11:03.000", vtt)
         self.assertTrue(vtt.startswith("WEBVTT"))
 
+    def test_word_timestamps_are_normalized(self) -> None:
+        words = transcribe_media.normalize_words(
+            [
+                {"start": 0.1, "end": 0.4, "word": " Hello"},
+                {"start": 0.5, "end": 0.9, "word": "world."},
+            ],
+            offset=60,
+        )
+        self.assertEqual(
+            words,
+            [
+                {"id": 0, "start": 60.1, "end": 60.4, "word": "Hello"},
+                {"id": 1, "start": 60.5, "end": 60.9, "word": "world."},
+            ],
+        )
+
     def test_openai_requires_explicit_upload_consent_and_environment_key(self) -> None:
         args = Namespace(consent_to_upload=False, model="whisper-1")
         with self.assertRaisesRegex(RuntimeError, "consent-to-upload"):
@@ -43,6 +60,53 @@ class TranscriptionTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY"):
                 transcribe_media.transcribe_openai(args)
+
+    def test_openai_requests_segment_and_word_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            input_path = root / "audio.m4a"
+            chunk = root / "chunk.mp3"
+            ffmpeg = root / "ffmpeg"
+            for path in (input_path, chunk, ffmpeg):
+                path.write_bytes(b"audio")
+            requests: list[dict[str, object]] = []
+
+            class FakeTranscriptions:
+                def create(self, *, file: object, **request: object) -> dict[str, object]:
+                    requests.append(request)
+                    return {
+                        "language": "en",
+                        "duration": 2.0,
+                        "segments": [{"start": 0.0, "end": 2.0, "text": "Hello world."}],
+                        "words": [
+                            {"start": 0.0, "end": 0.7, "word": "Hello"},
+                            {"start": 0.8, "end": 2.0, "word": "world."},
+                        ],
+                    }
+
+            fake_client = SimpleNamespace(audio=SimpleNamespace(transcriptions=FakeTranscriptions()))
+            fake_openai = SimpleNamespace(OpenAI=lambda: fake_client)
+            args = Namespace(
+                consent_to_upload=True,
+                model="whisper-1",
+                language="en",
+                output_dir=root,
+                input=input_path,
+                ffmpeg=ffmpeg,
+                chunk_seconds=600,
+            )
+            with (
+                patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True),
+                patch.dict(sys.modules, {"openai": fake_openai}),
+                patch.object(transcribe_media, "prepare_api_chunks", return_value=[chunk]),
+            ):
+                segments, words, language, chunks = transcribe_media.transcribe_openai(args)
+
+            self.assertEqual(requests[0]["timestamp_granularities"], ["segment", "word"])
+            self.assertEqual(words[-1]["word"], "world.")
+            self.assertEqual(segments[0]["text"], "Hello world.")
+            self.assertEqual(language, "en")
+            self.assertEqual(chunks, 1)
 
     def test_local_provider_writes_normalized_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -60,7 +124,7 @@ for argument in "$@"; do
   previous="$argument"
 done
 mkdir -p "$output"
-printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Test line"}]}' > "$output/result.json"
+printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Test line.","words":[{"start":0.0,"end":1.0,"word":"Test"},{"start":1.0,"end":2.0,"word":"line."}]}]}' > "$output/result.json"
 """,
                 encoding="utf-8",
             )
@@ -89,6 +153,7 @@ printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Test 
             self.assertEqual(payload["provider"], "local")
             self.assertEqual(payload["model"], "tiny")
             self.assertEqual(payload["language"], "en")
+            self.assertEqual([word["word"] for word in payload["words"]], ["Test", "line."])
             self.assertIn("Test line", (output / "transcript.vtt").read_text(encoding="utf-8"))
 
 

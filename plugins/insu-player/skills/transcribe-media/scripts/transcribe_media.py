@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -58,6 +57,53 @@ def normalize_segments(raw_segments: object, *, offset: float = 0.0) -> list[dic
     return normalized
 
 
+def normalize_words(raw_words: object, *, offset: float = 0.0) -> list[dict[str, Any]]:
+    if not isinstance(raw_words, list):
+        raise ValueError("transcription response did not include word timestamps")
+    normalized: list[dict[str, Any]] = []
+    for raw in raw_words:
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump()
+        elif not isinstance(raw, dict):
+            raw = {
+                "start": getattr(raw, "start", None),
+                "end": getattr(raw, "end", None),
+                "word": getattr(raw, "word", getattr(raw, "text", "")),
+            }
+        if not isinstance(raw, dict):
+            continue
+        start = raw.get("start")
+        end = raw.get("end")
+        text = str(raw.get("word") or raw.get("text") or "").strip()
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start or not text:
+            continue
+        normalized.append(
+            {
+                "id": len(normalized),
+                "start": round(float(start) + offset, 3),
+                "end": round(float(end) + offset, 3),
+                "word": text,
+            }
+        )
+    if not normalized:
+        raise ValueError("transcription produced no usable word timestamps")
+    return normalized
+
+
+def words_from_payload(payload: dict[str, Any], *, offset: float = 0.0) -> list[dict[str, Any]]:
+    raw_words = payload.get("words")
+    if not isinstance(raw_words, list):
+        raw_words = []
+        raw_segments = payload.get("segments")
+        if isinstance(raw_segments, list):
+            for segment in raw_segments:
+                if hasattr(segment, "model_dump"):
+                    segment = segment.model_dump()
+                if isinstance(segment, dict) and isinstance(segment.get("words"), list):
+                    raw_words.extend(segment["words"])
+    return normalize_words(raw_words, offset=offset)
+
+
 def segments_to_vtt(segments: list[dict[str, Any]]) -> str:
     cues = ["WEBVTT", ""]
     for segment in segments:
@@ -75,6 +121,7 @@ def response_to_dict(response: object) -> dict[str, Any]:
         payload = {
             "text": getattr(response, "text", ""),
             "segments": getattr(response, "segments", None),
+            "words": getattr(response, "words", None),
             "language": getattr(response, "language", None),
             "duration": getattr(response, "duration", None),
         }
@@ -96,6 +143,7 @@ def atomic_write(path: Path, content: str) -> None:
 def write_artifacts(
     output_dir: Path,
     segments: list[dict[str, Any]],
+    words: list[dict[str, Any]],
     *,
     provider: str,
     model: str,
@@ -109,6 +157,7 @@ def write_artifacts(
         "language": language,
         "chunks": chunks,
         "segments": segments,
+        "words": words,
         "text": "\n".join(segment["text"] for segment in segments),
     }
     atomic_write(output_dir / "transcript.json", json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -155,7 +204,9 @@ def prepare_api_chunks(input_path: Path, ffmpeg: Path, chunk_dir: Path, seconds:
     return chunks
 
 
-def transcribe_openai(args: argparse.Namespace) -> tuple[list[dict[str, Any]], str | None, int]:
+def transcribe_openai(
+    args: argparse.Namespace,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int]:
     if not args.consent_to_upload:
         raise RuntimeError("OpenAI provider requires --consent-to-upload after the user authorizes external upload")
     if not os.environ.get("OPENAI_API_KEY"):
@@ -168,6 +219,7 @@ def transcribe_openai(args: argparse.Namespace) -> tuple[list[dict[str, Any]], s
         raise RuntimeError("OpenAI SDK is not installed in this Python environment") from error
 
     all_segments: list[dict[str, Any]] = []
+    all_words: list[dict[str, Any]] = []
     detected_language: str | None = args.language
     timeline_offset = 0.0
     client = OpenAI()
@@ -177,7 +229,7 @@ def transcribe_openai(args: argparse.Namespace) -> tuple[list[dict[str, Any]], s
             request: dict[str, Any] = {
                 "model": args.model,
                 "response_format": "verbose_json",
-                "timestamp_granularities": ["segment"],
+                "timestamp_granularities": ["segment", "word"],
             }
             if args.language:
                 request["language"] = args.language
@@ -187,18 +239,24 @@ def transcribe_openai(args: argparse.Namespace) -> tuple[list[dict[str, Any]], s
             if not detected_language and payload.get("language"):
                 detected_language = str(payload["language"])
             segments = normalize_segments(payload.get("segments"), offset=timeline_offset)
+            words = words_from_payload(payload, offset=timeline_offset)
             for segment in segments:
                 segment["id"] = len(all_segments)
                 all_segments.append(segment)
+            for word in words:
+                word["id"] = len(all_words)
+                all_words.append(word)
             chunk_duration = payload.get("duration")
             if isinstance(chunk_duration, (int, float)) and chunk_duration > 0:
                 timeline_offset += float(chunk_duration)
             else:
                 timeline_offset += args.chunk_seconds
-    return all_segments, detected_language, len(chunks)
+    return all_segments, all_words, detected_language, len(chunks)
 
 
-def transcribe_local(args: argparse.Namespace) -> tuple[list[dict[str, Any]], str | None, int]:
+def transcribe_local(
+    args: argparse.Namespace,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int]:
     if not args.whisper_cli or not args.whisper_cli.is_file():
         raise RuntimeError("--whisper-cli must point to the workflow-local Whisper executable")
     raw_dir = args.output_dir / "local-raw"
@@ -218,6 +276,8 @@ def transcribe_local(args: argparse.Namespace) -> tuple[list[dict[str, Any]], st
         "True" if args.device == "cuda" else "False",
         "--verbose",
         "False",
+        "--word_timestamps",
+        "True",
     ]
     if args.model_dir:
         command.extend(["--model_dir", str(args.model_dir)])
@@ -233,8 +293,9 @@ def transcribe_local(args: argparse.Namespace) -> tuple[list[dict[str, Any]], st
         raise RuntimeError("local Whisper did not produce transcript JSON")
     payload = json.loads(json_files[0].read_text(encoding="utf-8"))
     segments = normalize_segments(payload.get("segments"))
+    words = words_from_payload(payload)
     language = args.language or (str(payload["language"]) if payload.get("language") else None)
-    return segments, language, 1
+    return segments, words, language, 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -267,14 +328,15 @@ def main() -> int:
         if not args.ffmpeg or not args.ffmpeg.is_file():
             raise SystemExit("OpenAI provider requires --ffmpeg for bounded audio chunks")
         args.model = args.model or "whisper-1"
-        segments, language, chunks = transcribe_openai(args)
+        segments, words, language, chunks = transcribe_openai(args)
     else:
         args.model = args.model or "medium"
-        segments, language, chunks = transcribe_local(args)
+        segments, words, language, chunks = transcribe_local(args)
 
     write_artifacts(
         args.output_dir,
         segments,
+        words,
         provider=args.provider,
         model=args.model,
         language=language,

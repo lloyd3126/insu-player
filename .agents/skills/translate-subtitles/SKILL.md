@@ -1,6 +1,6 @@
 ---
 name: translate-subtitles
-description: Translate WebVTT subtitles into Traditional Chinese while preserving every cue and timestamp, validate the result, and import it into INSU Player.
+description: Translate timed English subtitles into polished Traditional Chinese and rebuild synchronized complete-sentence English and Traditional Chinese tracks for INSU Player.
 ---
 
 # Repository entrypoint

@@ -1,6 +1,6 @@
-# 進階使用與「我的提示」
+# 我的提示
 
-首頁 navbar 的「進階使用」是唯讀提示庫。內建提示隨 INSU Player 發布，使用者自己的提示保存在 workspace 根目錄：
+首頁「使用說明」中的「我的提示」分頁是唯讀提示庫。內建提示顯示在建立提示卡下方，使用者自己的提示保存在 workspace 根目錄：
 
 ```text
 <workspace>/prompts.json
@@ -47,4 +47,4 @@ python3 plugins/insu-player/skills/watch-video/scripts/prompt_library.py \
   remove <workspace> bilingual-review
 ```
 
-所有寫入均先驗證欄位、限制最多 100 則，再以暫存檔 atomic replace。首頁重新開啟「進階使用」modal 時會重新讀取，無需重啟服務。
+所有寫入均先驗證欄位、限制最多 100 則，再以暫存檔 atomic replace。首頁重新開啟「我的提示」分頁時會重新讀取，無需重啟服務。

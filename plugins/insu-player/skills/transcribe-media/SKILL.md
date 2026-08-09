@@ -5,14 +5,14 @@ description: Transcribe local audio or video into normalized JSON, plain text, a
 
 # Transcribe Media
 
-Produce the same three artifacts regardless of provider: "transcript.json", "transcript.txt", and "transcript.vtt".
+Produce the same three artifacts regardless of provider: "transcript.json", "transcript.txt", and "transcript.vtt". The JSON includes normalized top-level `words` with start/end timestamps so the translation workflow can rebuild complete sentences.
 
 ## Provider Decision
 
 - Choose "local" by default when privacy matters or the user has not authorized external upload.
 - Choose "openai" only after stating that audio chunks leave the device and may incur API charges, then obtaining explicit authorization.
 - Do not infer upload authorization from the presence of "OPENAI_API_KEY".
-- The API path uses "whisper-1" for segment timestamps. Other current transcription models may be selected only if the requested output does not require timestamped VTT and this script is extended accordingly.
+- The API path uses "whisper-1" with segment and word timestamp granularities. Other transcription models may be selected only after this script can obtain equivalent word timing.
 
 ## Prepare the Isolated Runtime
 
@@ -52,6 +52,6 @@ export OPENAI_API_KEY='set-this-in-the-terminal'
   --ffmpeg .local/insu-player/.agent-tools/insu-player/bin/ffmpeg
 ~~~
 
-The API path converts media to mono 16 kHz, 48 kbps MP3 chunks of ten minutes. Every chunk stays below the API's 25 MB file limit, and segment timestamps are offset back onto one continuous timeline.
+The local path enables Whisper word timestamps. The API path converts media to mono 16 kHz, 48 kbps MP3 chunks of ten minutes, requests segment and word timestamps, and offsets every chunk back onto one continuous timeline. Every chunk stays below the API's 25 MB file limit.
 
-Validate that VTT begins with "WEBVTT", contains cues, and has increasing timestamps. Report the provider and model; never report or echo the API key. This skill transcribes speech but does not translate it into Traditional Chinese.
+Validate that VTT begins with "WEBVTT", contains cues, and has increasing timestamps. For translation jobs, also validate that `transcript.json` contains non-empty normalized words. Report the provider and model; never report or echo the API key. This skill transcribes speech but does not translate it into Traditional Chinese.

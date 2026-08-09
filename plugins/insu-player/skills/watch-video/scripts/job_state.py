@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import tempfile
@@ -31,6 +32,17 @@ STATES = {
     "failed",
 }
 ACTIVE_STATES = {"checking", "downloading", "transcribing", "translating", "preparing_player"}
+SUBTITLE_WORKFLOW_STAGES = {
+    "awaiting_model",
+    "model_transcription",
+    "source_caption",
+    "draft_translation",
+    "sentence_polish",
+    "subtitle_reflow",
+    "pair_validation",
+    "complete",
+}
+SUBTITLE_WORKFLOW_SOURCES = {"model", "platform", "legacy"}
 
 
 def utc_now() -> str:
@@ -61,12 +73,14 @@ def default_status(job_dir: Path, video_id: str | None = None) -> dict[str, Any]
         "videoId": resolved_id,
         "title": resolved_id,
         "sourceUrl": "",
+        "durationSeconds": None,
         "state": "queued",
         "stage": "queued",
         "progress": 0.0,
         "message": "等待處理",
         "assets": {},
         "subtitleTracks": {},
+        "subtitleWorkflow": None,
         "transcription": None,
         "process": None,
         "lastError": None,
@@ -139,7 +153,13 @@ def save_status(job_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
     return status
 
 
-def initialize_job(job_dir: Path, video_id: str, source_url: str, title: str) -> dict[str, Any]:
+def initialize_job(
+    job_dir: Path,
+    video_id: str,
+    source_url: str,
+    title: str,
+    duration_seconds: float | None = None,
+) -> dict[str, Any]:
     validate_video_id(video_id)
     job_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -153,6 +173,13 @@ def initialize_job(job_dir: Path, video_id: str, source_url: str, title: str) ->
             "title": title or status.get("title") or video_id,
         }
     )
+    if duration_seconds is not None:
+        if not isinstance(duration_seconds, (int, float)) or isinstance(duration_seconds, bool):
+            raise ValueError("duration must be a positive finite number")
+        duration_seconds = float(duration_seconds)
+        if not duration_seconds > 0 or not math.isfinite(duration_seconds):
+            raise ValueError("duration must be a positive finite number")
+        status["durationSeconds"] = duration_seconds
     return save_status(job_dir, status)
 
 
@@ -259,6 +286,38 @@ def set_transcription(job_dir: Path, provider: str, model: str) -> dict[str, Any
     return save_status(job_dir, status)
 
 
+def set_subtitle_workflow(
+    job_dir: Path,
+    *,
+    translation_requested: bool,
+    source: str,
+    stage: str,
+    provider: str | None,
+    model: str | None,
+) -> dict[str, Any]:
+    if source not in SUBTITLE_WORKFLOW_SOURCES:
+        raise ValueError(f"unsupported subtitle workflow source: {source}")
+    if stage not in SUBTITLE_WORKFLOW_STAGES:
+        raise ValueError(f"unsupported subtitle workflow stage: {stage}")
+    if provider is not None and provider not in {"local", "openai"}:
+        raise ValueError(f"unsupported subtitle workflow provider: {provider}")
+    if model is not None and not re.fullmatch(r"[A-Za-z0-9._-]+", model):
+        raise ValueError(f"invalid subtitle workflow model: {model}")
+    status = load_status(job_dir, create_default=True)
+    workflow: dict[str, Any] = {
+        "translationRequested": translation_requested,
+        "source": source,
+        "stage": stage,
+        "updatedAt": utc_now(),
+    }
+    if provider is not None:
+        workflow["provider"] = provider
+    if model is not None:
+        workflow["model"] = model
+    status["subtitleWorkflow"] = workflow
+    return save_status(job_dir, status)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -268,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--video-id", required=True)
     init_parser.add_argument("--source-url", required=True)
     init_parser.add_argument("--title", default="")
+    init_parser.add_argument("--duration-seconds", type=float)
 
     update_parser = subparsers.add_parser("update", help="update state and progress")
     update_parser.add_argument("--job-dir", required=True, type=Path)
@@ -299,6 +359,14 @@ def build_parser() -> argparse.ArgumentParser:
     transcription_parser.add_argument("--provider", required=True, choices=("local", "openai"))
     transcription_parser.add_argument("--model", required=True)
 
+    workflow_parser = subparsers.add_parser("subtitle-workflow", help="record the visible subtitle workflow stage")
+    workflow_parser.add_argument("--job-dir", required=True, type=Path)
+    workflow_parser.add_argument("--translation", required=True, choices=("requested", "not-requested"))
+    workflow_parser.add_argument("--source", required=True, choices=sorted(SUBTITLE_WORKFLOW_SOURCES))
+    workflow_parser.add_argument("--stage", required=True, choices=sorted(SUBTITLE_WORKFLOW_STAGES))
+    workflow_parser.add_argument("--provider", choices=("local", "openai"))
+    workflow_parser.add_argument("--model")
+
     show_parser = subparsers.add_parser("show", help="print a job record")
     show_parser.add_argument("--job-dir", required=True, type=Path)
     show_parser.add_argument("--field")
@@ -308,7 +376,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     if args.command == "init":
-        status = initialize_job(args.job_dir, args.video_id, args.source_url, args.title)
+        status = initialize_job(
+            args.job_dir,
+            args.video_id,
+            args.source_url,
+            args.title,
+            args.duration_seconds,
+        )
     elif args.command == "update":
         patch: dict[str, Any] = {}
         for key in ("state", "stage", "message", "progress", "title"):
@@ -338,6 +412,15 @@ def main() -> int:
         )
     elif args.command == "transcription":
         status = set_transcription(args.job_dir, args.provider, args.model)
+    elif args.command == "subtitle-workflow":
+        status = set_subtitle_workflow(
+            args.job_dir,
+            translation_requested=args.translation == "requested",
+            source=args.source,
+            stage=args.stage,
+            provider=args.provider,
+            model=args.model,
+        )
     elif args.command == "show":
         status = load_status(args.job_dir)
         if args.field:

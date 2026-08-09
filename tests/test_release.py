@@ -43,7 +43,39 @@ class PortableReleaseTests(unittest.TestCase):
                 self.assertIn(prefix + ".agents/plugins/marketplace.json", names)
                 self.assertIn(prefix + ".agents/skills/watch-video/SKILL.md", names)
                 self.assertIn(prefix + "plugins/insu-player/.codex-plugin/plugin.json", names)
-                forbidden_parts = {".git", ".local", "dist", "__pycache__"}
+                self.assertIn(
+                    prefix + "plugins/insu-player/skills/watch-video/assets/library/app/index.html",
+                    names,
+                )
+                self.assertNotIn(
+                    prefix + "plugins/insu-player/skills/watch-video/assets/library/index.html",
+                    names,
+                )
+                self.assertNotIn(
+                    prefix + "plugins/insu-player/skills/watch-video/assets/library/library.css",
+                    names,
+                )
+                self.assertNotIn(
+                    prefix + "plugins/insu-player/skills/watch-video/assets/library/library.js",
+                    names,
+                )
+                self.assertIn(
+                    prefix + "plugins/insu-player/skills/watch-video/assets/server/insu-player-server.js",
+                    names,
+                )
+                self.assertIn(
+                    prefix + "plugins/insu-player/skills/watch-video/assets/server/drizzle/meta/_journal.json",
+                    names,
+                )
+                forbidden_parts = {
+                    ".git",
+                    ".local",
+                    "dist",
+                    "node_modules",
+                    "playwright-report",
+                    "test-results",
+                    "__pycache__",
+                }
                 self.assertFalse(any(forbidden_parts.intersection(Path(name).parts) for name in names))
                 self.assertFalse(any(name.endswith((".mp4", ".pt", ".pyc", ".pyo")) for name in names))
                 mode = bundle.getinfo(prefix + "scripts/portable/setup.sh").external_attr >> 16

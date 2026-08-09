@@ -2,17 +2,19 @@
 
 ## 最終體驗
 
-這個 skill 把 yt-dlp 目前版本可辨識的單支線上影片收進一個持續使用的本機影片庫。YouTube 是首頁與文件的預設範例，不是唯一支援來源。日常入口不是每支影片各自的 HTML，而是目前 workspace 的固定首頁，預設網址是：
+這個 skill 把 yt-dlp 目前版本可辨識的單支線上影片收進一個持續使用的本機影片庫。YouTube 是首頁與文件的預設範例，不是唯一支援來源。日常入口不是每支影片各自的 HTML，而是目前 workspace 的固定首頁。服務優先使用：
 
 ```text
 http://127.0.0.1:8000/
 ```
 
-首頁是全高入口頁。主視覺與 navbar 的「開始使用」會開啟同一個 YouTube 操作範例。「進階使用」提供可複製的內建情境與「我的提示」，「支援網站」列出 workflow-local yt-dlp 的實際支援清單，「介面設定」可即時更換主色與全頁字體，「環境變數」管理本次服務的白名單變數。「模型列表」會顯示 workspace 實際下載的本機 Whisper 模型、實際檔案大小、API SDK 安裝狀態與 API Key 是否已設定，「影片列表」則以 modal 顯示所有影片的下載、轉錄、翻譯與完成狀態、進度、字幕、容量及最近 log。從列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影片列表，背景任務與狀態輪詢不會中斷。
+首頁是全高入口頁，navbar 只保留「使用說明」、「功能設定」與「影音中心」。「使用說明」以 tabs 切換開始使用、我的提示與支援網站；內建使用情境提示位於「我的提示」建立卡下方。「功能設定」以 tabs 切換環境變數、本機模型與雲端模型；三個分頁都在上方提供對應的 Agent 提示卡，Tab panel 固定不捲動，只有下方表格捲動。環境變數表格顯示白名單變數、設定狀態、遮蔽的新值輸入與操作，不顯示 SDK 狀態；本機模型顯示 workspace 實際下載的 Whisper 模型與大小，雲端模型顯示 API SDK 安裝狀態與 API Key 選單。「影音中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。有影音時預設開啟「我的影音」，只顯示全寬搜尋列與最多三欄的縮圖標題卡片；沒有影音時預設開啟「詳細資訊」，其中有摘要統計、狀態篩選，並固定顯示影音、目前狀態、字幕語言碼與操作列表。容量、更新時間、歷程及 log 收在單筆影音的「詳情」，其中「字幕」分頁會按時間並排顯示多語字幕。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影音中心，背景任務與狀態輪詢不會中斷。
+
+支援網站在搜尋列上方提供單一「詢問 Agent 是否支援」提示卡；提示會先檢查目前解析器，必要時安全更新 workspace 內的 yt-dlp，仍不支援才研究平台。
 
 首頁除了保存播放位置外是唯讀控制台。新增、重試、翻譯、取消、清理與刪除仍由 Agent 或明確的腳本命令執行，避免在瀏覽器誤觸資料變更。
 
-`8000` 只是單一 workspace 的預設 port，不代表這台電腦只能有一個 INSU Player。不同專案可以同時使用不同 workspace 與 port。
+`8000` 只是優先嘗試的 port，不代表這台電腦只能有一個 INSU Player。若已被占用，服務會讓作業系統分配可用 port，並把實際 endpoint 記錄在 workspace 的 `.insu-player-server.json`。不同專案可以同時使用不同 workspace 與 port。
 
 ## 目的與成功條件
 
@@ -20,7 +22,7 @@ http://127.0.0.1:8000/
 
 - 目前 workflow-local yt-dlp 有對應 extractor 的單支影片 URL
 - 專用 workspace 路徑
-- 原始語言、目標字幕語言與可接受的機器翻譯範圍
+- 在取得字幕前確認是否需要翻譯；需要時確認原始語言、目標字幕語言與可接受的機器翻譯範圍
 
 輸出：
 
@@ -29,7 +31,7 @@ http://127.0.0.1:8000/
 - 可中斷恢復的 `status.json` 與 workflow log
 - 同源、本機限定、支援影片 Range request 的影片庫首頁
 
-完成標準：影片能從 navbar 的影片列表 modal 開啟播放，字幕可切換且時間同步；若尚待轉錄或翻譯，列表要正確顯示待辦，而不是假裝完成。
+完成標準：影片能從 navbar 的影音中心開啟播放，字幕可切換且時間同步；若尚待轉錄或翻譯，列表要正確顯示待辦，而不是假裝完成。
 
 ## 不處理的範圍
 
@@ -37,7 +39,7 @@ http://127.0.0.1:8000/
 - 不把影片、字幕、cookie、模型、venv 或快取 commit 到 repository。
 - 不保證來源平台一定提供字幕或自動翻譯。
 - 找不到 extractor 時，Agent 應使用 INSU Player 研究來源、公開介面與媒體格式，研究不等於繞過存取控制。
-- Whisper 的 `translate` 只會翻成英文，不會直接產生繁中；繁中由現成字幕或 Agent 保留 cue 時間軸翻譯。
+- Whisper 的 `translate` 只會翻成英文，不會直接產生繁中；繁中由現成字幕或 Agent 依可用的詞級時間資料重建完整句子後翻譯。
 - 不讀取登入 cookie，除非使用者明確要求並理解授權範圍。cookie 不得貼入聊天或寫進 repository。
 - 不把本機服務公開到 LAN 或 Internet。
 
@@ -51,6 +53,7 @@ http://127.0.0.1:8000/
 
 ```text
 <workspace>/
+├── .insu-player-server.json       # 服務運作期間的實際 localhost host、port 與 pid，停止後移除
 ├── .insu-environment-session.json # 服務運作期間的 localhost capability，不含 API key，停止後移除
 ├── .agent-tools/insu-player/     # uv、Python、venv、FFmpeg、yt-dlp、Deno、選用 provider、模型與全部已知快取
 ├── prompts.json                    # Agent 維護、首頁唯讀的「我的提示」
@@ -65,17 +68,20 @@ http://127.0.0.1:8000/
         │   ├── audio.m4a                   # 需要轉錄時才保留
         │   └── thumbnail.jpg
         ├── captions/
-        │   ├── en.vtt                      # 標準化可播放字幕
+        │   ├── en.vtt                      # 句級重排後的英文可播放字幕
+        │   ├── en.pre-reflow.vtt           # 第一次重排時保存的舊英文軌
         │   ├── source.vtt
-        │   └── zh-TW.vtt
-        ├── youtube-captions/               # 可重建的原始下載字幕
-        ├── whisper/                        # 可重建的本機或 API 轉錄工作輸出
+        │   └── zh-TW.vtt                   # 與英文共用完整句時間段的繁中軌
+        ├── subtitle-work/
+        │   └── bilingual-sentences.json    # 模型詞軸重建的句級翻譯與潤色清單
+        ├── youtube-captions/               # 只有不翻譯時可保存來源播放 VTT
+        ├── whisper/                        # 本機或 API 的 transcript.json、文字與播放 VTT
         └── logs/workflow.log
 ```
 
 `status.json` 記錄標題、來源、目前 state/stage、0–100 進度、程序 PID、錯誤、產物、字幕來源與最多 120 筆歷程。寫入採暫存檔加 atomic replace，避免首頁在更新中讀到半份 JSON。
 
-「進階使用」modal 提供內建情境與可直接複製的提示；「我的提示」由 Agent 依 [prompt-library.md](prompt-library.md) 使用專用腳本新增或修改。首頁只提供 `GET /api/prompts`，不允許使用者在瀏覽器直接編輯 workspace。「環境變數」modal 只接受程式白名單中的變數，目前為 `OPENAI_API_KEY`。值只存在本機服務程序，公開 API 只回傳是否已設定，停止服務後即消失。
+「我的提示」分頁先顯示建立提示卡，再顯示內建情境與可直接複製的提示，最後列出 Agent 維護的 workspace 提示。建立卡右上角可複製提示交給 Agent 共同整理。Agent 依 [prompt-library.md](prompt-library.md) 使用專用腳本新增或修改，首頁只提供 `GET /api/prompts`，不允許使用者在瀏覽器直接編輯 workspace。「環境變數」分頁以安全提示卡與表格管理程式白名單中的變數，目前為 `OPENAI_API_KEY`。值只存在本機服務程序，公開 API 只回傳是否已設定，停止服務後即消失；SDK 安裝狀態只在雲端模型分頁呈現。
 
 ## Workspace 與服務邊界
 
@@ -83,8 +89,8 @@ http://127.0.0.1:8000/
 - Portable 模式使用該 repository 的 `.local/insu-player/`。Developer checkout 或 installed plugin 優先使用者明確指定的 project-local workspace；未指定時才使用 `<目前專案根目錄>/.local/insu-player/`。
 - 在執行 doctor、setup、serve 或 process 前先解析一次 workspace 的絕對路徑，回報給使用者，後續每一步固定使用同一路徑。
 - 不搜尋目前專案之外的 INSU workspace，也不因另一個 workspace 已完成安裝、有影片或正在背景執行而改用它。只有使用者明確指定時才能跨越專案邊界。
-- 只有選定 workspace 內的 `.insu-player-server.pid` 與 `.insu-environment-session.json` 能證明服務屬於該 workspace。單看 localhost port、程序名稱或其他專案的 PID 不足以沿用服務。
-- Port 衝突不會改變 workspace 身分。若 `8000` 已由另一個 workspace 使用，保留兩邊資料與程序，改以 `8010` 或其他可用 localhost port 啟動目前 workspace，並回報實際首頁網址。
+- 只有選定 workspace 內的 `.insu-player-server.pid`、`.insu-player-server.json` 與 live process 能證明服務屬於該 workspace。單看 localhost port、程序名稱或其他專案的 PID 不足以沿用服務。
+- Port 衝突不會改變 workspace 身分。一般啟動不指定 port；服務先嘗試 `8000`，若已被占用就原子性地綁定作業系統分配的可用 localhost port，把實際 endpoint 寫入 `.insu-player-server.json`，並回報實際首頁網址。只有使用者明確要求特定 port 時才嚴格使用該 port。
 - Workspace 解析完成後，第一個使用者可見動作是啟動或沿用該 workspace 的服務，並用 Codex 內建瀏覽器開啟實際首頁。不要等 doctor、安裝、下載或字幕處理完成才開啟，也不要只把 URL 印在回覆中。
 
 主要狀態：
@@ -94,8 +100,8 @@ http://127.0.0.1:8000/
 | `checking` / `downloading` | 正在檢查字幕或下載媒體 | 等待或查看 log |
 | `needs_transcription` | 沒有可用文字軌 | 執行 `transcribe.sh` |
 | `transcribing` | 選定 provider 轉錄中 | 等待；可在中斷後重跑 |
-| `needs_translation` | 有原文字幕，沒有繁中 | Agent 保留時間戳翻譯 |
-| `translating` | Agent 正在翻譯 | 完成後 `import-caption.sh` |
+| `needs_translation` | 有英文詞級資料，沒有繁中 | Agent 完成初譯、完整句潤色與雙語重排 |
+| `translating` | Agent 正在翻譯與重排 | 成對驗證後執行 `import-bilingual-captions.sh` |
 | `ready` | 影片與繁中字幕可觀看 | 首頁觀看或清理中間檔 |
 | `interrupted` | active state 的程序已消失 | Agent 檢查產物後從該階段續跑 |
 | `failed` | 命令失敗 | 查看 detail/log，再做針對性修復 |
@@ -123,13 +129,12 @@ Agent 先讀根目錄 `AGENTS.md` 與本文件。
 
 ```bash
 plugins/insu-player/skills/watch-video/scripts/serve-library.sh \
-  .local/insu-player \
-  8000
+  .local/insu-player
 ```
 
-讓 `serve-library.sh` 在獨立 terminal／執行 session 持續運作，再用 Codex 內建瀏覽器開啟 <http://127.0.0.1:8000/>，而不是只在訊息中提供網址。這是第一個使用者可見的產品動作；首頁保持開啟，後續 doctor、安裝與 job 狀態會在同一頁逐步更新。
+讓 `serve-library.sh` 在獨立 terminal／執行 session 持續運作，讀取它回報並寫入 `.insu-player-server.json` 的實際網址，再用 Codex 內建瀏覽器開啟該網址，而不是只在訊息中提供網址。這是第一個使用者可見的產品動作；首頁保持開啟，後續 doctor、安裝與 job 狀態會在同一頁逐步更新。
 
-若 `8000` 已由另一個 workspace 占用，不要改用、檢查或停止該服務；以 `8010` 等其他可用 port 重跑目前 workspace 的 `serve-library.sh`，再用內建瀏覽器開啟實際網址。`serve-library.sh` 在 workflow runtime 尚未安裝時可先使用系統 Python 3 顯示空白首頁。若系統沒有 Python 3，先明確回報這個例外阻塞，再執行 workspace 內的安裝流程，workflow Python 一可用就立刻開啟首頁。
+若 `8000` 已由另一個 workspace 占用，不要改用、檢查或停止該服務；這次啟動會自動取得其他可用 port，記錄後再用內建瀏覽器開啟實際網址，不需要猜測 `8010` 或逐一試 port。`serve-library.sh` 在 workflow runtime 尚未安裝時可先使用系統 Python 3 顯示空白首頁。若系統沒有 Python 3，先明確回報這個例外阻塞，再執行 workspace 內的安裝流程，workflow Python 一可用就立刻開啟首頁。
 
 Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產、job JSON、唯讀提示 JSON、模型安裝摘要 JSON、環境變數遮罩狀態與同源工作階段寫入、log 尾端、標準化 MP4、縮圖、VTT、player，以及只寫 `ui-state.json` 的播放進度端點。模型摘要只包含名稱、實際大小、provider 狀態與 API Key 是否已設定，不包含 Key、路徑或檔案內容。環境變數的原值不會從公開端點讀回，Agent 的轉錄子程序只能透過服務啟動時建立的短期 capability 取得，而且仍須先有本次 API 上傳同意。它不提供任意目錄瀏覽，也不會公開 `.agent-tools` 或模型。
 
@@ -143,11 +148,11 @@ Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產�
 
 1. URL 與是否只處理單支影片；腳本固定 `--no-playlist`。
 2. 使用者已接受首頁集中顯示的使用規範；來源平台條款與所在地規範仍可能適用。
-3. 原始語言、需要的字幕語言、是否接受機器翻譯。
-4. 選擇本機或 OpenAI API provider；本機需下載大型依賴與模型，API 會上傳音訊並可能產生費用。
+3. 在任何字幕檢查或下載前，先問是否需要繁體中文翻譯。回答需要就固定使用 `--translate zh-TW`；回答不需要就使用 `--no-translate`。
+4. 若需要翻譯，要求使用者明確選擇本機或 OpenAI API provider；本機需下載大型依賴與模型，API 會上傳音訊並可能產生費用。
 5. workspace 是否可能包含敏感內容。
 
-如果只要現成字幕，Agent 應先檢查字幕來源，不必立刻下載 Whisper 模型或影片。
+若需要翻譯，不檢查也不下載任何平台字幕格式；直接以使用者選定的本機或 OpenAI 模型轉錄原始音訊並取得英文詞級時間。若不需要翻譯，來源 VTT 可直接作為播放字幕。如果只要現成字幕，Agent 應先檢查字幕來源，不必立刻下載 Whisper 模型或影片。
 
 ## 階段 3：從零盤點環境
 
@@ -191,6 +196,8 @@ Deno 不是拿來開網頁伺服器；它提供部分 yt-dlp extractors 所需�
 plugins/insu-player/skills/watch-video/scripts/process-video.sh \
   .local/insu-player \
   'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --translate zh-TW \
+  --provider local \
   --model medium \
   --language en \
   --track en
@@ -199,11 +206,20 @@ plugins/insu-player/skills/watch-video/scripts/process-video.sh \
 流程會：
 
 1. 解析影片 ID 與標題並建立／續用 job。
-2. 嘗試作者字幕與自動字幕，標準化為 `captions/*.vtt`。
+2. 依使用者在下載前的選擇取得字幕：翻譯模式略過全部來源字幕，改由選定模型轉錄音訊並建立詞級 transcript 與句級 manifest；不翻譯模式才可直接下載來源 VTT。
 3. 下載瀏覽器相容 MP4 與縮圖。
 4. 沒有文字軌時準備音訊並執行使用者選定的轉錄 provider。
 5. 即時更新狀態、進度、PID 與 log。
-6. 有繁中時設為 `ready`；只有原文時停在 `needs_translation`。
+6. 翻譯模式停在 `needs_translation`，待 Agent 完成初譯、句級潤色、雙語同步輸出與成對匯入後才設為 `ready`；不翻譯模式有可播字幕即可完成。
+
+不需要翻譯時必須明確指定：
+
+```bash
+plugins/insu-player/skills/watch-video/scripts/process-video.sh \
+  .local/insu-player \
+  'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --no-translate
+```
 
 如果只想先下載、稍後再轉錄：
 
@@ -211,6 +227,7 @@ plugins/insu-player/skills/watch-video/scripts/process-video.sh \
 plugins/insu-player/skills/watch-video/scripts/process-video.sh \
   .local/insu-player \
   'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --translate zh-TW \
   --no-transcribe
 ```
 
@@ -223,7 +240,8 @@ plugins/insu-player/skills/watch-video/scripts/process-video.sh \
 ```bash
 plugins/insu-player/skills/watch-video/scripts/download-video.sh \
   .local/insu-player \
-  'https://www.youtube.com/watch?v=VIDEO_ID'
+  'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --translate zh-TW
 ```
 
 本機 Whisper 轉錄：
@@ -250,46 +268,49 @@ plugins/insu-player/skills/watch-video/scripts/transcribe.sh \
   --language en --track en --allow-api-upload
 ~~~
 
-API 音訊會先轉為低位元率分段，單檔低於 25 MB，再把 segment timestamps offset 回完整時間軸。Key 不寫入 job、log 或 metadata。
+API 音訊會先轉為低位元率分段，單檔低於 25 MB，再把 segment 與 word timestamps offset 回完整時間軸。Key 不寫入 job、log 或 metadata。
 
 若首頁服務已啟動，也可以從 navbar 的「環境變數」輸入 `OPENAI_API_KEY`，再執行同一個 `transcribe.sh --allow-api-upload` 命令。腳本會讓 API 轉錄子程序繼承服務程序中的值，不會把值回傳給首頁、寫入 `.env`、命令列、job、log 或 metadata。停止或重新啟動服務後需要重新輸入。
 
-## 階段 7：Agent 翻譯繁中字幕
+## 階段 7：Agent 初譯、完整句潤色與雙語重排
 
-Agent 先將 job 標成翻譯中：
+`transcribe.sh` 會先以模型詞級時間建立句級 manifest，並把首頁狀態切到「繁中初次翻譯」。開始潤色前再更新細部狀態：
 
 ```bash
 <workspace>/.agent-tools/insu-player/.venv/bin/python \
-  plugins/insu-player/skills/watch-video/scripts/job_state.py update \
+  plugins/insu-player/skills/watch-video/scripts/job_state.py subtitle-workflow \
   --job-dir <workspace>/jobs/VIDEO_ID \
-  --state translating \
-  --stage translation \
-  --message 'Agent 正在翻譯繁體中文字幕' \
-  --record-history
+  --translation requested \
+  --source model \
+  --provider local \
+  --model medium \
+  --stage sentence_polish
 ```
 
-翻譯規則：
+翻譯模式的事實來源是 `<job>/whisper/<provider>/transcript.json` 與由它建立的 `<job>/subtitle-work/bilingual-sentences.json`，不是平台字幕。每個英文字詞都必須有模型產生的 start/end 時間，腳本依標點與停頓重建完整英文句子。
 
-1. 以通過抽查的原文／英文 VTT 為唯一時間軸。
-2. 保留每個 cue 的起訖時間和順序，只翻文字。
-3. 專有名詞、產品名、股票代號與數字不可臆改。
-4. 長字幕分批時以 cue 時間銜接，避免漏段或重複。
-5. 輸出 UTF-8、以 `WEBVTT` 開頭，至少有一個 `-->` cue。
-6. 抽查開頭、中間、結尾與專有名詞密集區。
+翻譯與重排規則：
 
-將譯文匯入固定 track：
+1. 對 manifest 每個完整英文句子做一次繁中初譯，寫入 `draftTraditionalChinese`。
+2. 再以完整英文句與初譯重新潤色，將自然的臺灣繁中寫入 `traditionalChinese`；不要沿用碎片 cue 的字串拼接。
+3. 不增刪、合併、拆開或重排句級 segment；英文與繁中必須使用相同 ID、開始與結束時間。
+4. 每個 cue 只有一個完整句子與一個實體文字行，不把同一句拆到兩個時間段。
+5. 最後把英文與繁中的半形／全形逗號、句號全部改成半形空格，並將連續空白收斂成單一 ASCII space。
+6. 專有名詞、產品名、股票代號與數字不可臆改；不得殘留批次 marker。
+7. 若使用外部翻譯服務，第一次送出字幕文字前先說明服務與資料範圍並取得同意。
+
+先由 `translate-subtitles/scripts/reflow_subtitles.py render` 產生 `en.final.vtt` 與 `zh-TW.final.vtt`，通過共享時間軸、句數、標點、單行文字與 marker 驗證後，才成對匯入：
 
 ```bash
-plugins/insu-player/skills/watch-video/scripts/import-caption.sh \
+plugins/insu-player/skills/watch-video/scripts/import-bilingual-captions.sh \
   .local/insu-player \
   VIDEO_ID \
-  zh-TW \
-  /path/to/translated.zh-TW.vtt \
-  --source agent-translation \
-  --label '繁體中文'
+  .local/insu-player/jobs/VIDEO_ID/subtitle-work/en.final.vtt \
+  .local/insu-player/jobs/VIDEO_ID/subtitle-work/zh-TW.final.vtt \
+  --force
 ```
 
-若目的 track 已存在，只有明確要替換時才加 `--force`。匯入會驗證 VTT、atomic replace，並在影片存在時將 job 設為 `ready`。
+Importer 第一次執行會保留舊的 `en.pre-reflow.vtt` 與 `zh-TW.pre-reflow.vtt`。任一字幕仍有斷句、時間不一致、逗號／句號或內部 marker 時都不得設為 `ready`。
 
 ## 階段 8：首頁驗證
 
@@ -301,7 +322,9 @@ plugins/insu-player/skills/watch-video/scripts/import-caption.sh \
 - [ ] 播放、暫停、拖曳後字幕同步
 - [ ] 關閉 modal 後 iframe `src` 被清除，影片停止解碼
 - [ ] 重開同支影片可從 job 內 `ui-state.json` 的進度接續
-- [ ] 詳細資料能看到狀態歷程與 log
+- [ ] 「目前狀態」沒有前置圓點，欄位使用固定寬度並顯示字幕處理細部階段
+- [ ] 「詳情」的「關於」顯示媒體資訊與獨立捲動的狀態歷程；「字幕」能並排顯示語言碼與字幕文字；「處理紀錄」顯示目前階段與全寬 Workflow log
+- [ ] 開啟「關於」時不先請求字幕與 log，只有切到「字幕」或「處理紀錄」才按需載入
 - [ ] 斷網時仍可使用原生 `<video controls>` 與本機 VTT；首頁預設不發出 CDN 請求，只有使用者主動選擇 Google Fonts 時載入字體
 
 ## 使用四、五次之後的預期流程
@@ -311,8 +334,8 @@ plugins/insu-player/skills/watch-video/scripts/import-caption.sh \
 1. 使用者把 yt-dlp 支援的 URL 交給 Agent；未知來源則請 Agent 先研究支援方式。
 2. Agent 先確認目前 workspace 的首頁已用 Codex 內建瀏覽器開啟，沒有開啟就先開啟。
 3. Agent 執行 `process-video.sh`；首頁自動多一列。
-4. 使用者可以繼續留在首頁，從 navbar 開啟影片列表查看下載／轉錄進度或觀看既有影片。
-5. 待翻譯時 Agent 產生繁中 VTT 並匯入；該列自動變成完成。
+4. 使用者可以繼續留在首頁，從 navbar 開啟影音中心查看下載／轉錄進度或觀看既有影片。
+5. 待翻譯時 Agent 完成初譯與句級潤色，再成對匯入共享時間軸的英文與繁中 VTT；該列才變成完成。
 6. 磁碟累積後只清理已完成 job 的中間檔，保留首頁播放需要的檔案。
 
 不需要重裝 Python、重下模型、重建 HTML、重開每支影片的 server，也不需要離開首頁找不同 player 目錄。
@@ -411,7 +434,7 @@ plugins/insu-player/skills/watch-video/scripts/uninstall.sh \
 
 日常：
 
-> 沿用既有 `.local/insu-player`，把這支影片加入本機影片庫。依目前 yt-dlp extractor 處理，優先使用現成字幕，沒有才跑 Whisper；保留時間戳翻成繁中。首頁保持啟動，完成後告訴我狀態。
+> 沿用既有 `.local/insu-player`，把這支影片加入本機影片庫。先問我是否需要翻譯；若要繁中，再問我要用本機或 OpenAI 模型，不取得任何平台字幕，改由選定模型產生英文詞級時間。完成初譯後重建完整句子、潤色，輸出共享句級時間軸的英繁字幕。首頁保持啟動，完成後告訴我狀態。
 
 續跑：
 

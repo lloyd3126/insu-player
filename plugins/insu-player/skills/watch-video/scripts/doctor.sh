@@ -43,13 +43,20 @@ for command_name in curl unzip; do
   fi
 done
 
-for ignored_command in ffmpeg ffprobe python3 yt-dlp deno uv; do
+for ignored_command in ffmpeg ffprobe python3 yt-dlp deno uv bun; do
   if command -v "$ignored_command" >/dev/null 2>&1; then
     printf 'system-%s: %s (detected, not used by workflow)\n' "$ignored_command" "$(command -v "$ignored_command")"
   else
     printf 'system-%s: absent (not required)\n' "$ignored_command"
   fi
 done
+
+if [ -x "$CAPTION_BUN" ]; then
+  printf 'bun: %s\n' "$("$CAPTION_BUN" --version 2>/dev/null || printf installed-but-unreadable)"
+else
+  printf 'bun: not-installed-by-workflow\n'
+  missing=1
+fi
 
 if [ -x "$CAPTION_UV" ]; then
   printf 'uv: %s\n' "$($CAPTION_UV --version 2>/dev/null || printf installed-but-unreadable)"
@@ -119,8 +126,9 @@ printf 'install-scope: %s\n' "$CAPTION_RUNTIME"
 printf 'generated-scope: %s\n' "$CAPTION_JOBS"
 printf 'external-package-manager-changes: none\n'
 
-if [ -f "$SKILL_DIR/assets/library/index.html" ] && [ -f "$CAPTION_LIBRARY_SERVER" ]; then
-  printf 'library-template: available\n'
+if [ -f "$CAPTION_LIBRARY_APP/index.html" ] && [ -f "$CAPTION_WEB_SERVER" ] && [ -d "$CAPTION_WEB_MIGRATIONS" ]; then
+  printf 'library-template: react-vite\n'
+  printf 'library-server: hono-drizzle-bun-sqlite\n'
 else
   printf 'library-template: missing\n'
   missing=1

@@ -68,6 +68,8 @@ mkdir -p \
   "$CAPTION_HF_CACHE" "$CAPTION_YTDLP_CACHE" "$CAPTION_TEMP" "$CAPTION_LOCAL_HOME" \
   "$CAPTION_XDG_CONFIG" "$CAPTION_XDG_DATA" "$CAPTION_XDG_STATE"
 
+"$SCRIPT_DIR/ensure-bun.sh" "$CAPTION_WORKSPACE"
+
 write_install_state() {
   {
     printf 'INSTALL_SCOPE=workspace-only\n'
@@ -75,6 +77,7 @@ write_install_state() {
     printf 'DEFAULT_MODEL=%s\n' "$model_name"
     printf 'TRANSCRIPTION_PROVIDER=%s\n' "$provider_name"
     printf 'FFMPEG_PATH=%s\n' "$CAPTION_FFMPEG"
+    printf 'BUN_VERSION=%s\n' "$("$CAPTION_BUN" --version)"
   } > "$CAPTION_STATE"
 }
 

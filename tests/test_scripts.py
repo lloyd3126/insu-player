@@ -48,7 +48,7 @@ for argument in "$@"; do
   previous="$argument"
 done
 case " $* " in
-  *' --dump-single-json '*) printf '%s\n' '{"id":"test-video","title":"Test Video"}'; exit 0 ;;
+  *' --dump-single-json '*) printf '%s\n' '{"id":"test-video","title":"Test Video","duration":125.9}'; exit 0 ;;
   *' --write-subs '*)
     directory=$(dirname "$output")
     mkdir -p "$directory"
@@ -102,6 +102,7 @@ exit 2
         self.assertIn("Download complete", result.stdout)
         self.assertEqual(status["state"], "needs_translation")
         self.assertEqual(status["title"], "Test Video")
+        self.assertEqual(status["durationSeconds"], 125.9)
         self.assertTrue((job_dir / "source" / "video.mp4").is_file())
         self.assertTrue((job_dir / "captions" / "en.vtt").is_file())
         self.assertFalse((job_dir / "source" / "audio.m4a").exists())
@@ -116,6 +117,55 @@ exit 2
         )
         self.assertIn("State: needs_translation", result.stdout)
         self.assertEqual(self.read_status()["state"], "needs_translation")
+
+    def test_progress_runner_handles_commands_without_percentage_output(self) -> None:
+        job_dir = self.workspace / "jobs" / "no-progress"
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "init",
+                "--job-dir",
+                str(job_dir),
+                "--video-id",
+                "no-progress",
+                "--source-url",
+                "https://example.test/watch?v=no-progress",
+                "--title",
+                "No Progress",
+            ],
+            cwd=REPO_ROOT,
+            env=self.environment,
+            check=True,
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "run_progress.py"),
+                "--job-dir",
+                str(job_dir),
+                "--state",
+                "downloading",
+                "--stage",
+                "video",
+                "--message",
+                "Downloading",
+                "--",
+                sys.executable,
+                "-c",
+                "print('no percentage output')",
+            ],
+            cwd=REPO_ROOT,
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertIn("no percentage output", result.stdout)
+        self.assertEqual(status["state"], "downloading")
+        self.assertEqual(status["progress"], 100.0)
 
     def test_import_translation_makes_job_ready_then_cleanup_preserves_player_assets(self) -> None:
         self.run_script("download-video.sh", str(self.workspace), "https://example.test/watch?v=test-video")

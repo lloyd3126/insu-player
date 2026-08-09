@@ -44,6 +44,7 @@ ENVIRONMENT_VARIABLES = {
     },
 }
 SESSION_DESCRIPTOR_NAME = ".insu-environment-session.json"
+SERVER_DESCRIPTOR_NAME = ".insu-player-server.json"
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
@@ -63,6 +64,34 @@ def process_is_alive(pid: object) -> bool:
     except (OSError, ValueError):
         return False
     return True
+
+
+def local_server_url(host: str, port: int) -> str:
+    host_for_url = f"[{host}]" if ":" in host else host
+    return f"http://{host_for_url}:{port}/"
+
+
+def load_active_server_endpoint(path: Path, expected_pid: int | None = None) -> dict[str, object] | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    host = payload.get("host")
+    port = payload.get("port")
+    pid = payload.get("pid")
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        return None
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        return None
+    if not isinstance(pid, int) or (expected_pid is not None and pid != expected_pid):
+        return None
+    if not process_is_alive(pid):
+        return None
+    return {"host": host, "port": port, "pid": pid}
 
 
 def tail_text(path: Path, line_count: int = 160) -> str:
@@ -225,11 +254,13 @@ class LibraryApplication:
                     continue
                 models.append({
                     "name": path.stem,
+                    "displayName": f"OpenAI Whisper {path.stem}",
                     "sizeBytes": size_bytes,
                     "ready": local_provider_installed,
                 })
 
         openai_installed = "openai" in packages
+        openai_api_key_configured = bool(os.environ.get("OPENAI_API_KEY"))
         return {
             "local": {
                 "providerInstalled": local_provider_installed,
@@ -241,8 +272,14 @@ class LibraryApplication:
             "api": {
                 "providerInstalled": openai_installed,
                 "packageVersion": packages.get("openai"),
-                "keyConfigured": bool(os.environ.get("OPENAI_API_KEY")),
-                "models": [{"name": "whisper-1", "installed": openai_installed}],
+                "keyConfigured": openai_api_key_configured,
+                "models": [{
+                    "name": "whisper-1",
+                    "displayName": "OpenAI whisper-1",
+                    "installed": openai_installed,
+                    "apiKeyName": "OPENAI_API_KEY",
+                    "apiKeyConfigured": openai_api_key_configured,
+                }],
             },
         }
 
@@ -297,16 +334,10 @@ class LibraryApplication:
             raise FileNotFoundError("session environment variable is unavailable")
         return value
 
-    def write_session_descriptor(self, host: str, port: int) -> Path:
-        descriptor_path = self.workspace / SESSION_DESCRIPTOR_NAME
+    def write_private_descriptor(self, name: str, payload: dict[str, object]) -> Path:
+        descriptor_path = self.workspace / name
         if descriptor_path.is_symlink():
-            raise OSError("session descriptor path must not be a symlink")
-        payload = {
-            "host": host,
-            "port": port,
-            "pid": os.getpid(),
-            "token": self.session_token,
-        }
+            raise OSError("descriptor path must not be a symlink")
         temp_path = descriptor_path.with_name(f".{descriptor_path.name}.{os.getpid()}.tmp")
         descriptor = (json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
         file_descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -323,16 +354,37 @@ class LibraryApplication:
             raise
         return descriptor_path
 
-    def remove_session_descriptor(self) -> None:
-        descriptor_path = self.workspace / SESSION_DESCRIPTOR_NAME
+    def write_session_descriptor(self, host: str, port: int) -> Path:
+        return self.write_private_descriptor(SESSION_DESCRIPTOR_NAME, {
+            "host": host,
+            "port": port,
+            "pid": os.getpid(),
+            "token": self.session_token,
+        })
+
+    def write_server_descriptor(self, host: str, port: int) -> Path:
+        return self.write_private_descriptor(SERVER_DESCRIPTOR_NAME, {
+            "host": host,
+            "port": port,
+            "pid": os.getpid(),
+        })
+
+    def remove_owned_descriptor(self, name: str, key: str, value: object) -> None:
+        descriptor_path = self.workspace / name
         if descriptor_path.is_symlink() or not descriptor_path.is_file():
             return
         try:
             payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
-            if payload.get("token") == self.session_token:
+            if isinstance(payload, dict) and payload.get(key) == value:
                 descriptor_path.unlink()
         except (OSError, json.JSONDecodeError):
             return
+
+    def remove_session_descriptor(self) -> None:
+        self.remove_owned_descriptor(SESSION_DESCRIPTOR_NAME, "token", self.session_token)
+
+    def remove_server_descriptor(self) -> None:
+        self.remove_owned_descriptor(SERVER_DESCRIPTOR_NAME, "pid", os.getpid())
 
     def job_dir(self, video_id: str) -> Path:
         if not VIDEO_ID_PATTERN.fullmatch(video_id):
@@ -456,6 +508,7 @@ class LibraryApplication:
                 "lastError": str(error),
                 "history": [],
                 "subtitleTracks": {},
+                "subtitleWorkflow": None,
             }
 
         video_id = job_dir.name
@@ -483,6 +536,16 @@ class LibraryApplication:
             effective_state = "failed"
             message = "狀態顯示完成，但找不到 video.mp4"
 
+        playback = self.playback_state(job_dir)
+        duration = status.get("durationSeconds")
+        if (
+            not isinstance(duration, (int, float))
+            or isinstance(duration, bool)
+            or not math.isfinite(duration)
+            or duration <= 0
+        ):
+            duration = playback["duration"]
+
         result: dict[str, object] = {
             "videoId": video_id,
             "title": status.get("title") or video_id,
@@ -499,12 +562,14 @@ class LibraryApplication:
             "watchable": video is not None,
             "captionCodes": list(captions),
             "subtitleTracks": status.get("subtitleTracks") or {},
+            "subtitleWorkflow": status.get("subtitleWorkflow"),
             "transcription": status.get("transcription"),
             "sizeBytes": self.job_size(job_dir),
             "thumbnailUrl": f"/thumbnails/{video_id}" if thumbnail else None,
             "watchUrl": f"/watch/{video_id}/?embed=1" if video else None,
             "hasLog": (job_dir / "logs" / "workflow.log").is_file(),
-            "playback": self.playback_state(job_dir),
+            "durationSeconds": float(duration) if duration is not None else None,
+            "playback": playback,
         }
         if include_history:
             result["history"] = status.get("history") or []
@@ -653,14 +718,13 @@ class LibraryRequestHandler(BaseHTTPRequestHandler):
             if path in {"/", "/index.html"}:
                 self.send_file(self.application.library_template / "index.html", head_only=head_only, cache="no-store")
                 return
-            if path == "/assets/library.css":
-                self.send_file(self.application.library_template / "library.css", head_only=head_only, cache="no-store")
-                return
-            if path == "/assets/library.js":
-                self.send_file(self.application.library_template / "library.js", head_only=head_only, cache="no-store")
-                return
-            if path == "/assets/taiwan-whistling-thrush.png":
-                self.send_file(self.application.library_template / "taiwan-whistling-thrush.png", head_only=head_only, cache="private, max-age=3600")
+            if path.startswith("/assets/"):
+                asset_root = self.application.library_template / "assets"
+                asset = self.application.safe_job_file(asset_root, asset_root / path.removeprefix("/assets/"))
+                if asset is None:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                self.send_file(asset, head_only=head_only, cache="public, max-age=31536000, immutable")
                 return
             if path == "/api/health":
                 self.send_json({"status": "ok"}, head_only=head_only)
@@ -846,8 +910,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8000, type=int)
+    parser.add_argument("--auto-port", action="store_true")
     parser.add_argument("--pid-file", type=Path)
-    parser.add_argument("--library-template", type=Path, default=skill_root / "assets" / "library")
+    parser.add_argument("--library-template", type=Path, default=skill_root / "assets" / "library" / "app")
     parser.add_argument("--player-template", type=Path, default=skill_root / "assets" / "player")
     return parser
 
@@ -862,23 +927,45 @@ def main() -> int:
         raise SystemExit("choose a dedicated workspace, not the filesystem root or home directory")
     workspace = args.workspace.resolve()
     pid_file = args.pid_file.resolve() if args.pid_file else None
+    server_file = workspace / SERVER_DESCRIPTOR_NAME
     if pid_file is not None:
         try:
             pid_file.relative_to(workspace)
         except ValueError as error:
             raise SystemExit("pid file must stay inside the workspace") from error
+
+    active_endpoint = load_active_server_endpoint(server_file)
+    if active_endpoint is not None:
+        print(f"Local video library: {local_server_url(str(active_endpoint['host']), int(active_endpoint['port']))}")
+        print(f"Workspace: {workspace}")
+        print(f"Already running with pid {active_endpoint['pid']}.")
+        return 0
+
+    if pid_file is not None:
         if pid_file.is_file():
             try:
                 existing_pid = int(pid_file.read_text(encoding="utf-8").strip())
             except (OSError, ValueError):
                 existing_pid = 0
             if process_is_alive(existing_pid):
-                raise SystemExit(f"library server for this workspace is already running with pid {existing_pid}")
+                fallback_endpoint = load_active_server_endpoint(
+                    workspace / SESSION_DESCRIPTOR_NAME,
+                    expected_pid=existing_pid,
+                )
+                if fallback_endpoint is not None:
+                    print(
+                        "Local video library: "
+                        f"{local_server_url(str(fallback_endpoint['host']), int(fallback_endpoint['port']))}"
+                    )
+                    print(f"Workspace: {workspace}")
+                    print(f"Already running with pid {existing_pid}.")
+                    return 0
+                raise SystemExit(
+                    f"library server for this workspace is already running with pid {existing_pid}, "
+                    "but its endpoint descriptor is unavailable"
+                )
     for required in (
         args.library_template / "index.html",
-        args.library_template / "library.css",
-        args.library_template / "library.js",
-        args.library_template / "taiwan-whistling-thrush.png",
         args.player_template / "index.html",
     ):
         if not required.is_file():
@@ -891,34 +978,43 @@ def main() -> int:
     try:
         server = ThreadingHTTPServer((args.host, args.port), LibraryRequestHandler)
     except OSError as error:
-        if error.errno == errno.EADDRINUSE:
+        if error.errno == errno.EADDRINUSE and args.auto_port:
+            server = ThreadingHTTPServer((args.host, 0), LibraryRequestHandler)
+        elif error.errno == errno.EADDRINUSE:
             raise SystemExit(
                 f"port {args.port} is already in use; keep the selected workspace {workspace} "
-                "and retry with another port such as 8010; do not reuse another workspace"
+                "and omit the port argument to select a free port automatically; do not reuse another workspace"
             ) from error
-        raise
+        else:
+            raise
     server.daemon_threads = True
-    application.write_session_descriptor(args.host, args.port)
+    actual_port = int(server.server_address[1])
 
     def stop_server(signum: int, _frame: object) -> None:
         print(f"\nreceived signal {signum}; stopping", file=sys.stderr)
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, stop_server)
-    if pid_file is not None:
-        temp_pid_file = pid_file.with_name(f".{pid_file.name}.{os.getpid()}.tmp")
-        temp_pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
-        os.replace(temp_pid_file, pid_file)
-    print(f"Local video library: http://{args.host}:{args.port}/")
-    print(f"Workspace: {application.workspace}")
-    print("Press Ctrl+C to stop.")
     try:
+        if pid_file is not None:
+            temp_pid_file = pid_file.with_name(f".{pid_file.name}.{os.getpid()}.tmp")
+            temp_pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
+            os.replace(temp_pid_file, pid_file)
+        application.write_server_descriptor(args.host, actual_port)
+        application.write_session_descriptor(args.host, actual_port)
+        if actual_port != args.port:
+            print(f"Preferred port {args.port} is occupied; selected free port {actual_port}.")
+        print(f"Local video library: {local_server_url(args.host, actual_port)}")
+        print(f"Server descriptor: {server_file}")
+        print(f"Workspace: {application.workspace}")
+        print("Press Ctrl+C to stop.")
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
         application.remove_session_descriptor()
+        application.remove_server_descriptor()
         if pid_file is not None:
             try:
                 if int(pid_file.read_text(encoding="utf-8").strip()) == os.getpid():
