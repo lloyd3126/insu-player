@@ -38,19 +38,21 @@ export function UsageGuideDialog() {
           <TabsTrigger value="supported-sites">支援網站</TabsTrigger>
         </TabsList>
         <TabsContent value="getting-started" className="grouped-dialog-panel">
-          <UsageContent />
+          {active?.tab === "getting-started" ? <UsageContent /> : null}
         </TabsContent>
         <TabsContent
           value="my-prompts"
           className="grouped-dialog-panel my-prompts-panel"
         >
-          <MyPromptsContent />
+          {active?.tab === "my-prompts" ? <MyPromptsContent /> : null}
         </TabsContent>
         <TabsContent
           value="supported-sites"
           className="grouped-dialog-panel supported-sites-panel"
         >
-          <SupportedSitesContent />
+          {active?.tab === "supported-sites" ? (
+            <SupportedSitesContent />
+          ) : null}
         </TabsContent>
       </Tabs>
     </AppDialog>

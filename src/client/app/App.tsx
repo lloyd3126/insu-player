@@ -8,7 +8,10 @@ import { useEffect } from "react"
 import birdImage from "@library-assets/taiwan-whistling-thrush.png"
 
 import { OverlayCoordinator } from "@/app/OverlayCoordinator"
-import { useOverlay, type OverlayState } from "@/app/overlay-context"
+import {
+  useOverlayActions,
+  type OverlayState,
+} from "@/app/overlay-context"
 import { Button } from "@/components/ui/button"
 import { POLICY_KEY } from "@/features/policy/constants"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
@@ -56,18 +59,18 @@ function LocalServiceStatus() {
 }
 
 export function App() {
-  const overlay = useOverlay()
+  const { open: openOverlay } = useOverlayActions()
   const jobs = useJobsQuery()
 
   useEffect(() => {
     try {
       if (localStorage.getItem(POLICY_KEY) !== "accepted") {
-        overlay.actions.open({ type: "policy", required: true })
+        openOverlay({ type: "policy", required: true })
       }
     } catch {
-      overlay.actions.open({ type: "policy", required: true })
+      openOverlay({ type: "policy", required: true })
     }
-  }, [])
+  }, [openOverlay])
 
   return (
     <div className="app-shell">
@@ -81,7 +84,7 @@ export function App() {
             <Button
               key={item.label}
               variant="ghost"
-              onClick={() => overlay.actions.open(item.state)}
+              onClick={() => openOverlay(item.state)}
             >
               {item.label}
             </Button>
@@ -90,7 +93,7 @@ export function App() {
             className="nav-library"
             variant="outline"
             onClick={() =>
-              overlay.actions.open({ type: "library", view: null })
+              openOverlay({ type: "library", view: null })
             }
           >
             <LibraryBigIcon data-icon="inline-start" />
@@ -117,7 +120,7 @@ export function App() {
               className="hero-direction"
               size="lg"
               onClick={() =>
-                overlay.actions.open({
+                openOverlay({
                   type: "usage-guide",
                   tab: "getting-started",
                 })
@@ -139,7 +142,7 @@ export function App() {
             <Button
               variant="link"
               onClick={() =>
-                overlay.actions.open({ type: "policy", required: false })
+                openOverlay({ type: "policy", required: false })
               }
             >
               使用規範

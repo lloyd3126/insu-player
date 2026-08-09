@@ -329,6 +329,10 @@ test.describe("INSU Player home @smoke", () => {
     )
     expect(scrollBoundaries.listMax).toBeGreaterThan(0)
     expect(scrollBoundaries.listActual).toBeGreaterThan(0)
+    await expect(
+      supportedSiteList.getByRole("listitem", { name: "example-120" }),
+    ).toBeVisible()
+    expect(await supportedSiteList.getByRole("listitem").count()).toBeLessThan(120)
     await sourceSupportCard.getByRole("button", { name: "複製提示" }).click()
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))

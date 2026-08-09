@@ -300,10 +300,7 @@
 .footer-middle button { height: auto; padding: 0; color: var(--quiet); font-size: inherit; }
 
 /* Shared dialog composition */
-.overlay-loading-backdrop {
-  position: fixed;
-  z-index: 50;
-  inset: 0;
+.overlay-loading-dialog::backdrop {
   background: rgb(0 0 0 / 45%);
   backdrop-filter: blur(4px);
 }
@@ -311,6 +308,7 @@
 .overlay-loading-dialog {
   position: fixed;
   z-index: 51;
+  inset: auto;
   top: 50%;
   left: 50%;
   display: flex;
@@ -503,7 +501,8 @@
 .app-dialog-tabs > .settings-table-panel,
 .app-dialog-tabs > .model-settings-panel,
 .app-dialog-tabs > .supported-sites-panel,
-.app-dialog-tabs > .job-about-panel { overflow: hidden; }
+.app-dialog-tabs > .job-about-panel,
+.app-dialog-tabs > .job-subtitle-panel { overflow: hidden; }
 
 .grouped-dialog-panel { min-height: 0; padding-top: 1rem; }
 .guide-tab-content > :first-child { margin-top: 0; }
@@ -682,7 +681,7 @@
 
 .job-about-content { display: flex; height: 100%; min-height: 0; flex-direction: column; gap: 1rem; overflow: hidden; }
 .job-about-facts { flex: 0 0 auto; margin-bottom: 0; }
-.job-subtitle-content,
+.job-subtitle-content { display: flex; height: 100%; min-height: 0; flex-direction: column; gap: 1rem; overflow: hidden; }
 .job-activity-content { display: grid; gap: 1rem; }
 .job-detail-card { min-width: 0; border-color: var(--line); }
 .job-history-card { min-height: 0; flex: 1 1 auto; }
@@ -696,9 +695,30 @@
 .workflow-log-scroll { height: 24rem; border: 1px solid var(--border); background: var(--muted); }
 .workflow-log-content { min-width: 0; margin: 0; padding: 1rem; color: var(--muted-foreground); font: 0.68rem/1.7 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.caption-comparison { display: grid; gap: 1rem; }
+.caption-comparison { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; gap: 1rem; }
 .caption-comparison__header p { margin: 0; color: var(--muted-foreground); font-size: 0.75rem; }
+.caption-table-frame { min-height: 12rem; flex: 1 1 auto; scrollbar-gutter: stable; }
+.caption-table-container { overflow: visible; }
 .caption-table { min-width: 56rem; table-layout: fixed; }
+.caption-table--virtual { display: grid; }
+.caption-table__header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: grid;
+  background: var(--background);
+}
+.caption-table__body { position: relative; display: grid; }
+.caption-table__row {
+  display: grid;
+  grid-template-columns: var(--caption-columns);
+}
+.caption-table__virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
 .caption-table th:first-child,
 .caption-table td:first-child { width: 11rem; color: var(--quiet); font: 0.68rem ui-monospace, monospace; }
 .caption-table td { vertical-align: top; font-size: 0.92rem; line-height: 1.75; }
@@ -718,8 +738,20 @@
 .sources-search { flex: 0 0 auto; margin: 1rem 0; }
 .sources-search input { width: 100%; }
 .sources-summary { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; color: var(--quiet); font-size: 0.72rem; }
-.source-list { display: grid; min-height: 0; max-height: none; flex: 1 1 auto; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: auto; margin: 0; padding: 1px; background: var(--line); list-style: none; scrollbar-gutter: stable; }
-.source-list li { overflow: hidden; padding: 0.7rem; background: #141517; text-overflow: ellipsis; white-space: nowrap; font: 0.7rem ui-monospace, monospace; }
+.source-list { min-height: 0; max-height: none; flex: 1 1 auto; overflow: auto; margin: 0; padding: 1px; background: var(--line); scrollbar-gutter: stable; }
+.source-list__canvas { position: relative; width: 100%; margin: 0; padding: 0; list-style: none; }
+.source-list__item {
+  position: absolute;
+  top: 0;
+  min-height: 38px;
+  overflow: hidden;
+  min-width: 0;
+  padding: 0.7rem;
+  background: #141517;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 0.7rem ui-monospace, monospace;
+}
 .prompt-action-card {
   gap: 0;
   margin-top: 1rem;
@@ -812,7 +844,6 @@
   .job-fact:nth-child(odd) { border-right: 1px solid var(--line); }
   .job-fact:nth-last-child(-n + 4) { border-bottom: 1px solid var(--line); }
   .job-fact:nth-last-child(-n + 2) { border-bottom: 0; }
-  .source-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .video-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -844,7 +875,6 @@
   .job-fact:nth-child(2n) { border-right: 0; border-bottom: 1px solid var(--line); }
   .job-fact:last-child { border-bottom: 0; }
   .history-list li { grid-template-columns: 1fr; }
-  .source-list { grid-template-columns: 1fr; }
   .video-grid { grid-template-columns: 1fr; padding: 1rem; }
   .player-footer { align-items: flex-start; flex-direction: column; }
   .player-footer__actions { width: 100%; flex-wrap: wrap; }

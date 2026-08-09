@@ -4,6 +4,7 @@ import type {
 } from "@shared/contracts/caption"
 
 const TIMING_PATTERN = /^(\S+)\s+-->\s+(\S+)/
+const OVERLAP_EPSILON = 0.001
 
 export function parseVttTimestamp(value: string) {
   const normalized = value.trim().replace(",", ".")
@@ -57,7 +58,19 @@ export function parseWebVtt(value: string): CaptionCue[] {
 export function alignCaptionTracks(
   tracks: Array<{ code: string; cues: CaptionCue[] }>,
 ) {
-  const populated = tracks.filter((track) => track.cues.length > 0)
+  const normalizedTracks = tracks.map((track) => ({
+    ...track,
+    cues: track.cues
+      .filter(
+        (cue) =>
+          Number.isFinite(cue.start) &&
+          Number.isFinite(cue.end) &&
+          cue.end > cue.start &&
+          Boolean(cue.text.trim()),
+      )
+      .sort((left, right) => left.start - right.start || left.end - right.end),
+  }))
+  const populated = normalizedTracks.filter((track) => track.cues.length > 0)
   if (populated.length === 0) {
     return { baselineLanguage: null, rows: [] as CaptionComparisonRow[] }
   }
@@ -68,25 +81,44 @@ export function alignCaptionTracks(
       track.cues.length > best.cues.length ? track : best,
     )
 
+  const rowOccurrences = new Map<string, number>()
   const rows = baseline.cues.map((cue) => {
-    const entries = tracks.map((track) => {
-      const text = [
-        ...new Set(
-          track.cues
-            .filter(
-              (candidate) =>
-                Math.min(cue.end, candidate.end) -
-                  Math.max(cue.start, candidate.start) >
-                0.001,
-            )
-            .map((candidate) => candidate.text)
-            .filter(Boolean),
-        ),
-      ].join(" ")
-      return [track.code, text] as const
-    })
-    return { start: cue.start, end: cue.end, cues: Object.fromEntries(entries) }
+    const timingId = `${baseline.code}:${cue.start.toFixed(3)}:${cue.end.toFixed(3)}`
+    const occurrence = rowOccurrences.get(timingId) ?? 0
+    rowOccurrences.set(timingId, occurrence + 1)
+    return {
+      id: `${timingId}:${occurrence}`,
+      start: cue.start,
+      end: cue.end,
+      cues: {} as Record<string, string>,
+    }
   })
+
+  for (const track of normalizedTracks) {
+    let firstCandidate = 0
+    for (const row of rows) {
+      while (
+        firstCandidate < track.cues.length &&
+        track.cues[firstCandidate].end - row.start <= OVERLAP_EPSILON
+      ) {
+        firstCandidate += 1
+      }
+
+      const texts = new Set<string>()
+      for (let index = firstCandidate; index < track.cues.length; index += 1) {
+        const candidate = track.cues[index]
+        if (row.end - candidate.start <= OVERLAP_EPSILON) break
+        if (
+          Math.min(row.end, candidate.end) -
+            Math.max(row.start, candidate.start) >
+          OVERLAP_EPSILON
+        ) {
+          texts.add(candidate.text)
+        }
+      }
+      row.cues[track.code] = [...texts].join(" ")
+    }
+  }
 
   return { baselineLanguage: baseline.code, rows }
 }

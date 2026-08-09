@@ -40,9 +40,62 @@ Next&nbsp;sentence
 
     expect(aligned.baselineLanguage).toBe("en")
     expect(aligned.rows).toHaveLength(2)
+    expect(aligned.rows.map((row) => row.id)).toEqual([
+      "en:0.000:2.000:0",
+      "en:2.000:4.000:0",
+    ])
     expect(aligned.rows[0].cues).toEqual({
       "zh-TW": "第一句",
       en: "First sentence",
     })
+  })
+
+  test("aligns unsorted overlapping cues in one forward sweep", () => {
+    const english = [
+      { start: 2, end: 4, text: "Second sentence" },
+      { start: 0, end: 2, text: "First sentence" },
+    ]
+    const aligned = alignCaptionTracks([
+      {
+        code: "zh-TW",
+        cues: [
+          { start: 4, end: 5, text: "之後" },
+          { start: 2, end: 4, text: "第二句" },
+          { start: 1, end: 3, text: "跨句" },
+          { start: 0, end: 1.5, text: "第一句" },
+          { start: 1.5, end: 2, text: "第一句" },
+          { start: -1, end: 0, text: "之前" },
+          { start: 6, end: 6, text: "零長度" },
+          { start: 0, end: 1, text: "   " },
+        ],
+      },
+      { code: "en", cues: english },
+    ])
+
+    expect(english).toEqual([
+      { start: 2, end: 4, text: "Second sentence" },
+      { start: 0, end: 2, text: "First sentence" },
+    ])
+    expect(aligned.rows.map((row) => row.cues)).toEqual([
+      { "zh-TW": "第一句 跨句", en: "First sentence" },
+      { "zh-TW": "跨句 第二句", en: "Second sentence" },
+    ])
+  })
+
+  test("creates stable occurrence IDs for duplicate baseline timings", () => {
+    const aligned = alignCaptionTracks([
+      {
+        code: "en",
+        cues: [
+          { start: 0, end: 1, text: "One" },
+          { start: 0, end: 1, text: "Repeated timing" },
+        ],
+      },
+    ])
+
+    expect(aligned.rows.map((row) => row.id)).toEqual([
+      "en:0.000:1.000:0",
+      "en:0.000:1.000:1",
+    ])
   })
 })

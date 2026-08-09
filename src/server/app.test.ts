@@ -132,6 +132,15 @@ describe("Hono application", () => {
       port: 4178,
     })
     expect(statSync(path.join(workspace, "app.db")).mode & 0o077).toBe(0)
+
+    const detail = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video",
+    )
+    expect(detail.status).toBe(200)
+    expect((await detail.json()).history).toMatchObject([
+      { sequence: 0, message: "開始" },
+      { sequence: 1, message: "完成" },
+    ])
   })
 
   test("projects status.json into SQLite while preserving the filesystem fact source", async () => {

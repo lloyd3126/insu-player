@@ -64,7 +64,7 @@ interface RawStatus {
   subtitleWorkflow?: SubtitleWorkflow | null
   transcription?: TranscriptionSummary | null
   durationSeconds?: number | null
-  history?: JobHistoryEntry[]
+  history?: Array<Omit<JobHistoryEntry, "sequence">>
 }
 
 function processIsAlive(pid: unknown) {
@@ -317,7 +317,9 @@ export class JobRepository {
     if (!includeHistory) return summary
     return {
       ...summary,
-      history: Array.isArray(status.history) ? status.history : [],
+      history: Array.isArray(status.history)
+        ? status.history.map((entry, sequence) => ({ ...entry, sequence }))
+        : [],
       assets:
         status.assets && typeof status.assets === "object" ? status.assets : {},
     }

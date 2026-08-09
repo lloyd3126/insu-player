@@ -12,11 +12,7 @@ import {
   ErrorState,
   LoadingState,
 } from "@/components/shared/AsyncState"
-import {
-  CaptionLanguageSelect,
-  getPreferredCaption,
-  NO_CAPTION,
-} from "@/components/shared/CaptionLanguageSelect"
+import { CaptionLanguageSelect } from "@/components/shared/CaptionLanguageSelect"
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -45,6 +41,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
+import { getPreferredCaption, NO_CAPTION } from "@/lib/captions"
 import { cn } from "@/lib/utils"
 import type { JobSummary } from "@shared/contracts/job"
 import { ACTIVE_STATES, ATTENTION_STATES } from "@shared/domain/job-status"
@@ -58,6 +55,7 @@ const FILTERS = [
   { value: "watchable", label: "可觀看" },
   { value: "ready", label: "已完成" },
 ]
+const EMPTY_JOBS: JobSummary[] = []
 
 function matchesFilter(job: JobSummary, filter: Filter) {
   const state = job.effectiveState || job.state
@@ -259,7 +257,7 @@ export function LibraryDialog() {
   const query = useJobsQuery()
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<Filter>("all")
-  const jobs = query.data?.jobs ?? []
+  const jobs = query.data?.jobs ?? EMPTY_JOBS
   const active = overlay.state?.type === "library" ? overlay.state : null
   const selectedView = active?.view ?? (jobs.length > 0 ? "grid" : "list")
   const searched = useMemo(() => {

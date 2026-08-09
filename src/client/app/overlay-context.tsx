@@ -1,4 +1,11 @@
-import { createContext, use, useMemo } from "react"
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 
 import { overlayFromLocation, pathForOverlay } from "@/app/overlay-routes"
@@ -29,21 +36,24 @@ export type OverlayState =
 
 type OverlayType = NonNullable<OverlayState>["type"]
 
+interface OverlayActions {
+  open: (
+    overlay: Exclude<OverlayState, null>,
+    options?: { replace?: boolean },
+  ) => void
+  close: (expectedType?: OverlayType) => void
+}
+
 interface OverlayContextValue {
   state: OverlayState
-  actions: {
-    open: (
-      overlay: Exclude<OverlayState, null>,
-      options?: { replace?: boolean },
-    ) => void
-    close: (expectedType?: OverlayType) => void
-  }
+  actions: OverlayActions
   meta: {
     isOpen: boolean
   }
 }
 
-const OverlayContext = createContext<OverlayContextValue | null>(null)
+const OverlayStateContext = createContext<OverlayState | undefined>(undefined)
+const OverlayActionsContext = createContext<OverlayActions | undefined>(undefined)
 
 export function OverlayProvider({ children }: { children: React.ReactNode }) {
   const location = useLocation()
@@ -52,26 +62,57 @@ export function OverlayProvider({ children }: { children: React.ReactNode }) {
     () => overlayFromLocation(location.pathname, location.search),
     [location.pathname, location.search],
   )
-  const value = useMemo<OverlayContextValue>(
-    () => ({
-      state,
-      actions: {
-        open: (overlay, options) =>
-          navigate(pathForOverlay(overlay), { replace: options?.replace }),
-        close: (expectedType) => {
-          if (expectedType && state?.type !== expectedType) return
-          navigate("/")
-        },
-      },
-      meta: { isOpen: state !== null },
-    }),
-    [navigate, state],
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+  const open = useCallback<OverlayActions["open"]>(
+    (overlay, options) =>
+      navigate(pathForOverlay(overlay), { replace: options?.replace }),
+    [navigate],
   )
-  return <OverlayContext value={value}>{children}</OverlayContext>
+  const close = useCallback<OverlayActions["close"]>(
+    (expectedType) => {
+      if (expectedType && stateRef.current?.type !== expectedType) return
+      navigate("/")
+    },
+    [navigate],
+  )
+  const actions = useMemo<OverlayActions>(
+    () => ({
+      open,
+      close,
+    }),
+    [close, open],
+  )
+  return (
+    <OverlayActionsContext value={actions}>
+      <OverlayStateContext value={state}>{children}</OverlayStateContext>
+    </OverlayActionsContext>
+  )
+}
+
+export function useOverlayState() {
+  const state = use(OverlayStateContext)
+  if (state === undefined) {
+    throw new Error("useOverlayState must be used within OverlayProvider")
+  }
+  return state
+}
+
+export function useOverlayActions() {
+  const actions = use(OverlayActionsContext)
+  if (!actions) {
+    throw new Error("useOverlayActions must be used within OverlayProvider")
+  }
+  return actions
 }
 
 export function useOverlay() {
-  const context = use(OverlayContext)
-  if (!context) throw new Error("useOverlay must be used within OverlayProvider")
-  return context
+  const state = useOverlayState()
+  const actions = useOverlayActions()
+  return useMemo<OverlayContextValue>(
+    () => ({ state, actions, meta: { isOpen: state !== null } }),
+    [actions, state],
+  )
 }

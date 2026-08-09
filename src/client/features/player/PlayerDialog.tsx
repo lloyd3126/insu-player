@@ -1,16 +1,21 @@
-import { useMutation } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react"
 
 import { api } from "@/api/client"
 import { useOverlay } from "@/app/overlay-context"
 import { loadJobDetailDialog } from "@/app/overlay-loaders"
 import { AppDialog } from "@/components/shared/AppDialog"
-import {
-  CaptionLanguageSelect,
-  getPreferredCaption,
-} from "@/components/shared/CaptionLanguageSelect"
+import { CaptionLanguageSelect } from "@/components/shared/CaptionLanguageSelect"
 import { Button } from "@/components/ui/button"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
+import { getPreferredCaption } from "@/lib/captions"
+import type { JobsResponse } from "@shared/contracts/job"
 
 type PlayerMessage = {
   type?: string
@@ -19,14 +24,19 @@ type PlayerMessage = {
   duration?: number
 }
 
+type PlaybackMutation = {
+  videoId: string
+  time: number
+  duration: number | null
+}
+
 export function PlayerDialog() {
   const overlay = useOverlay()
   const jobsQuery = useJobsQuery()
+  const queryClient = useQueryClient()
   const iframe = useRef<HTMLIFrameElement>(null)
   const saveTimer = useRef<number | null>(null)
-  const latestPlayback = useRef<{ time: number; duration: number | null } | null>(
-    null,
-  )
+  const latestPlayback = useRef<PlaybackMutation | null>(null)
   const [ready, setReady] = useState(false)
   const active = overlay.state?.type === "player" ? overlay.state : null
   const job = jobsQuery.data?.jobs.find((item) => item.videoId === active?.videoId)
@@ -36,10 +46,57 @@ export function PlayerDialog() {
       ? active.caption
       : getPreferredCaption(captionCodes, "off")
   const [caption, setCaption] = useState("off")
-  const mutation = useMutation({
-    mutationFn: (payload: { time: number; duration: number | null }) =>
-      api.savePlayback(active?.videoId ?? "", payload),
+  const { mutate: persistPlayback } = useMutation({
+    mutationFn: ({ videoId, time, duration }: PlaybackMutation) =>
+      api.savePlayback(videoId, { time, duration }),
+    scope: { id: "player-playback" },
+    onSuccess: (saved, variables) => {
+      queryClient.setQueryData<JobsResponse>(["jobs"], (current) => {
+        if (!current) return current
+        return {
+          ...current,
+          jobs: current.jobs.map((currentJob) =>
+            currentJob.videoId === variables.videoId
+              ? { ...currentJob, playback: saved }
+              : currentJob,
+          ),
+        }
+      })
+    },
   })
+  const flushPlayback = useCallback(
+    (videoId: string) => {
+      if (saveTimer.current !== null) {
+        window.clearTimeout(saveTimer.current)
+        saveTimer.current = null
+      }
+      const pending = latestPlayback.current
+      if (!pending || pending.videoId !== videoId) return
+      latestPlayback.current = null
+      persistPlayback(pending)
+    },
+    [persistPlayback],
+  )
+  const handlePlayerReady = useEffectEvent(
+    (message: PlayerMessage, videoId: string) => {
+      setReady(true)
+      const saved = active?.videoId === videoId ? (job?.playback.time ?? 0) : 0
+      if (
+        saved > 10 &&
+        (!Number.isFinite(message.duration) ||
+          saved < Number(message.duration) - 15)
+      ) {
+        iframe.current?.contentWindow?.postMessage(
+          { type: "player:seek", time: saved },
+          location.origin,
+        )
+      }
+      iframe.current?.contentWindow?.postMessage(
+        { type: "player:set-caption", language: caption },
+        location.origin,
+      )
+    },
+  )
 
   useEffect(() => {
     if (!active) return
@@ -48,7 +105,9 @@ export function PlayerDialog() {
   }, [active?.caption, active?.videoId, preferredCaption])
 
   useEffect(() => {
-    if (!active) return
+    const videoId = active?.videoId
+    if (!videoId) return
+    latestPlayback.current = null
     const onMessage = (event: MessageEvent<PlayerMessage>) => {
       if (
         event.origin !== location.origin ||
@@ -57,23 +116,9 @@ export function PlayerDialog() {
         return
       }
       const message = event.data ?? {}
-      if (message.videoId && message.videoId !== active.videoId) return
+      if (message.videoId && message.videoId !== videoId) return
       if (message.type === "player:ready") {
-        setReady(true)
-        const saved = job?.playback.time ?? 0
-        if (
-          saved > 10 &&
-          (!Number.isFinite(message.duration) || saved < Number(message.duration) - 15)
-        ) {
-          iframe.current?.contentWindow?.postMessage(
-            { type: "player:seek", time: saved },
-            location.origin,
-          )
-        }
-        iframe.current?.contentWindow?.postMessage(
-          { type: "player:set-caption", language: caption },
-          location.origin,
-        )
+        handlePlayerReady(message, videoId)
       }
       if (
         ["player:time", "player:paused", "player:ended"].includes(
@@ -82,29 +127,31 @@ export function PlayerDialog() {
         Number.isFinite(message.time)
       ) {
         latestPlayback.current = {
+          videoId,
           time: message.type === "player:ended" ? 0 : Number(message.time),
           duration: Number.isFinite(message.duration)
             ? Number(message.duration)
             : null,
         }
-        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
         const immediate = message.type !== "player:time"
-        saveTimer.current = window.setTimeout(
-          () => {
-            if (latestPlayback.current) mutation.mutate(latestPlayback.current)
-          },
-          immediate ? 0 : 5_000,
-        )
+        if (immediate) {
+          flushPlayback(videoId)
+        } else {
+          if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
+          saveTimer.current = window.setTimeout(
+            () => flushPlayback(videoId),
+            5_000,
+          )
+        }
       }
       if (message.type === "player:error") setReady(true)
     }
     window.addEventListener("message", onMessage)
     return () => {
       window.removeEventListener("message", onMessage)
-      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
-      if (latestPlayback.current) mutation.mutate(latestPlayback.current)
+      flushPlayback(videoId)
     }
-  }, [active?.videoId, caption, job?.playback.time])
+  }, [active?.videoId, flushPlayback])
 
   const selectCaption = (value: string | null) => {
     const normalized = value ?? "off"

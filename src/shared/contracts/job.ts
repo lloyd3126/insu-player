@@ -60,6 +60,7 @@ export interface TranscriptionSummary {
 }
 
 export interface JobHistoryEntry {
+  sequence: number
   at?: string
   state?: JobState | string
   stage?: string

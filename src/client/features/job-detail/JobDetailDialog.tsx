@@ -31,13 +31,16 @@ function JobDetailTabs({
         <TabsTrigger value="activity">處理紀錄</TabsTrigger>
       </TabsList>
       <TabsContent value="about" className="detail-tab-panel job-about-panel">
-        <JobAboutPanel job={job} />
+        {tab === "about" ? <JobAboutPanel job={job} /> : null}
       </TabsContent>
-      <TabsContent value="subtitle" className="detail-tab-panel">
+      <TabsContent
+        value="subtitle"
+        className="detail-tab-panel job-subtitle-panel"
+      >
         {tab === "subtitle" ? <JobSubtitlePanel job={job} /> : null}
       </TabsContent>
       <TabsContent value="segmentation" className="detail-tab-panel">
-        <JobSegmentationPanel />
+        {tab === "segmentation" ? <JobSegmentationPanel /> : null}
       </TabsContent>
       <TabsContent value="activity" className="detail-tab-panel">
         {tab === "activity" ? <JobActivityPanel job={job} /> : null}

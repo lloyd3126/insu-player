@@ -11,6 +11,7 @@ export interface CaptionTrack {
 }
 
 export interface CaptionComparisonRow {
+  id: string
   start: number
   end: number
   cues: Record<string, string>

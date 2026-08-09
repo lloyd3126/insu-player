@@ -1,6 +1,6 @@
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useEffect, useRef } from "react"
 
-import { useOverlay } from "@/app/overlay-context"
+import { useOverlayState } from "@/app/overlay-context"
 import {
   loadFeatureSettingsDialog,
   loadJobDetailDialog,
@@ -51,28 +51,43 @@ const DIALOG_LABELS = {
 } as const
 
 function OverlayLoadingFallback() {
-  const { state } = useOverlay()
+  const state = useOverlayState()
+  const dialogRef = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (!dialog.open) dialog.showModal()
+    dialog.focus({ preventScroll: true })
+    return () => {
+      if (dialog.open) dialog.close()
+    }
+  }, [])
+
   if (!state) return null
   const label = DIALOG_LABELS[state.type]
 
   return (
-    <>
-      <div className="overlay-loading-backdrop" aria-hidden="true" />
-      <section
-        className="overlay-loading-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`正在開啟${label}`}
-      >
-        <span className="overlay-loading-indicator" aria-hidden="true" />
-        <strong>正在開啟{label}</strong>
-      </section>
-    </>
+    <dialog
+      ref={dialogRef}
+      className="overlay-loading-dialog"
+      aria-label={`正在開啟${label}`}
+      onCancel={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return
+        event.preventDefault()
+        dialogRef.current?.focus({ preventScroll: true })
+      }}
+      tabIndex={0}
+    >
+      <span className="overlay-loading-indicator" aria-hidden="true" />
+      <strong>正在開啟{label}</strong>
+    </dialog>
   )
 }
 
 export function OverlayCoordinator() {
-  const { state } = useOverlay()
+  const state = useOverlayState()
   const activeDialog = (() => {
     switch (state?.type) {
       case "usage-guide":
