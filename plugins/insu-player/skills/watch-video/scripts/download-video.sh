@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: download-video.sh <workspace> <video-url> [--translate zh-TW | --no-translate]\n'
+  printf 'usage: download-video.sh <workspace> <video-url> [--translate TARGET_BCP47 | --no-translate]\n'
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then usage; exit 0; fi
@@ -21,7 +21,6 @@ while [ "$#" -gt 0 ]; do
     --translate)
       [ "$#" -ge 2 ] || caption_die "--translate requires a language"
       [ "$translation_mode" = "legacy" ] || caption_die "choose only one translation mode"
-      [ "$2" = "zh-TW" ] || caption_die "this release supports --translate zh-TW"
       translation_mode="translate"
       translation_target="$2"
       shift 2
@@ -35,6 +34,8 @@ while [ "$#" -gt 0 ]; do
     *) caption_die "unknown option: $1" ;;
   esac
 done
+
+if [ "$translation_mode" = "translate" ]; then caption_validate_language "$translation_target"; fi
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
@@ -72,14 +73,18 @@ caption_job_state init "${job_init_args[@]}" >/dev/null
 if [ "$translation_mode" = "translate" ]; then
   existing_workflow_source=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.source 2>/dev/null || true)
   existing_workflow_stage=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.stage 2>/dev/null || true)
+  existing_target_language=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.targetLanguage 2>/dev/null || true)
+  existing_source_language=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.sourceLanguage 2>/dev/null || true)
   if [ "$existing_workflow_source" = "model" ] && [ "$existing_workflow_stage" = "complete" ] \
-    && [ -f "$source_dir/video.mp4" ] && [ -f "$caption_dir/en.vtt" ] && [ -f "$caption_dir/zh-TW.vtt" ]; then
+    && [ "$existing_target_language" = "$translation_target" ] && [ -f "$source_dir/video.mp4" ] \
+    && [ -f "$caption_dir/$translation_target.vtt" ] \
+    && { [ -z "$existing_source_language" ] || [ -f "$caption_dir/$existing_source_language.vtt" ]; }; then
     caption_note "Model-generated bilingual captions are already complete; no source subtitles were requested."
     caption_note "Download complete: $job_dir"
     caption_note "Video ID: $video_id"
     exit 0
   fi
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage awaiting_model >/dev/null
+  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage awaiting_model --target-language "$translation_target" >/dev/null
   caption_job_state update --job-dir "$job_dir" --state checking --stage model_source --message "翻譯模式將使用模型音訊轉錄。不取得來源字幕" --progress 0 --clear-error --record-history >/dev/null
 else
   caption_job_state update --job-dir "$job_dir" --state checking --stage subtitles --message "正在檢查來源字幕" --progress 0 --clear-error --record-history >/dev/null
@@ -189,11 +194,11 @@ caption_job_state asset --job-dir "$job_dir" --name mediaInfo --path "$job_dir/m
 caption_job_state asset --job-dir "$job_dir" --name manifest --path "$job_dir/manifest.txt" >/dev/null
 
 if [ "$translation_mode" = "translate" ]; then
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage awaiting_model >/dev/null
+  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage awaiting_model --target-language "$translation_target" >/dev/null
   caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage model_transcription --message "影片與音訊已就緒。等待選定的本機或 OpenAI 模型產生詞級字幕" --progress 0 --clear-error --record-history >/dev/null
 elif [ "$translation_mode" = "none" ] && [ -f "$caption_dir/en.vtt" ]; then
   caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source platform --stage source_caption >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與英文字幕已可觀看。不需要繁中翻譯" --progress 100 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與英文字幕已可觀看。不需要翻譯" --progress 100 --clear-error --record-history >/dev/null
 elif [ -f "$caption_dir/zh-TW.vtt" ]; then
   caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source legacy --stage source_caption >/dev/null
   caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與繁體中文字幕已可觀看" --progress 100 --clear-error --record-history >/dev/null

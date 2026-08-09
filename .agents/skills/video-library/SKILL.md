@@ -1,6 +1,6 @@
 ---
 name: video-library
-description: Start, inspect, repair, or clean an existing INSU Player localhost library while preserving durable media, subtitles, status, and playback progress.
+description: Start, inspect, repair, clean, or safely remove an owned resource from an existing INSU Player localhost library while respecting its durable media and state boundaries.
 ---
 
 # Repository entrypoint

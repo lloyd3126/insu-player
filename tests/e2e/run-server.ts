@@ -10,6 +10,7 @@ import path from "node:path"
 import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { JobRepository } from "@server/repositories/job-repository"
+import type { RemovalOperations } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
 
 const root = path.resolve(import.meta.dir, "../..")
@@ -99,8 +100,29 @@ const opened = openAppDatabase(
     "plugins/insu-player/skills/watch-video/assets/server/drizzle",
   ),
 )
+const removalDigest = "a".repeat(64)
+const removals: RemovalOperations = {
+  async preview(target) {
+    return {
+      schemaVersion: 1,
+      target,
+      planDigest: removalDigest,
+      blocked: [],
+      warnings: [],
+    }
+  },
+  async execute(target, planDigest) {
+    return {
+      schemaVersion: 1,
+      target,
+      planDigest,
+      removed: true,
+    }
+  },
+}
 const app = createApplication({
   jobs: new JobRepository(workspace, opened.db),
+  removals,
   resources: new ResourceService(workspace),
   libraryAppRoot: path.join(
     root,

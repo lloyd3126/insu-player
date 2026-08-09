@@ -71,8 +71,21 @@ class SubtitleReflowTests(unittest.TestCase):
             str(self.source_transcript),
             "--manifest",
             str(self.manifest),
-            "--english-output",
+            "--target-language",
+            "zh-TW",
+            "--source-output",
             str(self.english_vtt),
+            "--punctuation-policy",
+            "remove-commas-periods",
+        )
+        self.run_reflow(
+            "record-translation-model",
+            "--manifest",
+            str(self.manifest),
+            "--provider",
+            "local",
+            "--model",
+            "translation-test",
         )
         return json.loads(self.manifest.read_text(encoding="utf-8"))
 
@@ -82,16 +95,16 @@ class SubtitleReflowTests(unittest.TestCase):
         self.assertIsInstance(segments, list)
         translations = [("你好，世界。", "你好，世界。"), ("這可以運作。", "這能正常運作。")]
         for segment, (draft, polished) in zip(segments, translations):
-            segment["draftTraditionalChinese"] = draft
-            segment["traditionalChinese"] = polished
+            segment["draftTargetText"] = draft
+            segment["targetText"] = polished
         self.manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self.run_reflow(
             "render",
             "--manifest",
             str(self.manifest),
-            "--english-output",
+            "--source-output",
             str(self.english_vtt),
-            "--traditional-chinese-output",
+            "--target-output",
             str(self.chinese_vtt),
         )
         return payload
@@ -100,7 +113,7 @@ class SubtitleReflowTests(unittest.TestCase):
         payload = self.render_pair()
         segments = payload["segments"]
         self.assertEqual(
-            [(segment["start"], segment["end"], segment["english"]) for segment in segments],
+            [(segment["start"], segment["end"], segment["sourceText"]) for segment in segments],
             [
                 ("00:00:01.000", "00:00:02.000", "Hello, world."),
                 ("00:00:02.000", "00:00:03.500", "This works."),
@@ -126,32 +139,76 @@ class SubtitleReflowTests(unittest.TestCase):
         self.assertEqual(english_timings, chinese_timings)
         result = self.run_reflow(
             "validate-pair",
-            "--english",
+            "--source",
             str(self.english_vtt),
-            "--traditional-chinese",
+            "--target",
             str(self.chinese_vtt),
+            "--punctuation-policy",
+            "remove-commas-periods",
         )
         self.assertIn("Validated 2 synchronized bilingual cues", result.stdout)
 
     def test_render_rejects_internal_translation_markers(self) -> None:
         payload = self.prepare_manifest()
         for segment in payload["segments"]:
-            segment["draftTraditionalChinese"] = "初稿"
-            segment["traditionalChinese"] = "正常翻譯"
-        payload["segments"][0]["traditionalChinese"] = "錯誤 XQZCUEZ 標記"
+            segment["draftTargetText"] = "初稿"
+            segment["targetText"] = "正常翻譯"
+        payload["segments"][0]["targetText"] = "錯誤 XQZCUEZ 標記"
         self.manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         result = self.run_reflow(
             "render",
             "--manifest",
             str(self.manifest),
-            "--english-output",
+            "--source-output",
             str(self.english_vtt),
-            "--traditional-chinese-output",
+            "--target-output",
             str(self.chinese_vtt),
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("internal cue marker", result.stdout)
+
+    def test_translation_manifest_supports_an_arbitrary_bcp47_pair(self) -> None:
+        transcript = dict(SAMPLE_TRANSCRIPT)
+        transcript["language"] = "de-DE"
+        self.source_transcript.write_text(json.dumps(transcript), encoding="utf-8")
+        self.run_reflow(
+            "prepare",
+            "--source-transcript",
+            str(self.source_transcript),
+            "--target-language",
+            "fr-FR",
+            "--manifest",
+            str(self.manifest),
+        )
+        self.run_reflow(
+            "record-translation-model",
+            "--manifest",
+            str(self.manifest),
+            "--provider",
+            "api",
+            "--service",
+            "example",
+            "--model",
+            "multilingual-test",
+        )
+        payload = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for segment in payload["segments"]:
+            segment["draftTargetText"] = "Traduction complète."
+            segment["targetText"] = "Traduction complète."
+        self.manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        self.run_reflow(
+            "render",
+            "--manifest",
+            str(self.manifest),
+            "--source-output",
+            str(self.english_vtt),
+            "--target-output",
+            str(self.chinese_vtt),
+        )
+        self.assertIn("Language: de-DE", self.english_vtt.read_text(encoding="utf-8"))
+        self.assertIn("Language: fr-FR", self.chinese_vtt.read_text(encoding="utf-8"))
+        self.assertIn("Traduction complète.", self.chinese_vtt.read_text(encoding="utf-8"))
 
     def test_pair_import_preserves_old_tracks_and_marks_job_ready(self) -> None:
         self.render_pair()
@@ -276,6 +333,8 @@ printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Hello
                 "en",
                 "--track",
                 "en",
+                "--target-language",
+                "zh-TW",
             ],
             cwd=REPO_ROOT,
             text=True,
@@ -291,7 +350,10 @@ printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Hello
         self.assertEqual(status["subtitleWorkflow"]["provider"], "local")
         self.assertEqual(status["subtitleWorkflow"]["model"], "tiny")
         self.assertEqual(status["subtitleTracks"]["en"]["source"], "local-model-sentence-reflow")
-        self.assertEqual(manifest["sourceFormat"], "model-word-transcript")
+        self.assertEqual(manifest["sourceFormat"], "model-timed-units")
+        self.assertEqual(manifest["schemaVersion"], 2)
+        self.assertEqual(manifest["sourceLanguage"], "en")
+        self.assertEqual(manifest["targetLanguage"], "zh-TW")
         self.assertEqual(manifest["sourceProvider"], "local")
         self.assertIn("Hello world", (job_dir / "captions" / "en.vtt").read_text(encoding="utf-8"))
 

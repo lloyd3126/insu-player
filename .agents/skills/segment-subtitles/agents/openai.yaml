@@ -1,0 +1,4 @@
+interface:
+  display_name: "字幕切分"
+  short_description: "將完整翻譯依目標語自然切分並對齊來源詞級或 Token 時間"
+  default_prompt: "Use $segment-subtitles to split a completed translation target-first, align each piece to timed source units, validate it, and render synchronized subtitle tracks."

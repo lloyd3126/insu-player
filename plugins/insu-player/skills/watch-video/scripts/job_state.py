@@ -16,7 +16,7 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-LANGUAGE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 STATES = {
     "queued",
     "checking",
@@ -38,6 +38,12 @@ SUBTITLE_WORKFLOW_STAGES = {
     "source_caption",
     "draft_translation",
     "sentence_polish",
+    "translation_complete",
+    "target_segmentation",
+    "target_frozen",
+    "source_alignment",
+    "segmentation_validation",
+    "segmentation_complete",
     "subtitle_reflow",
     "pair_validation",
     "complete",
@@ -294,6 +300,8 @@ def set_subtitle_workflow(
     stage: str,
     provider: str | None,
     model: str | None,
+    source_language: str | None,
+    target_language: str | None,
 ) -> dict[str, Any]:
     if source not in SUBTITLE_WORKFLOW_SOURCES:
         raise ValueError(f"unsupported subtitle workflow source: {source}")
@@ -303,7 +311,15 @@ def set_subtitle_workflow(
         raise ValueError(f"unsupported subtitle workflow provider: {provider}")
     if model is not None and not re.fullmatch(r"[A-Za-z0-9._-]+", model):
         raise ValueError(f"invalid subtitle workflow model: {model}")
+    if source_language is not None:
+        validate_language(source_language)
+    if target_language is not None:
+        validate_language(target_language)
     status = load_status(job_dir, create_default=True)
+    existing = status.get("subtitleWorkflow")
+    if isinstance(existing, dict):
+        source_language = source_language or existing.get("sourceLanguage")
+        target_language = target_language or existing.get("targetLanguage")
     workflow: dict[str, Any] = {
         "translationRequested": translation_requested,
         "source": source,
@@ -314,6 +330,10 @@ def set_subtitle_workflow(
         workflow["provider"] = provider
     if model is not None:
         workflow["model"] = model
+    if source_language is not None:
+        workflow["sourceLanguage"] = source_language
+    if target_language is not None:
+        workflow["targetLanguage"] = target_language
     status["subtitleWorkflow"] = workflow
     return save_status(job_dir, status)
 
@@ -366,6 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_parser.add_argument("--stage", required=True, choices=sorted(SUBTITLE_WORKFLOW_STAGES))
     workflow_parser.add_argument("--provider", choices=("local", "openai"))
     workflow_parser.add_argument("--model")
+    workflow_parser.add_argument("--source-language")
+    workflow_parser.add_argument("--target-language")
 
     show_parser = subparsers.add_parser("show", help="print a job record")
     show_parser.add_argument("--job-dir", required=True, type=Path)
@@ -420,6 +442,8 @@ def main() -> int:
             stage=args.stage,
             provider=args.provider,
             model=args.model,
+            source_language=args.source_language,
+            target_language=args.target_language,
         )
     elif args.command == "show":
         status = load_status(args.job_dir)

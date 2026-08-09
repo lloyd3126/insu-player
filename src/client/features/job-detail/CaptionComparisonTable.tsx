@@ -55,8 +55,16 @@ const CaptionVirtualRow = memo(function CaptionVirtualRow({
 
 export function CaptionComparisonTable({
   comparison,
+  kicker = "BILINGUAL TIMELINE",
+  title = "多語字幕對照",
+  emptyTitle = "尚無字幕",
+  emptyDescription = "這支影音目前沒有可供對照的字幕軌。",
 }: {
   comparison: CaptionComparisonResponse
+  kicker?: string
+  title?: string
+  emptyTitle?: string
+  emptyDescription?: string
 }) {
   const { scrollRef, totalSize, virtualizer, virtualRows } = useVirtualRows({
     count: comparison.rows.length,
@@ -68,8 +76,8 @@ export function CaptionComparisonTable({
   if (comparison.tracks.length === 0) {
     return (
       <EmptyState
-        title="尚無字幕"
-        description="這支影音目前沒有可供對照的字幕軌。"
+        title={emptyTitle}
+        description={emptyDescription}
       />
     )
   }
@@ -85,8 +93,8 @@ export function CaptionComparisonTable({
     <section className="caption-comparison" aria-labelledby="caption-comparison-title">
       <div className="caption-comparison__header">
         <div>
-          <span className="section-index">BILINGUAL TIMELINE</span>
-          <h3 id="caption-comparison-title">多語字幕對照</h3>
+          <span className="section-index">{kicker}</span>
+          <h3 id="caption-comparison-title">{title}</h3>
         </div>
         <p>
           以 <Badge variant="secondary">{comparison.baselineLanguage}</Badge>{" "}

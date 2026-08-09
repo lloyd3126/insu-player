@@ -192,7 +192,7 @@ test.describe("INSU Player home @smoke", () => {
       element.scrollTop = 0
     })
     await expect(
-      guide.getByRole("heading", { name: "準備影音與繁中字幕" }),
+      guide.getByRole("heading", { name: "準備影音與翻譯字幕" }),
     ).toBeVisible()
     await expect(guide.getByText("READY TO COPY")).toHaveCount(0)
     await expect(guide.getByText("BUILT-IN PLAYBOOK")).toHaveCount(0)
@@ -258,7 +258,6 @@ test.describe("INSU Player home @smoke", () => {
     const supportedSites = guide.getByRole("tab", { name: "支援網站" })
     await expect(supportedSites).toBeFocused()
     await supportedSites.press("Enter")
-    tabStartTops.push(await firstContentTop("支援網站"))
     await expect(
       supportedSites,
     ).toHaveAttribute("aria-selected", "true")
@@ -276,6 +275,14 @@ test.describe("INSU Player home @smoke", () => {
       ".guide-tab-content > .prompt-action-card",
     )
     await expect(sourceSupportCard).toHaveCount(1)
+    await expect(sourceSupportCard).toBeVisible()
+    await expect
+      .poll(async () => {
+        const supportedTop = await firstContentTop("支援網站")
+        return Math.abs(supportedTop - tabStartTops[0])
+      })
+      .toBeLessThan(2)
+    tabStartTops.push(await firstContentTop("支援網站"))
     await expect(
       supportedSitesPanel.locator(".prompt-action-card--compact"),
     ).toHaveCount(0)

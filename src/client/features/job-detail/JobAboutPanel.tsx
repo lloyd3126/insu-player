@@ -1,6 +1,7 @@
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { JobFact, JobFactGrid } from "@/features/job-detail/JobFactGrid"
 import { JobHistoryCard } from "@/features/job-detail/JobHistoryCard"
+import { VideoRemovalDialog } from "@/features/job-detail/VideoRemovalDialog"
 import type { JobDetail } from "@shared/contracts/job"
 import { formatBytes, formatDate, formatDuration } from "@shared/domain/format"
 
@@ -45,6 +46,9 @@ export function JobAboutPanel({ job }: { job: JobDetail }) {
         <JobFact label="完成時間">{formatDate(job.completedAt)}</JobFact>
       </JobFactGrid>
       <JobHistoryCard history={job.history} />
+      <div className="flex flex-none justify-end">
+        <VideoRemovalDialog videoId={job.videoId} />
+      </div>
     </div>
   )
 }

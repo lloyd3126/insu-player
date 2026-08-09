@@ -1,16 +1,21 @@
 import path from "node:path"
 
 import { zValidator } from "@hono/zod-validator"
-import { Hono } from "hono"
+import { Hono, type Context } from "hono"
 import { z } from "zod"
 
 import { contentTypeFor, safeContainedFile } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
 import { CaptionService } from "@server/services/caption-service"
+import {
+  RemovalOperationError,
+  type RemovalOperations,
+} from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
 
 export interface ApplicationOptions {
   jobs: JobRepository
+  removals: RemovalOperations
   resources: ResourceService
   libraryAppRoot: string
   playerRoot: string
@@ -26,14 +31,36 @@ const environmentSchema = z.object({
   value: z.string().min(1).max(2048),
 })
 
+const removalTargetSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("video"),
+    videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  }),
+])
+
+const removalPreviewSchema = z.object({ target: removalTargetSchema })
+const removalExecutionSchema = z.object({
+  target: removalTargetSchema,
+  planDigest: z.string().regex(/^[0-9a-f]{64}$/),
+})
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
 function sameOrigin(request: Request) {
-  const host = request.headers.get("host")
   const origin = request.headers.get("origin")
-  return Boolean(host && origin === `http://${host}`)
+  return origin === new URL(request.url).origin
+}
+
+function removalErrorResponse(context: Context, error: unknown) {
+  if (error instanceof RemovalOperationError) {
+    const payload = { error: error.message, code: error.code }
+    if (error.status === 404) return context.json(payload, 404)
+    if (error.status === 409) return context.json(payload, 409)
+    return context.json(payload, 500)
+  }
+  return context.json({ error: errorMessage(error), code: "removal-failed" }, 500)
 }
 
 function serveFile(
@@ -176,6 +203,36 @@ export function createApplication(options: ApplicationOptions) {
       return context.json({ error: errorMessage(error) }, 400)
     }
   })
+
+  app.post(
+    "/api/removals/preview",
+    zValidator("json", removalPreviewSchema),
+    async (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          await options.removals.preview(context.req.valid("json").target),
+        )
+      } catch (error) {
+        return removalErrorResponse(context, error)
+      }
+    },
+  )
+  app.post(
+    "/api/removals/execute",
+    zValidator("json", removalExecutionSchema),
+    async (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      const request = context.req.valid("json")
+      try {
+        return context.json(
+          await options.removals.execute(request.target, request.planDigest),
+        )
+      } catch (error) {
+        return removalErrorResponse(context, error)
+      }
+    },
+  )
   app.get("/api/environment/session/:name", (context) => {
     try {
       const name = context.req.param("name")

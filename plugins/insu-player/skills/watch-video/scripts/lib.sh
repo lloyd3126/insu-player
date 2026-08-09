@@ -154,7 +154,7 @@ caption_validate_video_id() {
 
 caption_validate_language() {
   case "$1" in
-    ''|*[!A-Za-z0-9_-]*) caption_die "invalid language code: $1" ;;
+    ''|*[!A-Za-z0-9-]*|-*|*-) caption_die "invalid BCP 47 language code: $1" ;;
   esac
 }
 

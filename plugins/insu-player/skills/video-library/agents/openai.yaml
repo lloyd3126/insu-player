@@ -1,4 +1,4 @@
 interface:
   display_name: "影片庫"
-  short_description: "啟動、檢查、修復與管理 INSU 本機影片庫服務"
-  default_prompt: "Use $video-library. First open this project's INSU Player homepage in the Codex in-app browser, then inspect the library while keeping the page open."
+  short_description: "啟動、檢查、修復與安全管理 INSU 本機影片庫"
+  default_prompt: "Use $video-library. First open this project's INSU Player homepage in the Codex in-app browser, then inspect or safely manage the selected library while keeping the page open. For removal, preview first and wait for confirmation of the current plan digest."

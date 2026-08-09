@@ -29,6 +29,26 @@ describe("overlay routes", () => {
       tab: "activity",
     })
     expect(pathForOverlay(overlay!)).toBe("/jobs/video%20id/activity")
+
+    const sourceSubtitles = overlayFromLocation(
+      "/jobs/video%20id/source-subtitle",
+    )
+    expect(sourceSubtitles).toMatchObject({
+      type: "detail",
+      videoId: "video id",
+      tab: "source-subtitle",
+    })
+    expect(pathForOverlay(sourceSubtitles!)).toBe(
+      "/jobs/video%20id/source-subtitle",
+    )
+  })
+
+  test("keeps legacy subtitle links on the original subtitle tab", () => {
+    expect(overlayFromLocation("/jobs/demo-video/subtitle")).toMatchObject({
+      type: "detail",
+      videoId: "demo-video",
+      tab: "source-subtitle",
+    })
   })
 
   test("round trips player captions through the query string", () => {
@@ -41,6 +61,34 @@ describe("overlay routes", () => {
     expect(pathForOverlay(overlay!)).toBe(
       "/player/demo-video?caption=zh-TW",
     )
+  })
+
+  test("round trips safe modal return routes and rejects external or unknown routes", () => {
+    const overlay = overlayFromLocation(
+      "/player/demo-video",
+      "?caption=zh-TW&returnTo=%2Flibrary%2Flist",
+    )
+    expect(overlay).toEqual({
+      type: "player",
+      videoId: "demo-video",
+      caption: "zh-TW",
+      returnTo: "/library/list",
+    })
+    expect(pathForOverlay(overlay!)).toBe(
+      "/player/demo-video?caption=zh-TW&returnTo=%2Flibrary%2Flist",
+    )
+    expect(
+      overlayFromLocation(
+        "/player/demo-video",
+        "?returnTo=https%3A%2F%2Fexample.com",
+      ),
+    ).toEqual({ type: "player", videoId: "demo-video" })
+    expect(
+      overlayFromLocation(
+        "/player/demo-video",
+        "?returnTo=%2Fapi%2Fhealth",
+      ),
+    ).toEqual({ type: "player", videoId: "demo-video" })
   })
 
   test("falls back to each modal's default tab", () => {

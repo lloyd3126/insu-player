@@ -14,7 +14,7 @@ Keep the user on one workspace-scoped localhost library homepage while Codex man
 3. Treat the resolved workspace path as the library identity. Never search outside the current project for a fuller or already-running INSU workspace, and never adopt one merely because it has jobs, a completed runtime, or a server on the default port. Only cross that boundary when the user explicitly selects the other workspace.
 4. Port `8000` is only the preferred starting port, not a machine-wide library identity. Start normally without an explicit port. If `8000` is occupied, the server must atomically bind an OS-selected free localhost port and record the actual `host`, `port`, and `pid` in the selected workspace's `.insu-player-server.json`. Reuse a running server only when that workspace-owned descriptor identifies a live process; leave every other workspace untouched. Treat an explicitly supplied port as strict.
 5. Make the first user-visible product action opening the selected workspace homepage in the Codex in-app browser. Start or reuse its server, open the actual localhost URL instead of merely printing it, and keep the page open before running doctor, setup, media inspection, download, transcription, or translation. If the in-app browser is unavailable, report the exact URL immediately. If Python 3 is unavailable and the server cannot start, report that blocker, install only through the workspace setup flow, and open the homepage as soon as its Python exists.
-6. Before inspecting or downloading subtitles, ask whether the user wants Traditional Chinese translation. After yes, require an explicit `local` or `openai` provider and pass `--translate zh-TW --provider PROVIDER`; translation mode must not inspect or download any platform caption format and must obtain English word timing by transcribing the original audio with that model. After no, pass `--no-translate` and platform playback captions may be used.
+6. Before inspecting or downloading subtitles, ask whether the user wants translation. After yes, ask for the target BCP 47 language, confirm or detect the source language, require an explicit `local` or `openai` transcription provider, and pass `--translate TARGET --provider PROVIDER`; translation mode must not inspect or download any platform caption format and must obtain source-language word or token timing from the original audio. After no, pass `--no-translate` and platform playback captions may be used.
 7. Confirm that the user has the right to download and process the requested media. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
 8. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill while the homepage remains open.
 9. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
@@ -61,14 +61,15 @@ The homepage prefers "http://127.0.0.1:8000/". When that port is occupied, use t
 
 ## Translation
 
-When translation was requested, follow `$translate-subtitles`: transcribe the original audio with the explicitly selected local or OpenAI model, use its normalized word timing to reconstruct complete English sentences, translate once as a draft, polish by complete sentence, render English and Traditional Chinese with one shared sentence timeline, then import both tracks together:
+When translation was requested, follow `$translate-subtitles`: transcribe the original audio with the explicitly selected local or OpenAI model, use its normalized timed units to reconstruct complete source sentences, translate once as a draft, and polish complete natural target-language sentences. Then follow `$segment-subtitles`: decide target pieces first, freeze them, align continuous source timed-unit spans, validate, and render synchronized source and target tracks. Import the validated pair with explicit languages:
 
 ~~~bash
 plugins/insu-player/skills/watch-video/scripts/import-bilingual-captions.sh \
-  .local/insu-player VIDEO_ID en.final.vtt zh-TW.final.vtt --force
+  .local/insu-player VIDEO_ID SOURCE.segmented.vtt TARGET.segmented.vtt \
+  --source-language SOURCE_BCP47 --target-language TARGET_BCP47 --force
 ~~~
 
-Do not inspect or download platform captions in translation mode. Final VTT tracks must have identical complete-sentence cue intervals, one sentence per line, and commas/periods replaced by ASCII spaces. Do not claim that Whisper translated into Traditional Chinese; Whisper's translation task targets English.
+Do not inspect or download platform captions in translation mode. Keep complete translation sentences separate from derived display segmentation. Final segmented tracks must have identical cue IDs and intervals derived from continuous source timed units. Apply punctuation normalization only through the selected language/output profile. Do not claim that a transcription model translated into an arbitrary target language unless that exact capability was used and recorded.
 
 ## Recovery, Updating, and Removal
 

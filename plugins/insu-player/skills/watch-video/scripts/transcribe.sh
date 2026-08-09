@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: transcribe.sh <workspace> <video-id> [--provider local|openai] [--model NAME] [--language CODE] [--track CODE] [--device cpu|cuda] [--allow-api-upload] [--no-translate]\n'
+  printf 'usage: transcribe.sh <workspace> <video-id> [--provider local|openai] [--model NAME] [--language SOURCE_BCP47] [--target-language TARGET_BCP47] [--track CODE] [--device cpu|cuda] [--allow-api-upload] [--no-translate]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -19,6 +19,7 @@ provider_name=""
 model_name=""
 language_code=""
 track_code=""
+target_language=""
 device_name="cpu"
 allow_api_upload=0
 no_translate=0
@@ -28,6 +29,7 @@ while [ "$#" -gt 0 ]; do
     --provider) [ "$#" -ge 2 ] || caption_die "--provider requires a value"; provider_name="$2"; shift 2 ;;
     --model) [ "$#" -ge 2 ] || caption_die "--model requires a value"; model_name="$2"; shift 2 ;;
     --language) [ "$#" -ge 2 ] || caption_die "--language requires a value"; language_code="$2"; shift 2 ;;
+    --target-language) [ "$#" -ge 2 ] || caption_die "--target-language requires a value"; target_language="$2"; shift 2 ;;
     --track) [ "$#" -ge 2 ] || caption_die "--track requires a value"; track_code="$2"; shift 2 ;;
     --device) [ "$#" -ge 2 ] || caption_die "--device requires a value"; device_name="$2"; shift 2 ;;
     --allow-api-upload) allow_api_upload=1; shift ;;
@@ -40,8 +42,13 @@ done
 caption_validate_video_id "$video_id"
 [ "$device_name" = "cpu" ] || [ "$device_name" = "cuda" ] || caption_die "device must be cpu or cuda"
 if [ -n "$language_code" ]; then caption_validate_language "$language_code"; fi
-if [ -z "$track_code" ]; then track_code="${language_code:-source}"; fi
-caption_validate_language "$track_code"
+if [ "$no_translate" -eq 1 ]; then
+  if [ -z "$track_code" ]; then track_code="${language_code:-und}"; fi
+  caption_validate_language "$track_code"
+else
+  [ -n "$target_language" ] || caption_die "translation requires --target-language after asking the user"
+  caption_validate_language "$target_language"
+fi
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
@@ -110,7 +117,9 @@ caption_job_state transcription --job-dir "$job_dir" --provider "$provider_name"
 if [ "$no_translate" -eq 1 ]; then
   caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source model --stage model_transcription --provider "$provider_name" --model "$model_name" >/dev/null
 else
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage model_transcription --provider "$provider_name" --model "$model_name" >/dev/null
+  workflow_args=(--job-dir "$job_dir" --translation requested --source model --stage model_transcription --provider "$provider_name" --model "$model_name" --target-language "$target_language")
+  if [ -n "$language_code" ]; then workflow_args+=(--source-language "$language_code"); fi
+  caption_job_state subtitle-workflow "${workflow_args[@]}" >/dev/null
 fi
 caption_note "Transcribing with provider=$provider_name model=$model_name device=$device_name..."
 transcribe_command=("$CAPTION_PYTHON" "${transcribe_args[@]}")
@@ -133,28 +142,38 @@ if [ "$no_translate" -eq 1 ]; then
   caption_validate_vtt "$caption_dir/$track_code.vtt"
   caption_job_state subtitle --job-dir "$job_dir" --language "$track_code" --path "$caption_dir/$track_code.vtt" --source "$provider_name" --label "$track_code" >/dev/null
   caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source model --stage complete --provider "$provider_name" --model "$model_name" >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與轉錄字幕已可觀看。不需要繁中翻譯" --progress 100 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與轉錄字幕已可觀看。不需要翻譯" --progress 100 --clear-error --record-history >/dev/null
 else
   transcript_json="$provider_output/transcript.json"
   subtitle_work_dir="$job_dir/subtitle-work"
   subtitle_manifest="$subtitle_work_dir/bilingual-sentences.json"
-  english_sentence_vtt="$subtitle_work_dir/en.sentence.vtt"
+  source_sentence_vtt="$subtitle_work_dir/source.sentence.vtt"
   reflow_script="$SCRIPT_DIR/../../translate-subtitles/scripts/reflow_subtitles.py"
   caption_require_file "$transcript_json"
   caption_require_file "$reflow_script"
   mkdir -p "$subtitle_work_dir"
-  "$CAPTION_PYTHON" "$reflow_script" prepare \
+  prepare_args=(
+    "$reflow_script" prepare
     --source-transcript "$transcript_json" \
+    --target-language "$target_language" \
     --manifest "$subtitle_manifest" \
-    --english-output "$english_sentence_vtt"
-  caption_validate_vtt "$english_sentence_vtt"
-  cp "$english_sentence_vtt" "$caption_dir/en.vtt"
-  caption_validate_vtt "$caption_dir/en.vtt"
-  caption_job_state subtitle --job-dir "$job_dir" --language en --path "$caption_dir/en.vtt" --source "${provider_name}-model-sentence-reflow" --label "English" >/dev/null
+    --source-output "$source_sentence_vtt"
+  )
+  if [ -n "$language_code" ]; then prepare_args+=(--source-language "$language_code"); fi
+  case "$target_language" in zh|zh-*) prepare_args+=(--punctuation-policy remove-commas-periods) ;; esac
+  "$CAPTION_PYTHON" "${prepare_args[@]}"
+  source_language=$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["sourceLanguage"])' "$subtitle_manifest")
+  caption_validate_language "$source_language"
+  source_named_vtt="$subtitle_work_dir/$source_language.sentence.vtt"
+  mv "$source_sentence_vtt" "$source_named_vtt"
+  caption_validate_vtt "$source_named_vtt"
+  cp "$source_named_vtt" "$caption_dir/$source_language.vtt"
+  caption_validate_vtt "$caption_dir/$source_language.vtt"
+  caption_job_state subtitle --job-dir "$job_dir" --language "$source_language" --path "$caption_dir/$source_language.vtt" --source "${provider_name}-model-sentence-reflow" --label "$source_language" >/dev/null
   caption_job_state asset --job-dir "$job_dir" --name wordTranscript --path "$transcript_json" >/dev/null
-  caption_job_state asset --job-dir "$job_dir" --name subtitlePlan --path "$subtitle_manifest" >/dev/null
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage draft_translation --provider "$provider_name" --model "$model_name" >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage draft_translation --message "模型詞級轉錄與完整句時間軸已完成。等待繁中初譯" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state asset --job-dir "$job_dir" --name translationPlan --path "$subtitle_manifest" >/dev/null
+  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage draft_translation --provider "$provider_name" --model "$model_name" --source-language "$source_language" --target-language "$target_language" >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage draft_translation --message "模型時間單位與完整句時間軸已完成。等待 $target_language 完整句翻譯" --progress 0 --clear-error --record-history >/dev/null
 fi
 
 trap - ERR

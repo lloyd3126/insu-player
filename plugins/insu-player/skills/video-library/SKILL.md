@@ -1,6 +1,6 @@
 ---
 name: video-library
-description: Start, inspect, repair, or explain an existing INSU Player localhost library. Use when a user wants to see the library homepage, check downloads or transcription jobs, reopen the player, diagnose a failed or interrupted job, inspect storage, or clean only safe intermediate files without adding a new video.
+description: Start, inspect, repair, clean, or safely remove an owned resource from an existing INSU Player localhost library. Use when a user wants to see the library homepage, check downloads or transcription jobs, reopen the player, diagnose a failed or interrupted job, inspect storage, clean safe intermediate files, or manage a single owned resource without adding a new video.
 ---
 
 # INSU Video Library
@@ -40,6 +40,20 @@ Open the exact URL reported by `serve-library.sh` in the Codex in-app browser wh
 - Re-run the original `process-video.sh` command for interrupted work. Existing media, captions, and state are reused.
 - For one job, preview `../watch-video/scripts/clean-job.sh WORKSPACE VIDEO_ID`; add `--yes` only for the exact reviewed target.
 - Safe cleanup removes reproducible intermediates and preserves playable media, captions, logs, status, and progress.
-- Never remove all generated media unless the user explicitly requests it; use `$player-manager` for full lifecycle removal.
+- Never remove all generated media unless the user explicitly requests it. Use `$player-manager` only for application, runtime, or whole-workspace lifecycle removal.
 
-Report the homepage URL, workspace, active/attention/ready counts, failed job reason, retained artifacts, and the next exact command.
+## Remove One Owned Resource
+
+Read [the removal protocol](references/removal-protocol.md) completely. The INSU Player interface performs direct removal through a shared confirmation dialog and server-side preview/execute endpoints; do not ask the user to copy a removal prompt to an Agent. Accept only a registered resource kind and stable ID; never accept a browser-supplied filesystem path.
+
+The application must perform one-video removal in three stages:
+
+1. Opening the confirmation dialog calls `scripts/remove_library_item.py preview WORKSPACE --kind video --video-id VIDEO_ID`. The remove action stays disabled until the read-only preview finishes without blockers.
+2. Clicking the destructive action authorizes only the plan digest loaded by that dialog. The browser sends the stable resource ID and digest to the same-origin server; it never sends a path.
+3. The server runs `execute` with that digest and `--yes`, then runs `verify`. A changed digest or blocker fails closed and requires the user to close and reopen the dialog for a fresh preview.
+
+An Agent performing a manual diagnostic removal may call the same three script commands, but must still show the preview and wait for explicit confirmation of its current digest before `execute`.
+
+Do not silently stop a live processing command. Ask the user before stopping it, then generate a fresh preview. Permanent removal is not recoverable without a separate backup or reprocessing an authorized source.
+
+Report the homepage URL, workspace, active/attention/ready counts, failed job reason, retained or removed artifacts, removal verification when applicable, and the next exact command.

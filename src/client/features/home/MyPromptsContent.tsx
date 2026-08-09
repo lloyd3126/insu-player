@@ -18,24 +18,24 @@ const CREATE_PROMPT_WITH_AGENT =
 const BUILT_IN_PROMPTS = [
   {
     id: "01 / WATCH",
-    title: "準備影音與繁中字幕",
-    description: "先確認是否需要翻譯，再依選擇使用來源字幕或模型轉錄。",
+    title: "準備影音與翻譯字幕",
+    description: "先確認是否需要翻譯與目標語言，再依選擇使用來源字幕或模型轉錄。",
     prompt:
-      "請把這支影音加入 INSU Player。取得字幕前先問我是否需要繁中翻譯。若需要，再問我要使用本機或 OpenAI 模型，且不要取得平台字幕：\nVIDEO_URL",
+      "請把這支影音加入 INSU Player。取得字幕前先問我是否需要翻譯及目標語言。若需要，再問我要使用本機或 OpenAI 模型，且不要取得平台字幕：\nVIDEO_URL",
   },
   {
     id: "02 / LEARN",
     title: "保留雙語字幕",
-    description: "用影音學習語言，希望播放器中可以切換原文與繁體中文。",
+    description: "用影音學習語言，希望播放器中可以切換原文與指定目標語言。",
     prompt:
-      "請把這支影音加入 INSU Player。先問我是否需要繁中翻譯。若需要，再問我要使用本機或 OpenAI 模型，從音訊建立可切換的 en 與 zh-TW 字幕：\nVIDEO_URL",
+      "請把這支影音加入 INSU Player。先問我是否需要翻譯及目標語言。若需要，再問我要使用本機或 OpenAI 模型，從音訊建立可切換的原文與目標語字幕：\nVIDEO_URL",
   },
   {
     id: "03 / QUEUE",
     title: "整理多支單一影音",
     description: "一次交付多個單支影音網址，各自保留狀態，不展開播放清單。",
     prompt:
-      "請把以下每一支影音分別加入 INSU Player，不要展開播放清單。取得字幕前先確認這批影音是否需要繁中翻譯。若需要，再問我要使用本機或 OpenAI 模型：\nVIDEO_URL_1\nVIDEO_URL_2",
+      "請把以下每一支影音分別加入 INSU Player，不要展開播放清單。取得字幕前先確認這批影音是否需要翻譯及目標語言。若需要，再問我要使用本機或 OpenAI 模型：\nVIDEO_URL_1\nVIDEO_URL_2",
   },
   {
     id: "04 / RECOVER",

@@ -1,4 +1,8 @@
-import type { OverlayState } from "@/app/overlay-context"
+import type {
+  JobDetailTab,
+  OverlayDestination,
+  OverlayState,
+} from "@/app/overlay-context"
 
 const USAGE_GUIDE_TABS = new Set([
   "getting-started",
@@ -13,9 +17,12 @@ const FEATURE_SETTINGS_TABS = new Set([
 const LIBRARY_VIEWS = new Set(["grid", "list"])
 const JOB_DETAIL_TABS = new Set([
   "about",
-  "subtitle",
-  "segmentation",
   "activity",
+  "source-subtitle",
+  "summary",
+  "notes",
+  "translated-subtitle",
+  "segmentation",
 ])
 
 function decodeSegment(segment: string) {
@@ -34,10 +41,15 @@ function setValue<T extends string>(values: Set<string>, value: string | undefin
   return value && values.has(value) ? (value as T) : null
 }
 
-export function overlayFromLocation(
+function jobDetailTab(value: string | undefined) {
+  if (value === "subtitle") return "source-subtitle"
+  return setValue<JobDetailTab>(JOB_DETAIL_TABS, value)
+}
+
+function overlayDestinationFromLocation(
   pathname: string,
   search = "",
-): OverlayState {
+): OverlayDestination | null {
   const segments = segmentsFrom(pathname)
   if (segments.length === 0 || pathname === "/index.html") return null
 
@@ -65,7 +77,7 @@ export function overlayFromLocation(
     return {
       type: "detail",
       videoId: segments[1],
-      tab: setValue(JOB_DETAIL_TABS, segments[2]) ?? "about",
+      tab: jobDetailTab(segments[2]) ?? "about",
     }
   }
   if (segments[0] === "player" && segments[1] && segments.length === 2) {
@@ -85,23 +97,61 @@ export function overlayFromLocation(
   return null
 }
 
+function returnToFromSearch(search: string) {
+  const value = new URLSearchParams(search).get("returnTo")
+  if (!value || value.length > 2_048 || !value.startsWith("/")) return undefined
+  try {
+    const origin = "http://insu-player.local"
+    const candidate = new URL(value, origin)
+    if (candidate.origin !== origin || candidate.hash) return undefined
+    if (
+      candidate.pathname !== "/" &&
+      !overlayDestinationFromLocation(candidate.pathname, candidate.search)
+    ) {
+      return undefined
+    }
+    return `${candidate.pathname}${candidate.search}`
+  } catch {
+    return undefined
+  }
+}
+
+export function overlayFromLocation(
+  pathname: string,
+  search = "",
+): OverlayState {
+  const destination = overlayDestinationFromLocation(pathname, search)
+  if (!destination) return null
+  const returnTo = returnToFromSearch(search)
+  return returnTo ? { ...destination, returnTo } : destination
+}
+
 export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
+  const search = new URLSearchParams()
+  let path: string
   switch (overlay.type) {
     case "usage-guide":
-      return `/guide/${overlay.tab}`
+      path = `/guide/${overlay.tab}`
+      break
     case "feature-settings":
-      return `/settings/${overlay.tab}`
+      path = `/settings/${overlay.tab}`
+      break
     case "library":
-      return overlay.view ? `/library/${overlay.view}` : "/library"
+      path = overlay.view ? `/library/${overlay.view}` : "/library"
+      break
     case "detail":
-      return `/jobs/${encodeURIComponent(overlay.videoId)}/${overlay.tab}`
-    case "player": {
-      const path = `/player/${encodeURIComponent(overlay.videoId)}`
-      return overlay.caption
-        ? `${path}?caption=${encodeURIComponent(overlay.caption)}`
-        : path
-    }
+      path = `/jobs/${encodeURIComponent(overlay.videoId)}/${overlay.tab}`
+      break
+    case "player":
+      path = `/player/${encodeURIComponent(overlay.videoId)}`
+      if (overlay.caption) search.set("caption", overlay.caption)
+      break
     case "policy":
-      return overlay.required ? "/policy?required=1" : "/policy"
+      path = "/policy"
+      if (overlay.required) search.set("required", "1")
+      break
   }
+  if (overlay.returnTo) search.set("returnTo", overlay.returnTo)
+  const query = search.toString()
+  return query ? `${path}?${query}` : path
 }

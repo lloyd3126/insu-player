@@ -34,8 +34,14 @@ export const SUBTITLE_STAGE_LABELS: Record<string, string> = {
   awaiting_model: "等待模型轉錄",
   model_transcription: "模型詞級轉錄",
   source_caption: "來源字幕",
-  draft_translation: "繁中初次翻譯",
+  draft_translation: "初次翻譯",
   sentence_polish: "完整句潤色",
+  translation_complete: "完整句翻譯完成",
+  target_segmentation: "目標語字幕切分",
+  target_frozen: "目標語切分已固定",
+  source_alignment: "來源時間對齊",
+  segmentation_validation: "字幕切分驗證",
+  segmentation_complete: "字幕切分完成",
   subtitle_reflow: "字幕重排",
   pair_validation: "雙語成對驗證",
   complete: "字幕已完成",
@@ -124,7 +130,7 @@ export function subtitleWorkflowLabel(job: JobSummary) {
     String(track.source ?? ""),
   )
   if (sources.some((source) => /reflow|resegment/i.test(source))) {
-    return { label: "重排完成", detail: "雙語共用句級時間軸" }
+    return { label: "重排完成", detail: "雙語共用同步時間軸" }
   }
   if (job.transcription) {
     const provider =

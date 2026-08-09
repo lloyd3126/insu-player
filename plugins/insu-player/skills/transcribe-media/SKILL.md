@@ -5,7 +5,7 @@ description: Transcribe local audio or video into normalized JSON, plain text, a
 
 # Transcribe Media
 
-Produce the same three artifacts regardless of provider: "transcript.json", "transcript.txt", and "transcript.vtt". The JSON includes normalized top-level `words` with start/end timestamps so the translation workflow can rebuild complete sentences.
+Produce the same three artifacts regardless of provider: "transcript.json", "transcript.txt", and "transcript.vtt". The JSON includes normalized top-level timed words or tokens with start/end timestamps so multilingual translation and segmentation workflows can rebuild complete sentences and align display pieces.
 
 ## Provider Decision
 
@@ -54,4 +54,4 @@ export OPENAI_API_KEY='set-this-in-the-terminal'
 
 The local path enables Whisper word timestamps. The API path converts media to mono 16 kHz, 48 kbps MP3 chunks of ten minutes, requests segment and word timestamps, and offsets every chunk back onto one continuous timeline. Every chunk stays below the API's 25 MB file limit.
 
-Validate that VTT begins with "WEBVTT", contains cues, and has increasing timestamps. For translation jobs, also validate that `transcript.json` contains non-empty normalized words. Report the provider and model; never report or echo the API key. This skill transcribes speech but does not translate it into Traditional Chinese.
+Validate that VTT begins with "WEBVTT", contains cues, and has increasing timestamps. For translation jobs, also validate that `transcript.json` contains non-empty normalized timed units and a BCP 47 source language when available. Report the provider, model, detected language, and timing granularity; never report or echo the API key. This skill transcribes speech but does not perform target-language translation or subtitle segmentation.

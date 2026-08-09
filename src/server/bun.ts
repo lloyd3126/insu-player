@@ -14,6 +14,7 @@ import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { atomicWriteJson } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
+import { RemovalService } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
 
 function processIsAlive(pid: unknown) {
@@ -109,8 +110,16 @@ if (pidFile && pidFile !== workspace && !pidFile.startsWith(`${workspace}${path.
 const { db, sqlite } = openAppDatabase(path.join(workspace, "app.db"), path.resolve(values.migrations))
 const jobs = new JobRepository(workspace, db)
 const resources = new ResourceService(workspace)
+const removalScript = path.resolve(
+  values["library-template"],
+  "../../../..",
+  "video-library",
+  "scripts",
+  "remove_library_item.py",
+)
 const app = createApplication({
   jobs,
+  removals: new RemovalService(workspace, removalScript),
   resources,
   libraryAppRoot: path.resolve(values["library-template"]),
   playerRoot: path.resolve(values["player-template"]),

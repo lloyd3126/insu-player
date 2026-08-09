@@ -1,4 +1,9 @@
-import { RefreshCwIcon, SearchIcon } from "lucide-react"
+import {
+  PlayIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  SettingsIcon,
+} from "lucide-react"
 import { useMemo, useState } from "react"
 
 import { useOverlay, type LibraryView } from "@/app/overlay-context"
@@ -13,11 +18,14 @@ import {
   LoadingState,
 } from "@/components/shared/AsyncState"
 import { CaptionLanguageSelect } from "@/components/shared/CaptionLanguageSelect"
-import { StatusBadge } from "@/components/shared/StatusBadge"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import {
+  VideoCardRemovalDialog,
+  VideoListRemovalDialog,
+} from "@/features/job-detail/VideoRemovalDialog"
 import {
   Select,
   SelectContent,
@@ -40,6 +48,11 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
 import { getPreferredCaption, NO_CAPTION } from "@/lib/captions"
 import { cn } from "@/lib/utils"
@@ -121,13 +134,19 @@ function JobRow({ job }: { job: JobSummary }) {
             )}
           </div>
           <div>
-            <strong title={job.title}>{job.title}</strong>
+            <Button
+              className="job-title-link"
+              variant="link"
+              onPointerEnter={() => void loadJobDetailDialog()}
+              onFocus={() => void loadJobDetailDialog()}
+              onPointerDown={() => void loadJobDetailDialog()}
+              onClick={openDetails}
+            >
+              <strong title={job.title}>{job.title}</strong>
+            </Button>
             <small>{job.videoId}</small>
           </div>
         </div>
-      </TableCell>
-      <TableCell data-label="目前狀態">
-        <StatusBadge job={job} />
       </TableCell>
       <TableCell data-label="字幕">
         <CaptionLanguageSelect
@@ -140,26 +159,43 @@ function JobRow({ job }: { job: JobSummary }) {
       </TableCell>
       <TableCell data-label="操作">
         <div className="job-actions">
-          <Button
-            className="job-action-button"
-            disabled={!job.watchable}
-            onPointerEnter={() => void loadPlayerDialog()}
-            onFocus={() => void loadPlayerDialog()}
-            onPointerDown={() => void loadPlayerDialog()}
-            onClick={openPlayer}
-          >
-            觀看
-          </Button>
-          <Button
-            className="job-action-button"
-            variant="ghost"
-            onPointerEnter={() => void loadJobDetailDialog()}
-            onFocus={() => void loadJobDetailDialog()}
-            onPointerDown={() => void loadJobDetailDialog()}
-            onClick={openDetails}
-          >
-            詳情
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon"
+                  disabled={!job.watchable}
+                  aria-label={`觀看 ${job.title}`}
+                  onPointerEnter={() => void loadPlayerDialog()}
+                  onFocus={() => void loadPlayerDialog()}
+                  onPointerDown={() => void loadPlayerDialog()}
+                  onClick={openPlayer}
+                />
+              }
+            >
+              <PlayIcon data-icon="inline-start" />
+            </TooltipTrigger>
+            <TooltipContent>觀看</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`設定 ${job.title}`}
+                  onPointerEnter={() => void loadJobDetailDialog()}
+                  onFocus={() => void loadJobDetailDialog()}
+                  onPointerDown={() => void loadJobDetailDialog()}
+                  onClick={openDetails}
+                />
+              }
+            >
+              <SettingsIcon data-icon="inline-start" />
+            </TooltipTrigger>
+            <TooltipContent>設定</TooltipContent>
+          </Tooltip>
+          <VideoListRemovalDialog videoId={job.videoId} title={job.title} />
         </div>
       </TableCell>
     </TableRow>
@@ -218,6 +254,7 @@ function JobGridCard({ job }: { job: JobSummary }) {
           </CardTitle>
         </CardHeader>
       </Button>
+      <VideoCardRemovalDialog videoId={job.videoId} title={job.title} />
     </Card>
   )
 }
@@ -341,15 +378,8 @@ export function LibraryDialog() {
           className="grouped-dialog-panel library-view-panel library-details-panel"
         >
           {query.data ? <Metrics jobs={jobs} /> : null}
-          <section
-            className="library-panel"
-            aria-labelledby="library-details-title"
-          >
+          <section className="library-panel" aria-label="影音詳細資訊">
             <div className="library-toolbar">
-              <div>
-                <span className="section-index">01 / INSU COLLECTION</span>
-                <h3 id="library-details-title">影音處理資訊</h3>
-              </div>
               <div className="library-toolbar__controls">
                 <LibrarySearch value={search} onChange={setSearch} />
                 <Select
@@ -386,18 +416,14 @@ export function LibraryDialog() {
                 <Table className="job-table">
                   <colgroup>
                     <col className="video-column" />
-                    <col className="status-column" />
                     <col className="caption-column" />
                     <col className="action-column" />
                   </colgroup>
                   <TableHeader>
                     <TableRow>
                       <TableHead>影音</TableHead>
-                      <TableHead>目前狀態</TableHead>
                       <TableHead>字幕</TableHead>
-                      <TableHead>
-                        <span className="sr-only">操作</span>
-                      </TableHead>
+                      <TableHead>操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

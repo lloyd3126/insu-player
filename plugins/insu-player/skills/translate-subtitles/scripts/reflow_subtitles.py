@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build sentence-aligned bilingual WebVTT tracks from model word timing."""
+"""Build complete-sentence translation manifests from model-timed source units."""
 
 from __future__ import annotations
 
@@ -9,13 +9,16 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
-SENTENCE_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
-SENTENCE_END_PATTERN = re.compile(r"[.!?。！？](?:[\"'”’\)\]]+)?$")
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
+SEGMENT_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
+LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
+SENTENCE_END_PATTERN = re.compile(r"[.!?。！？؟։।॥](?:[\"'”’\)\]\}]+)?$")
 SOUND_LABEL_PATTERN = re.compile(r"^(?:\[[^\]]+\]|\([^\)]+\))$")
 FORBIDDEN_MARKER_PATTERN = re.compile(
     r"(?i)(?:_{2,}[A-Z0-9]*CUE[A-Z0-9_]*_{0,}|XQZCUE[A-Z0-9]*)"
@@ -44,10 +47,12 @@ ABBREVIATIONS = {
 
 
 @dataclass(frozen=True)
-class Word:
+class TimedUnit:
+    identifier: str
     text: str
     start_ms: int
     fallback_end_ms: int
+    kind: str
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,22 @@ class Cue:
     start_ms: int
     end_ms: int
     text: str
+
+
+@dataclass(frozen=True)
+class ManifestView:
+    source_language: str
+    target_language: str
+    punctuation_policy: str
+    segments: list[dict[str, object]]
+    source_key: str
+    target_key: str
+
+
+def validate_language(value: object, label: str) -> str:
+    if not isinstance(value, str) or not LANGUAGE_PATTERN.fullmatch(value):
+        raise ValueError(f"{label} must be a BCP 47 language code")
+    return value
 
 
 def parse_timestamp(value: str) -> int:
@@ -109,9 +130,16 @@ def atomic_write_text(path: Path, text: str) -> None:
             os.unlink(temporary_name)
 
 
-def normalize_display_text(value: str) -> str:
-    normalized = REMOVED_PUNCTUATION_PATTERN.sub(" ", value)
-    return " ".join(normalized.split())
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def normalize_display_text(value: str, punctuation_policy: str) -> str:
+    if punctuation_policy == "remove-commas-periods":
+        value = REMOVED_PUNCTUATION_PATTERN.sub(" ", value)
+    elif punctuation_policy != "preserve":
+        raise ValueError(f"unsupported punctuation policy: {punctuation_policy}")
+    return " ".join(value.split())
 
 
 def validate_content(value: object, label: str) -> str:
@@ -131,7 +159,7 @@ def token_is_sentence_end(token: str) -> bool:
     return bool(SENTENCE_END_PATTERN.search(token))
 
 
-def model_transcript_words(path: Path) -> tuple[list[Word], str, str]:
+def model_transcript_units(path: Path) -> tuple[list[TimedUnit], str, str, str | None]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -144,105 +172,151 @@ def model_transcript_words(path: Path) -> tuple[list[Word], str, str]:
         raise ValueError("model transcript provider must be local or openai")
     if not isinstance(model, str) or not model.strip():
         raise ValueError("model transcript has no model name")
-    raw_words = payload.get("words")
-    if not isinstance(raw_words, list):
-        raise ValueError("model transcript has no word timestamps")
+    transcript_language = payload.get("language")
+    if transcript_language is not None:
+        transcript_language = validate_language(transcript_language, "transcript language")
+    raw_units = payload.get("words")
+    if not isinstance(raw_units, list):
+        raise ValueError("model transcript has no word or token timestamps")
 
-    words: list[Word] = []
-    for raw_word in raw_words:
-        if not isinstance(raw_word, dict):
+    units: list[TimedUnit] = []
+    for raw_unit in raw_units:
+        if not isinstance(raw_unit, dict):
             continue
-        raw_text = raw_word.get("word") or raw_word.get("text")
-        start = raw_word.get("start")
-        end = raw_word.get("end")
+        raw_text = raw_unit.get("word") or raw_unit.get("text")
+        start = raw_unit.get("start")
+        end = raw_unit.get("end")
         if not isinstance(raw_text, str) or not raw_text.strip():
             continue
         if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
             continue
         start_ms = round(float(start) * 1000)
         end_ms = round(float(end) * 1000)
-        words.append(Word(raw_text.strip(), start_ms, max(end_ms, start_ms + 1)))
+        raw_identifier = raw_unit.get("id")
+        if isinstance(raw_identifier, int) and raw_identifier >= 0:
+            identifier = f"U{raw_identifier + 1:06d}"
+        elif isinstance(raw_identifier, str) and re.fullmatch(r"U[0-9]{6,}", raw_identifier):
+            identifier = raw_identifier
+        else:
+            identifier = f"U{len(units) + 1:06d}"
+        raw_kind = raw_unit.get("kind")
+        kind = raw_kind if raw_kind in {"word", "token", "grapheme-group"} else "word"
+        units.append(TimedUnit(identifier, raw_text.strip(), start_ms, max(end_ms, start_ms + 1), kind))
 
-    if not words:
-        raise ValueError("model transcript contains no usable timed words")
-    for previous, current in zip(words, words[1:]):
+    if not units:
+        raise ValueError("model transcript contains no usable timed units")
+    identifiers = [unit.identifier for unit in units]
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("model transcript timed unit IDs are not unique")
+    for previous, current in zip(units, units[1:]):
         if current.start_ms < previous.start_ms:
-            raise ValueError("model transcript word timing is not ordered")
-    return words, provider, model.strip()
+            raise ValueError("model transcript timed units are not ordered")
+    return units, provider, model.strip(), transcript_language
 
 
-def sentence_segments(words: list[Word]) -> list[dict[str, object]]:
-    word_positions = {id(word): index for index, word in enumerate(words)}
-    grouped: list[list[Word]] = []
-    current: list[Word] = []
-    for word in words:
-        if SOUND_LABEL_PATTERN.fullmatch(word.text):
+def sentence_segments(units: list[TimedUnit]) -> list[dict[str, object]]:
+    unit_positions = {unit.identifier: index for index, unit in enumerate(units)}
+    grouped: list[list[TimedUnit]] = []
+    current: list[TimedUnit] = []
+    for unit in units:
+        if SOUND_LABEL_PATTERN.fullmatch(unit.text):
             if current:
                 grouped.append(current)
                 current = []
-            grouped.append([word])
+            grouped.append([unit])
             continue
-        current.append(word)
-        if token_is_sentence_end(word.text):
+        current.append(unit)
+        if token_is_sentence_end(unit.text):
             grouped.append(current)
             current = []
     if current:
         grouped.append(current)
 
     segments: list[dict[str, object]] = []
-    for index, sentence_words in enumerate(grouped, start=1):
-        start_ms = sentence_words[0].start_ms
-        last_word = sentence_words[-1]
-        end_ms = last_word.fallback_end_ms
-        last_position = word_positions[id(last_word)]
-        if last_position + 1 < len(words):
-            end_ms = words[last_position + 1].start_ms
+    for index, sentence_units in enumerate(grouped, start=1):
+        start_ms = sentence_units[0].start_ms
+        last_unit = sentence_units[-1]
+        end_ms = last_unit.fallback_end_ms
+        last_position = unit_positions[last_unit.identifier]
+        if last_position + 1 < len(units):
+            end_ms = units[last_position + 1].start_ms
         end_ms = max(end_ms, start_ms + 1)
         segments.append(
             {
                 "id": f"S{index:04d}",
                 "start": format_timestamp(start_ms),
                 "end": format_timestamp(end_ms),
-                "english": " ".join(word.text for word in sentence_words),
-                "draftTraditionalChinese": "",
-                "traditionalChinese": "",
+                "sourceUnitStart": sentence_units[0].identifier,
+                "sourceUnitEnd": sentence_units[-1].identifier,
+                "sourceText": " ".join(unit.text for unit in sentence_units),
+                "draftTargetText": "",
+                "targetText": "",
+                "requiredTerms": [],
             }
         )
     return segments
 
 
-def render_vtt(segments: list[dict[str, object]], language: str, text_key: str) -> str:
+def render_vtt(
+    segments: list[dict[str, object]],
+    language: str,
+    text_key: str,
+    punctuation_policy: str,
+) -> str:
     lines = ["WEBVTT", "Kind: captions", f"Language: {language}", ""]
     for segment in segments:
         identifier = str(segment["id"])
-        text = normalize_display_text(validate_content(segment[text_key], f"{identifier}.{text_key}"))
-        if not text:
-            raise ValueError(f"{identifier}.{text_key} is empty after punctuation normalization")
-        lines.extend(
-            [
-                identifier,
-                f"{segment['start']} --> {segment['end']}",
-                text,
-                "",
-            ]
+        text = normalize_display_text(
+            validate_content(segment[text_key], f"{identifier}.{text_key}"),
+            punctuation_policy,
         )
+        if not text:
+            raise ValueError(f"{identifier}.{text_key} is empty after display normalization")
+        lines.extend([identifier, f"{segment['start']} --> {segment['end']}", text, ""])
     return "\n".join(lines)
 
 
-def validate_manifest(payload: object) -> list[dict[str, object]]:
-    if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
-        raise ValueError("unsupported bilingual reflow manifest")
+def manifest_view(payload: object) -> ManifestView:
+    if not isinstance(payload, dict):
+        raise ValueError("translation manifest must be an object")
+    schema_version = payload.get("schemaVersion")
+    if schema_version == SCHEMA_VERSION:
+        source_language = validate_language(payload.get("sourceLanguage"), "sourceLanguage")
+        target_language = validate_language(payload.get("targetLanguage"), "targetLanguage")
+        output_profile = payload.get("outputProfile")
+        punctuation_policy = "preserve"
+        if isinstance(output_profile, dict):
+            raw_policy = output_profile.get("punctuationPolicy", "preserve")
+            if raw_policy not in {"preserve", "remove-commas-periods"}:
+                raise ValueError("outputProfile.punctuationPolicy is unsupported")
+            punctuation_policy = str(raw_policy)
+        source_key = "sourceText"
+        target_key = "targetText"
+        translation_model = payload.get("translationModel")
+        if not isinstance(translation_model, dict):
+            raise ValueError("translationModel must be recorded before rendering")
+        if translation_model.get("provider") not in {"local", "api"}:
+            raise ValueError("translationModel.provider must be local or api")
+        validate_content(translation_model.get("model"), "translationModel.model")
+    elif schema_version == LEGACY_SCHEMA_VERSION:
+        source_language = "en"
+        target_language = "zh-TW"
+        punctuation_policy = "remove-commas-periods"
+        source_key = "english"
+        target_key = "traditionalChinese"
+    else:
+        raise ValueError("unsupported translation manifest")
+
     raw_segments = payload.get("segments")
     if not isinstance(raw_segments, list) or not raw_segments:
-        raise ValueError("bilingual reflow manifest has no segments")
-
+        raise ValueError("translation manifest has no segments")
     segments: list[dict[str, object]] = []
     previous_end = -1
     for index, raw_segment in enumerate(raw_segments, start=1):
         if not isinstance(raw_segment, dict):
             raise ValueError(f"segment {index} must be an object")
         identifier = raw_segment.get("id")
-        if not isinstance(identifier, str) or not SENTENCE_ID_PATTERN.fullmatch(identifier):
+        if not isinstance(identifier, str) or not SEGMENT_ID_PATTERN.fullmatch(identifier):
             raise ValueError(f"segment {index} has an invalid id")
         start = raw_segment.get("start")
         end = raw_segment.get("end")
@@ -252,11 +326,18 @@ def validate_manifest(payload: object) -> list[dict[str, object]]:
         end_ms = parse_timestamp(end)
         if start_ms < previous_end or end_ms <= start_ms:
             raise ValueError(f"{identifier} has overlapping or invalid timestamps")
-        validate_content(raw_segment.get("english"), f"{identifier}.english")
-        validate_content(raw_segment.get("traditionalChinese"), f"{identifier}.traditionalChinese")
+        validate_content(raw_segment.get(source_key), f"{identifier}.{source_key}")
+        validate_content(raw_segment.get(target_key), f"{identifier}.{target_key}")
         previous_end = end_ms
         segments.append(raw_segment)
-    return segments
+    return ManifestView(
+        source_language,
+        target_language,
+        punctuation_policy,
+        segments,
+        source_key,
+        target_key,
+    )
 
 
 def parse_vtt(path: Path) -> list[Cue]:
@@ -277,66 +358,82 @@ def parse_vtt(path: Path) -> list[Cue]:
             raise ValueError(f"invalid VTT timing line: {lines[timing_index]}")
         identifier = lines[timing_index - 1].strip() if timing_index > 0 else ""
         text = "\n".join(lines[timing_index + 1 :]).strip()
-        cues.append(
-            Cue(
-                identifier=identifier,
-                start_ms=parse_timestamp(match.group("start")),
-                end_ms=parse_timestamp(match.group("end")),
-                text=text,
-            )
-        )
+        cues.append(Cue(identifier, parse_timestamp(match.group("start")), parse_timestamp(match.group("end")), text))
     if not cues:
         raise ValueError(f"VTT has no cues: {path}")
     return cues
 
 
-def validate_pair(english_path: Path, traditional_chinese_path: Path) -> int:
-    english_cues = parse_vtt(english_path)
-    chinese_cues = parse_vtt(traditional_chinese_path)
-    if len(english_cues) != len(chinese_cues):
-        raise ValueError("bilingual VTT cue counts do not match")
+def validate_pair(source_path: Path, target_path: Path, punctuation_policy: str = "preserve") -> int:
+    source_cues = parse_vtt(source_path)
+    target_cues = parse_vtt(target_path)
+    if len(source_cues) != len(target_cues):
+        raise ValueError("paired VTT cue counts do not match")
     previous_end = -1
-    for index, (english, chinese) in enumerate(zip(english_cues, chinese_cues), start=1):
-        if english.identifier != chinese.identifier:
+    for index, (source, target) in enumerate(zip(source_cues, target_cues), start=1):
+        if source.identifier != target.identifier:
             raise ValueError(f"cue {index} identifiers do not match")
-        if english.start_ms != chinese.start_ms or english.end_ms != chinese.end_ms:
+        if source.start_ms != target.start_ms or source.end_ms != target.end_ms:
             raise ValueError(f"cue {index} timestamps do not match")
-        if english.start_ms < previous_end or english.end_ms <= english.start_ms:
+        if source.start_ms < previous_end or source.end_ms <= source.start_ms:
             raise ValueError(f"cue {index} has overlapping or invalid timestamps")
-        for label, cue in (("English", english), ("Traditional Chinese", chinese)):
+        for label, cue in (("Source", source), ("Target", target)):
             validate_content(cue.text, f"{label} cue {index}")
             if "\n" in cue.text:
                 raise ValueError(f"{label} cue {index} is split across lines")
-            if REMOVED_PUNCTUATION_PATTERN.search(cue.text):
+            if punctuation_policy == "remove-commas-periods" and REMOVED_PUNCTUATION_PATTERN.search(cue.text):
                 raise ValueError(f"{label} cue {index} still contains a comma or period")
-        previous_end = english.end_ms
-    return len(english_cues)
+        previous_end = source.end_ms
+    return len(source_cues)
 
 
 def prepare(args: argparse.Namespace) -> int:
-    words, provider, model = model_transcript_words(args.source_transcript)
-    segments = sentence_segments(words)
+    units, provider, model, transcript_language = model_transcript_units(args.source_transcript)
+    source_language = validate_language(args.source_language or transcript_language, "source language")
+    target_language = validate_language(args.target_language, "target language")
+    segments = sentence_segments(units)
     payload: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
-        "sourceFormat": "model-word-transcript",
+        "sourceFormat": "model-timed-units",
         "sourceProvider": provider,
         "sourceModel": model,
-        "source": str(args.source_transcript),
+        "sourceLanguage": source_language,
+        "targetLanguage": target_language,
+        "sourceTranscript": str(args.source_transcript),
+        "translationModel": None,
+        "outputProfile": {"punctuationPolicy": args.punctuation_policy},
         "rules": {
-            "alignment": "shared-complete-sentence-timestamps",
-            "punctuation": "replace commas and periods with ASCII spaces",
-            "lineLayout": "one complete sentence per cue",
+            "translationUnit": "complete source sentence",
+            "targetSegmentation": "owned by segment-subtitles",
         },
         "segments": segments,
     }
-    atomic_write_text(
-        args.manifest,
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-    )
-    if args.english_output is not None:
-        english_vtt = render_vtt(segments, "en", "english")
-        atomic_write_text(args.english_output, english_vtt)
-    print(f"Prepared {len(segments)} complete-sentence segments: {args.manifest}")
+    atomic_write_text(args.manifest, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    source_output = args.source_output or args.english_output
+    if source_output is not None:
+        atomic_write_text(
+            source_output,
+            render_vtt(segments, source_language, "sourceText", args.punctuation_policy),
+        )
+    print(f"Prepared {len(segments)} complete-sentence translation units: {args.manifest}")
+    return 0
+
+
+def record_translation_model(args: argparse.Namespace) -> int:
+    payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError("translation model metadata requires a schemaVersion 2 manifest")
+    model = validate_content(args.model, "translation model")
+    metadata: dict[str, str] = {
+        "provider": args.provider,
+        "model": model,
+        "updatedAt": utc_now(),
+    }
+    if args.service:
+        metadata["service"] = validate_content(args.service, "translation service")
+    payload["translationModel"] = metadata
+    atomic_write_text(args.manifest, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    print(f"Recorded {args.provider} translation model {model}: {args.manifest}")
     return 0
 
 
@@ -344,15 +441,25 @@ def render(args: argparse.Namespace) -> int:
     try:
         payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid bilingual reflow manifest: {args.manifest}") from error
-    segments = validate_manifest(payload)
-    atomic_write_text(args.english_output, render_vtt(segments, "en", "english"))
+        raise ValueError(f"invalid translation manifest: {args.manifest}") from error
+    view = manifest_view(payload)
+    source_output = args.source_output or args.english_output
+    target_output = args.target_output or args.traditional_chinese_output
+    if source_output is None or target_output is None:
+        raise ValueError("render requires --source-output and --target-output")
     atomic_write_text(
-        args.traditional_chinese_output,
-        render_vtt(segments, "zh-TW", "traditionalChinese"),
+        source_output,
+        render_vtt(view.segments, view.source_language, view.source_key, view.punctuation_policy),
     )
-    validate_pair(args.english_output, args.traditional_chinese_output)
-    print(f"Rendered {len(segments)} synchronized bilingual cues.")
+    atomic_write_text(
+        target_output,
+        render_vtt(view.segments, view.target_language, view.target_key, view.punctuation_policy),
+    )
+    validate_pair(source_output, target_output, view.punctuation_policy)
+    print(
+        f"Rendered {len(view.segments)} synchronized complete-sentence cues "
+        f"for {view.source_language} -> {view.target_language}."
+    )
     return 0
 
 
@@ -363,24 +470,53 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser = subparsers.add_parser("prepare")
     prepare_parser.add_argument("--source-transcript", required=True, type=Path)
     prepare_parser.add_argument("--manifest", required=True, type=Path)
-    prepare_parser.add_argument("--english-output", type=Path)
+    prepare_parser.add_argument("--source-language")
+    prepare_parser.add_argument("--target-language", required=True)
+    prepare_parser.add_argument("--source-output", type=Path)
+    prepare_parser.add_argument("--english-output", type=Path, help=argparse.SUPPRESS)
+    prepare_parser.add_argument(
+        "--punctuation-policy",
+        choices=("preserve", "remove-commas-periods"),
+        default="preserve",
+    )
     prepare_parser.set_defaults(handler=prepare)
+
+    model_parser = subparsers.add_parser("record-translation-model")
+    model_parser.add_argument("--manifest", required=True, type=Path)
+    model_parser.add_argument("--provider", required=True, choices=("local", "api"))
+    model_parser.add_argument("--service")
+    model_parser.add_argument("--model", required=True)
+    model_parser.set_defaults(handler=record_translation_model)
 
     render_parser = subparsers.add_parser("render")
     render_parser.add_argument("--manifest", required=True, type=Path)
-    render_parser.add_argument("--english-output", required=True, type=Path)
-    render_parser.add_argument("--traditional-chinese-output", required=True, type=Path)
+    render_parser.add_argument("--source-output", type=Path)
+    render_parser.add_argument("--target-output", type=Path)
+    render_parser.add_argument("--english-output", type=Path, help=argparse.SUPPRESS)
+    render_parser.add_argument("--traditional-chinese-output", type=Path, help=argparse.SUPPRESS)
     render_parser.set_defaults(handler=render)
 
     validate_parser = subparsers.add_parser("validate-pair")
-    validate_parser.add_argument("--english", required=True, type=Path)
-    validate_parser.add_argument("--traditional-chinese", required=True, type=Path)
-    validate_parser.set_defaults(
-        handler=lambda args: print(
-            f"Validated {validate_pair(args.english, args.traditional_chinese)} synchronized bilingual cues."
-        )
-        or 0
+    validate_parser.add_argument("--source", type=Path)
+    validate_parser.add_argument("--target", type=Path)
+    validate_parser.add_argument("--english", type=Path, help=argparse.SUPPRESS)
+    validate_parser.add_argument("--traditional-chinese", type=Path, help=argparse.SUPPRESS)
+    validate_parser.add_argument(
+        "--punctuation-policy",
+        choices=("preserve", "remove-commas-periods"),
+        default="preserve",
     )
+
+    def validate_pair_command(args: argparse.Namespace) -> int:
+        source = args.source or args.english
+        target = args.target or args.traditional_chinese
+        if source is None or target is None:
+            raise ValueError("validate-pair requires --source and --target")
+        count = validate_pair(source, target, args.punctuation_policy)
+        print(f"Validated {count} synchronized bilingual cues.")
+        return 0
+
+    validate_parser.set_defaults(handler=validate_pair_command)
     return parser
 
 

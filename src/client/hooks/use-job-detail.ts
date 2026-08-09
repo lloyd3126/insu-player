@@ -21,5 +21,6 @@ export function useJobCaptions(videoId: string) {
   return useQuery({
     queryKey: ["job-captions", videoId],
     queryFn: () => api.captions(videoId),
+    staleTime: 60_000,
   })
 }

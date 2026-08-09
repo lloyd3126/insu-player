@@ -1,37 +1,31 @@
 import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
-import { StatusBadge } from "@/components/shared/StatusBadge"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { PromptActionCard } from "@/components/shared/prompt-cards/PromptActionCard"
+import { Card, CardContent } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { JobFact, JobFactGrid } from "@/features/job-detail/JobFactGrid"
 import { useJobLog } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
-import { formatDate } from "@shared/domain/format"
+
+function activityPrompt(job: JobDetail) {
+  return [
+    "請檢查 INSU Player 中以下影音的目前狀態與 Workflow log，判斷是否有錯誤或中斷。請保留已完成的影音與字幕，先說明原因和下一步。若能安全接續，請從正確階段繼續處理。",
+    `影音 ID：${job.videoId}`,
+    `影音標題：${job.title}`,
+  ].join("\n")
+}
 
 export function JobActivityPanel({ job }: { job: JobDetail }) {
   const log = useJobLog(job.videoId)
 
   return (
     <div className="job-activity-content">
-      <JobFactGrid className="job-facts--activity">
-        <JobFact label="目前狀態">
-          <StatusBadge job={job} />
-        </JobFact>
-        <JobFact label="處理階段">{job.stage || "—"}</JobFact>
-        <JobFact label="處理進度">{Math.round(job.progress)}%</JobFact>
-        <JobFact label="最近更新">{formatDate(job.updatedAt)}</JobFact>
-      </JobFactGrid>
+      <PromptActionCard
+        kicker="CHECK / WORKFLOW"
+        title="請 Agent 檢查紀錄"
+        description="複製提示，請 Agent 根據目前狀態與 Workflow log 找出問題，保留已完成成果並從正確階段接續。"
+        prompt={activityPrompt(job)}
+      />
       {job.lastError ? <ErrorState message={job.lastError} /> : null}
       <Card className="job-detail-card workflow-log-card">
-        <CardHeader>
-          <CardTitle>Workflow log</CardTitle>
-          <CardDescription>最近 180 行</CardDescription>
-        </CardHeader>
         <CardContent>
           {log.isPending ? <LoadingState label="正在讀取執行紀錄" /> : null}
           {log.isError ? <ErrorState message={log.error.message} /> : null}

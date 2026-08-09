@@ -11,12 +11,24 @@ import type {
   PromptLibraryResponse,
   SupportedSitesResponse,
 } from "@shared/contracts/resources"
+import type {
+  RemovalExecutionResponse,
+  RemovalPreviewResponse,
+  RemovalTarget,
+} from "@shared/contracts/removal"
 
 async function fetchJson<T>(input: string, init?: RequestInit) {
   const response = await fetch(input, { cache: "no-store", ...init })
   if (!response.ok) {
-    const message = await response.text().catch(() => "")
-    throw new Error(message || `HTTP ${response.status}`)
+    const body = await response.text().catch(() => "")
+    let payload: { error?: unknown } | null = null
+    try {
+      payload = JSON.parse(body) as { error?: unknown }
+    } catch {
+      // Fall through to the response body when it is not JSON.
+    }
+    if (typeof payload?.error === "string") throw new Error(payload.error)
+    throw new Error(body || `HTTP ${response.status}`)
   }
   return (await response.json()) as T
 }
@@ -59,4 +71,16 @@ export const api = {
       `/api/environment/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     ),
+  previewRemoval: (target: RemovalTarget) =>
+    fetchJson<RemovalPreviewResponse>("/api/removals/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
+    }),
+  executeRemoval: (target: RemovalTarget, planDigest: string) =>
+    fetchJson<RemovalExecutionResponse>("/api/removals/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, planDigest }),
+    }),
 }

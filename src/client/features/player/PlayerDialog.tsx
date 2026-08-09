@@ -219,7 +219,7 @@ export function PlayerDialog() {
               })
             }}
           >
-            查看處理紀錄
+            詳細資訊
           </Button>
         </div>
       </div>

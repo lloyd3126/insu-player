@@ -18,7 +18,7 @@ for argument in "$@"; do
   esac
 done
 [ "$translation_choice" -eq 1 ] || {
-  printf 'error: ask the user whether Traditional Chinese translation is wanted, then pass --translate zh-TW or --no-translate\n' >&2
+  printf 'error: ask the user whether translation is wanted and which target BCP 47 language to use, then pass --translate TARGET or --no-translate\n' >&2
   exit 1
 }
 if [ "$translation_requested" -eq 1 ] && [ "$provider_choice" -ne 1 ]; then

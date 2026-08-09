@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: process-video.sh <workspace> <video-url> [--translate zh-TW | --no-translate] [--provider local|openai] [--model NAME] [--language CODE] [--track CODE] [--device cpu|cuda] [--allow-api-upload] [--no-transcribe]\n'
+  printf 'usage: process-video.sh <workspace> <video-url> [--translate TARGET_BCP47 | --no-translate] [--provider local|openai] [--model NAME] [--language SOURCE_BCP47] [--track CODE] [--device cpu|cuda] [--allow-api-upload] [--no-transcribe]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -20,7 +20,6 @@ while [ "$#" -gt 0 ]; do
     --translate)
       [ "$#" -ge 2 ] || caption_die "--translate requires a language"
       [ "$translation_mode" = "legacy" ] || caption_die "choose only one translation mode"
-      [ "$2" = "zh-TW" ] || caption_die "this release supports --translate zh-TW"
       translation_mode="translate"; translation_target="$2"; shift 2
       ;;
     --no-translate)
@@ -41,8 +40,7 @@ done
 
 if [ "$translation_mode" = "translate" ]; then
   [ -n "$provider_name" ] || caption_die "translation requires an explicit --provider local or --provider openai after asking the user"
-  if [ -z "$language_code" ]; then language_code="en"; fi
-  if [ -z "$track_code" ]; then track_code="en"; fi
+  caption_validate_language "$translation_target"
 fi
 
 caption_set_paths "$workspace_input"
@@ -73,6 +71,7 @@ if [ "$current_state" = "needs_transcription" ] && [ "$no_transcribe" -eq 0 ]; t
   if [ -n "$model_name" ]; then transcribe_args+=(--model "$model_name"); fi
   if [ -n "$language_code" ]; then transcribe_args+=(--language "$language_code"); fi
   if [ -n "$track_code" ]; then transcribe_args+=(--track "$track_code"); fi
+  if [ "$translation_mode" = "translate" ]; then transcribe_args+=(--target-language "$translation_target"); fi
   if [ "$allow_api_upload" -eq 1 ]; then transcribe_args+=(--allow-api-upload); fi
   if [ "$translation_mode" = "none" ]; then transcribe_args+=(--no-translate); fi
   "$SCRIPT_DIR/transcribe.sh" "${transcribe_args[@]}"
@@ -85,9 +84,9 @@ case "$current_state" in
   ready) caption_note "The video is ready in the local library." ;;
   needs_translation)
     if [ "$translation_mode" = "translate" ]; then
-      caption_note "Polish the bilingual sentence manifest, render both synchronized tracks, then import them together."
+      caption_note "Polish the complete $translation_target translation, then use segment-subtitles for target-first Source Alignment."
     else
-      caption_note "Translate a source subtitle, then import it as zh-TW."
+      caption_note "Translate the source subtitle into the requested target language."
     fi
     ;;
   needs_transcription) caption_note "Transcription is pending; rerun without --no-transcribe when ready." ;;

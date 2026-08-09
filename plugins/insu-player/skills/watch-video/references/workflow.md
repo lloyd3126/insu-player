@@ -1,4 +1,4 @@
-# yt-dlp 來源影片庫、轉錄與繁中字幕
+# yt-dlp 來源影音庫、多語轉錄、翻譯與字幕切分
 
 ## 最終體驗
 
@@ -8,7 +8,7 @@
 http://127.0.0.1:8000/
 ```
 
-首頁是全高入口頁，navbar 只保留「使用說明」、「功能設定」與「影音中心」。「使用說明」以 tabs 切換開始使用、我的提示與支援網站；內建使用情境提示位於「我的提示」建立卡下方。「功能設定」以 tabs 切換環境變數、本機模型與雲端模型；三個分頁都在上方提供對應的 Agent 提示卡，Tab panel 固定不捲動，只有下方表格捲動。環境變數表格顯示白名單變數、設定狀態、遮蔽的新值輸入與操作，不顯示 SDK 狀態；本機模型顯示 workspace 實際下載的 Whisper 模型與大小，雲端模型顯示 API SDK 安裝狀態與 API Key 選單。「影音中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。有影音時預設開啟「我的影音」，只顯示全寬搜尋列與最多三欄的縮圖標題卡片；沒有影音時預設開啟「詳細資訊」，其中有摘要統計、狀態篩選，並固定顯示影音、目前狀態、字幕語言碼與操作列表。容量、更新時間、歷程及 log 收在單筆影音的「詳情」，其中「字幕」分頁會按時間並排顯示多語字幕。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影音中心，背景任務與狀態輪詢不會中斷。
+首頁是全高入口頁，navbar 只保留「使用說明」、「功能設定」與「影音中心」。「使用說明」以 tabs 切換開始使用、我的提示與支援網站；內建使用情境提示位於「我的提示」建立卡下方。「功能設定」以 tabs 切換環境變數、本機模型與雲端模型；三個分頁都在上方提供對應的 Agent 提示卡，Tab panel 固定不捲動，只有下方表格捲動。環境變數表格顯示白名單變數、設定狀態、遮蔽的新值輸入與操作，不顯示 SDK 狀態；本機模型顯示 workspace 實際下載的 Whisper 模型與大小，雲端模型顯示 API SDK 安裝狀態與 API Key 選單。「影音中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。有影音時預設開啟「我的影音」，只顯示全寬搜尋列與最多三欄的縮圖標題卡片；沒有影音時預設開啟「詳細資訊」，其中有摘要統計、狀態篩選，並固定顯示影音、目前狀態、字幕語言碼與操作列表。容量、更新時間、歷程及 log 收在單筆影音的「詳情」，其中「原始字幕」與「翻譯字幕」分頁會沿共享時間軸分別顯示來源語言與目標語言。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影音中心，背景任務與狀態輪詢不會中斷。
 
 首頁仍是單一 React 應用程式，但使用 React Router 將使用說明、功能設定、影音中心、影音詳情、播放器及其 tab 狀態映射到 localhost URL。重新整理或直接開啟該 URL 必須恢復同一個 modal 與 tab；Hono/Bun 與 Python 診斷服務都要對這些 allowlist 前端路徑回傳同一份 React `index.html`。
 
@@ -29,7 +29,7 @@ http://127.0.0.1:8000/
 輸出：
 
 - 瀏覽器相容 `video.mp4`
-- 可用的原文、英文與／或繁體中文 VTT
+- 可用的原文與任意模型支援目標語言 VTT
 - 可中斷恢復的 `status.json` 與 workflow log
 - 同源、本機限定、支援影片 Range request 的影片庫首頁
 
@@ -41,7 +41,7 @@ http://127.0.0.1:8000/
 - 不把影片、字幕、cookie、模型、venv 或快取 commit 到 repository。
 - 不保證來源平台一定提供字幕或自動翻譯。
 - 找不到 extractor 時，Agent 應使用 INSU Player 研究來源、公開介面與媒體格式，研究不等於繞過存取控制。
-- Whisper 的 `translate` 只會翻成英文，不會直接產生繁中；繁中由現成字幕或 Agent 依可用的詞級時間資料重建完整句子後翻譯。
+- 不把 Whisper 的英語 translation task 當成任意目標語言翻譯；完整目標語翻譯由明確選定並記錄的本機或 API 語言模型完成。
 - 不讀取登入 cookie，除非使用者明確要求並理解授權範圍。cookie 不得貼入聊天或寫進 repository。
 - 不把本機服務公開到 LAN 或 Internet。
 
@@ -70,12 +70,12 @@ http://127.0.0.1:8000/
         │   ├── audio.m4a                   # 需要轉錄時才保留
         │   └── thumbnail.jpg
         ├── captions/
-        │   ├── en.vtt                      # 句級重排後的英文可播放字幕
-        │   ├── en.pre-reflow.vtt           # 第一次重排時保存的舊英文軌
-        │   ├── source.vtt
-        │   └── zh-TW.vtt                   # 與英文共用完整句時間段的繁中軌
+        │   ├── <source-language>.vtt        # 原始或切分後的來源語言播放軌
+        │   ├── <target-language>.vtt        # 與來源共用切分時間段的目標語言軌
+        │   └── <language>.pre-reflow.vtt    # 第一次取代前保存的舊軌
         ├── subtitle-work/
-        │   └── bilingual-sentences.json    # 模型詞軸重建的句級翻譯與潤色清單
+        │   ├── bilingual-sentences.json    # 完整句來源與自然目標語翻譯
+        │   └── segmentation-plan.json      # frozen target pieces 與來源 timed-unit spans
         ├── youtube-captions/               # 只有不翻譯時可保存來源播放 VTT
         ├── whisper/                        # 本機或 API 的 transcript.json、文字與播放 VTT
         └── logs/workflow.log
@@ -102,9 +102,9 @@ http://127.0.0.1:8000/
 | `checking` / `downloading` | 正在檢查字幕或下載媒體 | 等待或查看 log |
 | `needs_transcription` | 沒有可用文字軌 | 執行 `transcribe.sh` |
 | `transcribing` | 選定 provider 轉錄中 | 等待；可在中斷後重跑 |
-| `needs_translation` | 有英文詞級資料，沒有繁中 | Agent 完成初譯、完整句潤色與雙語重排 |
-| `translating` | Agent 正在翻譯與重排 | 成對驗證後執行 `import-bilingual-captions.sh` |
-| `ready` | 影片與繁中字幕可觀看 | 首頁觀看或清理中間檔 |
+| `needs_translation` | 有來源 timed units，沒有完整目標語翻譯 | 選定模型完成初譯與完整句潤色 |
+| `translating` | 正在翻譯、切分或 Source Alignment | 通過 deterministic 與成對驗證後匯入 |
+| `ready` | 影片與所需字幕可觀看 | 首頁觀看或清理中間檔 |
 | `interrupted` | active state 的程序已消失 | Agent 檢查產物後從該階段續跑 |
 | `failed` | 命令失敗 | 查看 detail/log，再做針對性修復 |
 
@@ -150,11 +150,11 @@ Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產�
 
 1. URL 與是否只處理單支影片；腳本固定 `--no-playlist`。
 2. 使用者已接受首頁集中顯示的使用規範；來源平台條款與所在地規範仍可能適用。
-3. 在任何字幕檢查或下載前，先問是否需要繁體中文翻譯。回答需要就固定使用 `--translate zh-TW`；回答不需要就使用 `--no-translate`。
+3. 在任何字幕檢查或下載前，先問是否需要翻譯；回答需要就確認目標 BCP 47 語言並使用 `--translate TARGET`，回答不需要就使用 `--no-translate`。
 4. 若需要翻譯，要求使用者明確選擇本機或 OpenAI API provider；本機需下載大型依賴與模型，API 會上傳音訊並可能產生費用。
 5. workspace 是否可能包含敏感內容。
 
-若需要翻譯，不檢查也不下載任何平台字幕格式；直接以使用者選定的本機或 OpenAI 模型轉錄原始音訊並取得英文詞級時間。若不需要翻譯，來源 VTT 可直接作為播放字幕。如果只要現成字幕，Agent 應先檢查字幕來源，不必立刻下載 Whisper 模型或影片。
+若需要翻譯，不檢查也不下載任何平台字幕格式；直接以使用者選定的本機或 OpenAI 模型轉錄原始音訊並取得來源語言 timed units。若不需要翻譯，來源 VTT 可直接作為播放字幕。如果只要現成字幕，Agent 應先檢查字幕來源，不必立刻下載 Whisper 模型或影片。
 
 ## 階段 3：從零盤點環境
 
@@ -212,7 +212,7 @@ plugins/insu-player/skills/watch-video/scripts/process-video.sh \
 3. 下載瀏覽器相容 MP4 與縮圖。
 4. 沒有文字軌時準備音訊並執行使用者選定的轉錄 provider。
 5. 即時更新狀態、進度、PID 與 log。
-6. 翻譯模式停在 `needs_translation`，待 Agent 完成初譯、句級潤色、雙語同步輸出與成對匯入後才設為 `ready`；不翻譯模式有可播字幕即可完成。
+6. 翻譯模式停在 `needs_translation`，待選定模型完成完整句翻譯，再由 `$segment-subtitles` 完成 target-first 切分、Source Alignment、驗證與成對匯入後才設為 `ready`；不翻譯模式有可播字幕即可完成。
 
 不需要翻譯時必須明確指定：
 
@@ -254,6 +254,7 @@ plugins/insu-player/skills/watch-video/scripts/transcribe.sh \
   VIDEO_ID \
   --model medium \
   --language en \
+  --target-language zh-TW \
   --track en \
   --device cpu
 ```
@@ -267,16 +268,16 @@ export OPENAI_API_KEY='set-in-current-terminal'
 plugins/insu-player/skills/watch-video/scripts/transcribe.sh \
   .local/insu-player VIDEO_ID \
   --provider openai --model whisper-1 \
-  --language en --track en --allow-api-upload
+  --language en --target-language zh-TW --track en --allow-api-upload
 ~~~
 
 API 音訊會先轉為低位元率分段，單檔低於 25 MB，再把 segment 與 word timestamps offset 回完整時間軸。Key 不寫入 job、log 或 metadata。
 
 若首頁服務已啟動，也可以從 navbar 的「環境變數」輸入 `OPENAI_API_KEY`，再執行同一個 `transcribe.sh --allow-api-upload` 命令。腳本會讓 API 轉錄子程序繼承服務程序中的值，不會把值回傳給首頁、寫入 `.env`、命令列、job、log 或 metadata。停止或重新啟動服務後需要重新輸入。
 
-## 階段 7：Agent 初譯、完整句潤色與雙語重排
+## 階段 7：完整句翻譯與獨立字幕切分
 
-`transcribe.sh` 會先以模型詞級時間建立句級 manifest，並把首頁狀態切到「繁中初次翻譯」。開始潤色前再更新細部狀態：
+`transcribe.sh` 會先以模型 timed units 建立 schema-version 2 完整句 manifest，保存 `sourceLanguage` 與 `targetLanguage`，並把首頁狀態切到「初次翻譯」。開始翻譯前先用 `$translate-subtitles` 記錄選定的本機或 API 翻譯模型；外部服務需先取得字幕文字上傳同意。
 
 ```bash
 <workspace>/.agent-tools/insu-player/.venv/bin/python \
@@ -289,30 +290,39 @@ API 音訊會先轉為低位元率分段，單檔低於 25 MB，再把 segment �
   --stage sentence_polish
 ```
 
-翻譯模式的事實來源是 `<job>/whisper/<provider>/transcript.json` 與由它建立的 `<job>/subtitle-work/bilingual-sentences.json`，不是平台字幕。每個英文字詞都必須有模型產生的 start/end 時間，腳本依標點與停頓重建完整英文句子。
+翻譯模式的事實來源是 `<job>/whisper/<provider>/transcript.json` 與由它建立的 `<job>/subtitle-work/bilingual-sentences.json`，不是平台字幕。來源可以是任意模型支援的 BCP 47 語言；timed units 可以是 word、token 或 grapheme-group。
 
-翻譯與重排規則：
+翻譯規則：
 
-1. 對 manifest 每個完整英文句子做一次繁中初譯，寫入 `draftTraditionalChinese`。
-2. 再以完整英文句與初譯重新潤色，將自然的臺灣繁中寫入 `traditionalChinese`；不要沿用碎片 cue 的字串拼接。
-3. 不增刪、合併、拆開或重排句級 segment；英文與繁中必須使用相同 ID、開始與結束時間。
-4. 每個 cue 只有一個完整句子與一個實體文字行，不把同一句拆到兩個時間段。
-5. 最後把英文與繁中的半形／全形逗號、句號全部改成半形空格，並將連續空白收斂成單一 ASCII space。
-6. 專有名詞、產品名、股票代號與數字不可臆改；不得殘留批次 marker。
-7. 若使用外部翻譯服務，第一次送出字幕文字前先說明服務與資料範圍並取得同意。
+1. 對 manifest 每個完整 `sourceText` 做一次目標語初譯，寫入 `draftTargetText`。
+2. 再以完整來源句與初譯重新潤色，將自然完整譯文寫入 `targetText`；不要沿用碎片 cue 的字串拼接。
+3. 不增刪、合併、拆開或重排完整句 translation units。
+4. 保存 raw punctuation、專有名詞、數字、邏輯關係、required terms 與模型 metadata。
+5. Schema 接受任意 BCP 47 語言不代表模型一定支援；執行前必須確認模型能力。
 
-先由 `translate-subtitles/scripts/reflow_subtitles.py render` 產生 `en.final.vtt` 與 `zh-TW.final.vtt`，通過共享時間軸、句數、標點、單行文字與 marker 驗證後，才成對匯入：
+完整翻譯完成後，交給獨立的 `$segment-subtitles`。先建立 `segmentation-plan.json`，只依目標語決定 pieces；凍結 target revision 後才能填入連續的 source timed-unit spans。不得使用 risky／blocked boundary，也不得為了 timing 修改 frozen target。
+
+```bash
+python3 plugins/insu-player/skills/segment-subtitles/scripts/segment_subtitles.py prepare \
+  --translation-manifest .local/insu-player/jobs/VIDEO_ID/subtitle-work/bilingual-sentences.json \
+  --source-transcript .local/insu-player/jobs/VIDEO_ID/whisper/PROVIDER/transcript.json \
+  --output .local/insu-player/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json
+```
+
+切分、freeze、Source Alignment 與 validation 通過後，由 `segment_subtitles.py render` 產生語言碼命名的 synchronized pair，再成對匯入：
 
 ```bash
 plugins/insu-player/skills/watch-video/scripts/import-bilingual-captions.sh \
   .local/insu-player \
   VIDEO_ID \
-  .local/insu-player/jobs/VIDEO_ID/subtitle-work/en.final.vtt \
-  .local/insu-player/jobs/VIDEO_ID/subtitle-work/zh-TW.final.vtt \
+  .local/insu-player/jobs/VIDEO_ID/subtitle-work/en.segmented.vtt \
+  .local/insu-player/jobs/VIDEO_ID/subtitle-work/zh-TW.segmented.vtt \
+  --source-language en \
+  --target-language zh-TW \
   --force
 ```
 
-Importer 第一次執行會保留舊的 `en.pre-reflow.vtt` 與 `zh-TW.pre-reflow.vtt`。任一字幕仍有斷句、時間不一致、逗號／句號或內部 marker 時都不得設為 `ready`。
+Importer 第一次執行會依語言碼保留 `LANGUAGE.pre-reflow.vtt`。任一字幕仍有 hard width、frozen target mutation、source span gap/overlap、anchor mismatch、risky/blocked boundary、時間不一致或內部 marker 時都不得設為 `ready`。
 
 ## 階段 8：首頁驗證
 
@@ -325,8 +335,8 @@ Importer 第一次執行會保留舊的 `en.pre-reflow.vtt` 與 `zh-TW.pre-reflo
 - [ ] 關閉 modal 後 iframe `src` 被清除，影片停止解碼
 - [ ] 重開同支影片可從 job 內 `ui-state.json` 的進度接續
 - [ ] 「目前狀態」沒有前置圓點，欄位使用固定寬度並顯示字幕處理細部階段
-- [ ] 「詳情」的「關於」顯示媒體資訊與獨立捲動的狀態歷程；「字幕」能並排顯示語言碼與字幕文字；「處理紀錄」顯示目前階段與全寬 Workflow log
-- [ ] 開啟「關於」時不先請求字幕與 log，只有切到「字幕」或「處理紀錄」才按需載入
+- [ ] 「詳情」依序顯示關於影音、執行紀錄、原始字幕、影音摘要、翻譯字幕、切分字幕與影音筆記；原始字幕包含 yt-dlp 來源或本機、雲端模型轉錄的字幕
+- [ ] 開啟「關於影音」時不先請求字幕與 log，只有切到原始字幕、翻譯字幕或執行紀錄才按需載入
 - [ ] 斷網時仍可使用原生 `<video controls>` 與本機 VTT；首頁預設不發出 CDN 請求，只有使用者主動選擇 Google Fonts 時載入字體
 
 ## 使用四、五次之後的預期流程
@@ -337,7 +347,7 @@ Importer 第一次執行會保留舊的 `en.pre-reflow.vtt` 與 `zh-TW.pre-reflo
 2. Agent 先確認目前 workspace 的首頁已用 Codex 內建瀏覽器開啟，沒有開啟就先開啟。
 3. Agent 執行 `process-video.sh`；首頁自動多一列。
 4. 使用者可以繼續留在首頁，從 navbar 開啟影音中心查看下載／轉錄進度或觀看既有影片。
-5. 待翻譯時 Agent 完成初譯與句級潤色，再成對匯入共享時間軸的英文與繁中 VTT；該列才變成完成。
+5. 待翻譯時先完成完整句目標語翻譯，再由 `$segment-subtitles` 完成 target-first 切分、freeze、Source Alignment 與驗證，成對匯入來源與目標語 VTT 後該列才變成完成。
 6. 磁碟累積後只清理已完成 job 的中間檔，保留首頁播放需要的檔案。
 
 不需要重裝 Python、重下模型、重建 HTML、重開每支影片的 server，也不需要離開首頁找不同 player 目錄。
@@ -361,17 +371,17 @@ plugins/insu-player/skills/watch-video/scripts/clean-job.sh \
   --yes
 ```
 
-完整刪除精確 job 必須同時指定：
+完整移除精確 job 改由 `$video-library` 的 removal protocol 管理。先進行唯讀預覽：
 
 ```bash
-plugins/insu-player/skills/watch-video/scripts/clean-job.sh \
-  .local/insu-player \
-  VIDEO_ID \
-  --all \
-  --yes
+<workspace>/.agent-tools/insu-player/.venv/bin/python \
+  plugins/insu-player/skills/video-library/scripts/remove_library_item.py \
+  preview .local/insu-player \
+  --kind video \
+  --video-id VIDEO_ID
 ```
 
-active job 會拒絕清理。首頁下一次輪詢會反映結果。
+Agent 必須把預覽的 workspace、檔案範圍、`app.db` 關聯、依賴、容量、blockers、可復原性與 plan digest 告訴使用者。使用者明確確認該次預覽後，才能用同一個 digest 執行 `execute --yes`，再以 `verify` 確認 job 目錄、移除暫存目錄與資料庫紀錄都已消失。digest 或資源狀態有變化就必須重新預覽與確認；active job、symlink、資料庫檢查失敗或非 cascade 關聯都會拒絕移除。首頁下一次輪詢會反映結果。
 
 ## 匯出獨立播放器（選用）
 
@@ -436,7 +446,7 @@ plugins/insu-player/skills/watch-video/scripts/uninstall.sh \
 
 日常：
 
-> 沿用既有 `.local/insu-player`，把這支影片加入本機影片庫。先問我是否需要翻譯；若要繁中，再問我要用本機或 OpenAI 模型，不取得任何平台字幕，改由選定模型產生英文詞級時間。完成初譯後重建完整句子、潤色，輸出共享句級時間軸的英繁字幕。首頁保持啟動，完成後告訴我狀態。
+> 沿用既有 `.local/insu-player`，把這支影音加入本機影音庫。先問我是否需要翻譯及目標語言，再問我要用本機或 OpenAI 模型；翻譯模式不取得任何平台字幕，改由選定模型產生來源 timed units、完整自然譯文與 target-first 切分，完成 Source Alignment 和驗證後輸出同步雙語字幕。首頁保持啟動，完成後告訴我狀態。
 
 續跑：
 
@@ -447,6 +457,8 @@ plugins/insu-player/skills/watch-video/scripts/uninstall.sh \
 > 列出已完成影片中可安全清掉的中間檔與預估容量，先 dry run，不要刪除影片、標準化字幕、狀態或 log。
 
 移除：
+
+> 完整移除指定的 INSU Player 影音。請使用 `$video-library`，固定目前專案的 workspace，先以 `remove_library_item.py preview` 列出檔案、資料庫、依賴、容量與可復原性；在我確認該次 plan digest 前不要停止程序或刪除。確認後只執行同一份計畫，最後用 `verify` 檢查並回報。
 
 > 依 uninstall 章節先做 dry run，分開列出 runtime、模型與 jobs；確認沒有背景程序，先不要真的刪除。
 

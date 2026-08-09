@@ -193,6 +193,51 @@ exit 2
         self.assertTrue((job_dir / "captions" / "zh-TW.vtt").is_file())
         self.assertFalse((job_dir / "whisper").exists())
 
+    def test_complete_job_cleanup_delegates_to_confirmed_removal_plan(self) -> None:
+        self.run_script(
+            "download-video.sh",
+            str(self.workspace),
+            "https://example.test/watch?v=test-video",
+        )
+        preview = json.loads(
+            self.run_script(
+                "clean-job.sh", str(self.workspace), "test-video", "--all"
+            ).stdout
+        )
+        job_dir = self.workspace / "jobs" / "test-video"
+        self.assertTrue(job_dir.is_dir())
+
+        unconfirmed = subprocess.run(
+            [
+                str(SCRIPTS / "clean-job.sh"),
+                str(self.workspace),
+                "test-video",
+                "--all",
+                "--yes",
+            ],
+            cwd=REPO_ROOT,
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(unconfirmed.returncode, 0)
+        self.assertIn("confirmed --plan-digest", unconfirmed.stdout)
+        self.assertTrue(job_dir.is_dir())
+
+        result = self.run_script(
+            "clean-job.sh",
+            str(self.workspace),
+            "test-video",
+            "--all",
+            "--plan-digest",
+            preview["digest"],
+            "--yes",
+        )
+        self.assertIn('"removed": true', result.stdout)
+        self.assertFalse(job_dir.exists())
+
     def test_uninstall_refuses_while_library_pid_is_alive(self) -> None:
         pid_file = self.workspace / ".insu-player-server.pid"
         pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")

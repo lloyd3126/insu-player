@@ -14,6 +14,7 @@ EXPECTED_SKILLS = {
     "video-library",
     "transcribe-media",
     "translate-subtitles",
+    "segment-subtitles",
     "player-manager",
 }
 
@@ -41,12 +42,15 @@ class ProductBoundaryTests(unittest.TestCase):
 
     def test_product_docs_use_the_insu_repository_and_brand(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        agent_guide = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
         changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         manager = (PLUGIN_ROOT / "skills" / "player-manager" / "scripts" / "manage.py").read_text(encoding="utf-8")
         self.assertIn("# INSU Player", readme)
         self.assertIn("https://github.com/lloyd3126/insu-player.git", readme)
         self.assertIn("使用說明、功能設定與影音中心", readme)
         self.assertIn("API SDK 與 API Key 設定狀態", readme)
+        self.assertIn("bun-runtime/bin` 加入 `PATH`", agent_guide)
+        self.assertIn("不得假設使用者已安裝全域 Bun", agent_guide)
         self.assertIn("## v0.2.0", changelog)
         self.assertIn("api.github.com/repos/lloyd3126/insu-player/releases/latest", manager)
         legacy_repository = "lloyd3126/" + "xe" + "ruca-player"
@@ -110,26 +114,32 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn('if [ "$#" -eq 0 ]', portable_serve)
         self.assertNotIn("another port such as `8010`", watch_skill + library_skill)
 
-    def test_translation_mode_uses_model_word_timing_and_sentence_aligned_pair_import(self) -> None:
+    def test_translation_and_segmentation_use_multilingual_timed_units_and_pair_import(self) -> None:
         watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
         translate_skill = (PLUGIN_ROOT / "skills" / "translate-subtitles" / "SKILL.md").read_text(encoding="utf-8")
+        segment_skill = (PLUGIN_ROOT / "skills" / "segment-subtitles" / "SKILL.md").read_text(encoding="utf-8")
         transcriber = (PLUGIN_ROOT / "skills" / "transcribe-media" / "scripts" / "transcribe_media.py").read_text(encoding="utf-8")
         download = (PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "download-video.sh").read_text(encoding="utf-8")
         portable_add = (REPO_ROOT / "scripts" / "portable" / "add-video.sh").read_text(encoding="utf-8")
         reflow = PLUGIN_ROOT / "skills" / "translate-subtitles" / "scripts" / "reflow_subtitles.py"
+        segmentation = PLUGIN_ROOT / "skills" / "segment-subtitles" / "scripts" / "segment_subtitles.py"
         pair_import = PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "import-bilingual-captions.sh"
 
         self.assertIn("Before inspecting or downloading subtitles, ask", watch_skill)
         self.assertIn("must not inspect or download platform captions", translate_skill)
-        self.assertIn("local or OpenAI", translate_skill)
+        self.assertIn("local or API", translate_skill)
         self.assertIn("skipping all source subtitles", download)
         self.assertNotIn("json3", download.lower())
         self.assertIn('"timestamp_granularities": ["segment", "word"]', transcriber)
-        self.assertIn("--translate zh-TW or --no-translate", portable_add)
+        self.assertIn("--translate TARGET or --no-translate", portable_add)
         self.assertIn("translation requires asking the user to choose --provider", portable_add)
         self.assertTrue(reflow.is_file())
+        self.assertTrue(segmentation.is_file())
         self.assertTrue(pair_import.is_file())
-        self.assertIn("share one complete-sentence timeline", translate_skill)
+        self.assertIn("BCP 47", translate_skill)
+        self.assertIn("leave target-first display segmentation", translate_skill)
+        self.assertIn("freeze-target", segment_skill)
+        self.assertIn("Source Alignment", segment_skill)
 
     def test_static_page_titles_and_headings_do_not_use_punctuation(self) -> None:
         assets = [
@@ -161,6 +171,9 @@ class ProductBoundaryTests(unittest.TestCase):
         library_component = (
             REPO_ROOT / "src" / "client" / "features" / "library" / "LibraryDialog.tsx"
         ).read_text(encoding="utf-8")
+        player_component = (
+            REPO_ROOT / "src" / "client" / "features" / "player" / "PlayerDialog.tsx"
+        ).read_text(encoding="utf-8")
         usage_component = (
             REPO_ROOT / "src" / "client" / "features" / "home" / "UsageGuideDialog.tsx"
         ).read_text(encoding="utf-8")
@@ -187,6 +200,43 @@ class ProductBoundaryTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         detail_history_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobHistoryCard.tsx"
+        ).read_text(encoding="utf-8")
+        removal_dialog_component = (
+            REPO_ROOT
+            / "src"
+            / "client"
+            / "components"
+            / "shared"
+            / "removal"
+            / "ResourceRemovalDialog.tsx"
+        ).read_text(encoding="utf-8")
+        video_removal_dialog_component = (
+            REPO_ROOT
+            / "src"
+            / "client"
+            / "features"
+            / "job-detail"
+            / "VideoRemovalDialog.tsx"
+        ).read_text(encoding="utf-8")
+        removal_contract = (
+            REPO_ROOT / "src" / "shared" / "contracts" / "removal.ts"
+        ).read_text(encoding="utf-8")
+        removal_service = (
+            REPO_ROOT / "src" / "server" / "services" / "removal-service.ts"
+        ).read_text(encoding="utf-8")
+        removal_script = (
+            PLUGIN_ROOT
+            / "skills"
+            / "video-library"
+            / "scripts"
+            / "remove_library_item.py"
+        ).read_text(encoding="utf-8")
+        removal_protocol = (
+            PLUGIN_ROOT
+            / "skills"
+            / "video-library"
+            / "references"
+            / "removal-protocol.md"
         ).read_text(encoding="utf-8")
         app_dialog = (
             REPO_ROOT / "src" / "client" / "components" / "shared" / "AppDialog.tsx"
@@ -227,8 +277,23 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("詳細資訊", library_component)
         self.assertIn("CaptionLanguageSelect", library_component)
         self.assertIn("video-grid-card__duration", library_component)
+        self.assertIn("VideoCardRemovalDialog", library_component)
+        self.assertIn("VideoListRemovalDialog", library_component)
         self.assertIn('className="job-table"', library_component)
         self.assertIn("搜尋影音", library_component)
+        self.assertIn("PlayIcon", library_component)
+        self.assertNotIn("EllipsisVerticalIcon", library_component)
+        self.assertIn("SettingsIcon", library_component)
+        self.assertIn('className="job-title-link"', library_component)
+        self.assertIn('size="icon"', library_component)
+        self.assertIn("TooltipContent", library_component)
+        self.assertNotIn('data-label="目前狀態"', library_component)
+        self.assertNotIn("01 / INSU COLLECTION", library_component)
+        self.assertNotIn("影音處理資訊", library_component)
+        self.assertIn("<TableHead>操作</TableHead>", library_component)
+        self.assertIn("詳細資訊", player_component)
+        self.assertIn('tab: "about"', player_component)
+        self.assertNotIn("查看紀錄", player_component)
 
         self.assertIn('value="getting-started"', usage_component)
         self.assertIn('value="my-prompts"', usage_component)
@@ -248,15 +313,44 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("實際下載大小", models_component)
 
         self.assertIn('value="about"', detail_component)
-        self.assertIn('value="subtitle"', detail_component)
-        self.assertIn('value="segmentation"', detail_component)
         self.assertIn('value="activity"', detail_component)
+        self.assertIn('value="source-subtitle"', detail_component)
+        self.assertIn('value="summary"', detail_component)
+        self.assertIn('value="translated-subtitle"', detail_component)
+        self.assertIn('value="segmentation"', detail_component)
+        self.assertIn('value="notes"', detail_component)
         self.assertIn("JobHistoryCard", detail_about_component)
+        self.assertIn("VideoRemovalDialog", detail_about_component)
         self.assertIn("ScrollArea", detail_history_component)
+        self.assertIn("ResourceRemovalDialog", video_removal_dialog_component)
+        self.assertIn("VideoCardRemovalDialog", video_removal_dialog_component)
+        self.assertIn("VideoListRemovalDialog", video_removal_dialog_component)
+        self.assertIn('kind: "video"', video_removal_dialog_component)
+        self.assertIn("AlertDialogTrigger", removal_dialog_component)
+        self.assertIn("AlertDialogContent", removal_dialog_component)
+        self.assertIn("previewRemoval", removal_dialog_component)
+        self.assertIn("executeRemoval", removal_dialog_component)
+        self.assertIn("Spinner", removal_dialog_component)
+        self.assertNotIn("CopyButton", removal_dialog_component)
+        self.assertNotIn("Agent", removal_dialog_component)
+        self.assertIn("RemovalPreviewResponse", removal_contract)
+        self.assertIn("planDigest", removal_contract)
+        self.assertIn("Bun.spawn", removal_service)
+        self.assertIn('run("verify"', removal_service)
+        self.assertIn('"/api/removals/preview"', server_app)
+        self.assertIn('"/api/removals/execute"', server_app)
+        self.assertIn('HANDLERS: dict[str, RemovalHandler]', removal_script)
+        self.assertIn('"video": VideoRemovalHandler()', removal_script)
+        self.assertIn("expected_digest != actual_digest", removal_script)
+        self.assertIn("ON DELETE CASCADE", removal_protocol)
+        self.assertIn("No removal prompt or Agent handoff", removal_protocol)
+        self.assertIn("ResourceRemovalDialog", removal_protocol)
         self.assertIn("useJobCaptions", detail_subtitle_component)
         self.assertIn("useJobLog", detail_activity_component)
         self.assertNotIn("狀態歷程", detail_activity_component)
-        self.assertIn("Workflow log", detail_activity_component)
+        self.assertNotIn("CardHeader", detail_activity_component)
+        self.assertNotIn("最近 180 行", detail_activity_component)
+        self.assertIn("PromptActionCard", detail_activity_component)
 
         tabbed_dialogs = usage_component + settings_component + library_component + detail_component
         self.assertEqual(tabbed_dialogs.count('layout="tabbed"'), 4)

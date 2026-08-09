@@ -6,7 +6,9 @@ import path from "node:path"
 import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { JobRepository } from "@server/repositories/job-repository"
+import type { RemovalOperations } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
+import type { RemovalTarget } from "@shared/contracts/removal"
 
 const repositoryRoot = path.resolve(import.meta.dir, "../..")
 const migrations = path.join(
@@ -17,6 +19,31 @@ const migrations = path.join(
 let workspace = ""
 let sqlite: ReturnType<typeof openAppDatabase>["sqlite"]
 let app: ReturnType<typeof createApplication>
+let previewedTarget: RemovalTarget | null = null
+let executedRemoval: { target: RemovalTarget; planDigest: string } | null = null
+
+const removalDigest = "a".repeat(64)
+const removals: RemovalOperations = {
+  async preview(target) {
+    previewedTarget = target
+    return {
+      schemaVersion: 1,
+      target,
+      planDigest: removalDigest,
+      blocked: [],
+      warnings: [],
+    }
+  },
+  async execute(target, planDigest) {
+    executedRemoval = { target, planDigest }
+    return {
+      schemaVersion: 1,
+      target,
+      planDigest,
+      removed: true,
+    }
+  },
+}
 
 function seedJob() {
   const job = path.join(workspace, "jobs", "demo-video")
@@ -68,6 +95,8 @@ function seedJob() {
 }
 
 beforeEach(() => {
+  previewedTarget = null
+  executedRemoval = null
   workspace = mkdtempSync(path.join(tmpdir(), "insu-player-api-test-"))
   seedJob()
   const opened = openAppDatabase(path.join(workspace, "app.db"), migrations)
@@ -75,6 +104,7 @@ beforeEach(() => {
   const jobs = new JobRepository(workspace, opened.db)
   app = createApplication({
     jobs,
+    removals,
     resources: new ResourceService(workspace),
     libraryAppRoot: path.join(
       repositoryRoot,
@@ -200,6 +230,53 @@ describe("Hono application", () => {
     expect(await response.json()).toMatchObject({ time: 12.25, duration: 120 })
     const stored = sqlite.query("select time, duration from playback_states").get()
     expect(stored).toEqual({ time: 12.25, duration: 120 })
+  })
+
+  test("previews and executes a same-origin direct removal", async () => {
+    const target = { kind: "video", videoId: "demo-video" } as const
+    const forbidden = await app.request(
+      "http://127.0.0.1:4178/api/removals/preview",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target }),
+      },
+    )
+    expect(forbidden.status).toBe(403)
+
+    const preview = await app.request(
+      "http://127.0.0.1:4178/api/removals/preview",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://127.0.0.1:4178",
+        },
+        body: JSON.stringify({ target }),
+      },
+    )
+    expect(preview.status).toBe(200)
+    expect(await preview.json()).toMatchObject({
+      target,
+      planDigest: removalDigest,
+      blocked: [],
+    })
+    expect(previewedTarget).toEqual(target)
+
+    const execution = await app.request(
+      "http://127.0.0.1:4178/api/removals/execute",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://127.0.0.1:4178",
+        },
+        body: JSON.stringify({ target, planDigest: removalDigest }),
+      },
+    )
+    expect(execution.status).toBe(200)
+    expect(await execution.json()).toMatchObject({ target, removed: true })
+    expect(executedRemoval).toEqual({ target, planDigest: removalDigest })
   })
 
   test("rejects cross-origin environment mutation and path-shaped video IDs", async () => {

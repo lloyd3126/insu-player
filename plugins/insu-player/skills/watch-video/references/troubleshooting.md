@@ -33,9 +33,9 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 - `--cookies-from-browser` 會讀取登入工作階段，屬於敏感權限；只有使用者明確要求、理解風險且有權存取時才使用。
 - 不匯出 cookie 到 repository，不把 cookie 貼進聊天；完成後依需要登出或撤銷工作階段。
 
-## 找不到繁體中文字幕
+## 找不到目標語言字幕
 
-先確認使用者是否在字幕取得前選擇翻譯。翻譯模式不得檢查或下載任何平台字幕，必須由使用者明確選擇本機或 OpenAI 模型，再從原始音訊產生英文詞級時間。若 `transcript.json` 沒有 words，使用相同 provider 重新轉錄並檢查詞級時間；Whisper 的翻譯任務目標是英文，不會直接產生繁中。
+先確認使用者是否在字幕取得前選擇翻譯與目標 BCP 47 語言。翻譯模式不得檢查或下載任何平台字幕，必須由使用者明確選擇本機或 OpenAI 模型，再從原始音訊產生來源 timed units。若 `transcript.json` 沒有 words/tokens，使用相同 provider 重新轉錄並檢查 timing granularity；不要把 Whisper 的英語 translation task 當成任意目標語言翻譯。
 
 ## VTT 已下載但播放器顯示 0 cues
 
@@ -134,4 +134,4 @@ Hono/Bun 服務會先獨占探測 `8000`；若已被占用，就由作業系統�
 
 ## 翻譯檔匯入失敗
 
-翻譯模式使用 `reflow_subtitles.py validate-pair` 與 `import-bilingual-captions.sh`，不是單軌 `import-caption.sh`。英文與繁中必須有相同 cue ID、數量與時間，且每個 cue 只有一個完整句子與一行文字。逗號、句號、空文字、時間重疊、換行或 `XQZCUE` 等內部 marker 都會拒絕匯入。確認兩軌都正確後才加 `--force`。
+翻譯模式先使用 `segment_subtitles.py validate` 檢查 frozen target、width、source spans、anchors 與 risky/blocked boundaries，再用 `reflow_subtitles.py validate-pair` 和 `import-bilingual-captions.sh` 驗證成對軌；不要使用單軌 `import-caption.sh`。來源與目標語必須有相同 cue ID、數量與時間，空文字、時間重疊、換行或內部 marker 都會拒絕匯入。確認兩軌和語言碼都正確後才加 `--force`。
