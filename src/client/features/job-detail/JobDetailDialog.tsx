@@ -1,6 +1,4 @@
-import { useState } from "react"
-
-import { useOverlay } from "@/app/overlay-context"
+import { useOverlay, type JobDetailTab } from "@/app/overlay-context"
 import { AppDialog } from "@/components/shared/AppDialog"
 import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -11,15 +9,19 @@ import { JobSubtitlePanel } from "@/features/job-detail/JobSubtitlePanel"
 import { useJobDetail } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
 
-type JobDetailTab = "about" | "subtitle" | "segmentation" | "activity"
-
-function JobDetailTabs({ job }: { job: JobDetail }) {
-  const [tab, setTab] = useState<JobDetailTab>("about")
-
+function JobDetailTabs({
+  job,
+  tab,
+  onTabChange,
+}: {
+  job: JobDetail
+  tab: JobDetailTab
+  onTabChange: (tab: JobDetailTab) => void
+}) {
   return (
     <Tabs
       value={tab}
-      onValueChange={(value) => setTab(value as JobDetailTab)}
+      onValueChange={(value) => onTabChange(value as JobDetailTab)}
       className="app-dialog-tabs job-detail-tabs"
     >
       <TabsList variant="line" aria-label="詳情分頁">
@@ -62,7 +64,20 @@ export function JobDetailDialog() {
     >
       {detail.isPending ? <LoadingState label="正在讀取任務紀錄" /> : null}
       {detail.isError ? <ErrorState message={detail.error.message} /> : null}
-      {job ? <JobDetailTabs key={job.videoId} job={job} /> : null}
+      {job ? (
+        <JobDetailTabs
+          job={job}
+          tab={active?.tab ?? "about"}
+          onTabChange={(tab) =>
+            active &&
+            overlay.actions.open({
+              type: "detail",
+              videoId: active.videoId,
+              tab,
+            })
+          }
+        />
+      ) : null}
     </AppDialog>
   )
 }

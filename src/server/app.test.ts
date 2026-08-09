@@ -109,6 +109,19 @@ describe("Hono application", () => {
       (await app.request("http://127.0.0.1:4178/assets/library.js")).status,
     ).toBe(404)
 
+    for (const route of [
+      "/guide/my-prompts",
+      "/settings/cloud-models",
+      "/library/list",
+      "/jobs/demo-video/activity",
+      "/player/demo-video?caption=zh-TW",
+      "/policy",
+    ]) {
+      const fallback = await app.request(`http://127.0.0.1:4178${route}`)
+      expect(fallback.status).toBe(200)
+      expect(await fallback.text()).toContain('<div id="root"></div>')
+    }
+
     const health = await app.request("http://127.0.0.1:4178/api/health")
     expect(await health.json()).toEqual({
       ok: true,

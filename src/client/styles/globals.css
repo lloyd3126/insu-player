@@ -300,6 +300,47 @@
 .footer-middle button { height: auto; padding: 0; color: var(--quiet); font-size: inherit; }
 
 /* Shared dialog composition */
+.overlay-loading-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(4px);
+}
+
+.overlay-loading-dialog {
+  position: fixed;
+  z-index: 51;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  width: min(24rem, calc(100vw - 2rem));
+  min-height: 8rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.5rem;
+  background: rgb(17 18 19 / 98%);
+  box-shadow: 0 2rem 8rem rgb(0 0 0 / 72%);
+  color: var(--muted-foreground);
+  transform: translate(-50%, -50%);
+}
+
+.overlay-loading-indicator {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--claw);
+  box-shadow: 0 0 1rem color-mix(in srgb, var(--claw) 70%, transparent);
+  animation: overlay-loading-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes overlay-loading-pulse {
+  from { opacity: 0.35; transform: scale(0.75); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .app-dialog {
   display: flex;
   max-height: min(90dvh, 62rem);

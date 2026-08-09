@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 
 import { api } from "@/api/client"
 import { useOverlay } from "@/app/overlay-context"
+import { loadJobDetailDialog } from "@/app/overlay-loaders"
 import { AppDialog } from "@/components/shared/AppDialog"
 import {
   CaptionLanguageSelect,
@@ -108,6 +109,16 @@ export function PlayerDialog() {
   const selectCaption = (value: string | null) => {
     const normalized = value ?? "off"
     setCaption(normalized)
+    if (active) {
+      overlay.actions.open(
+        {
+          type: "player",
+          videoId: active.videoId,
+          caption: normalized === "off" ? undefined : normalized,
+        },
+        { replace: true },
+      )
+    }
     iframe.current?.contentWindow?.postMessage(
       { type: "player:set-caption", language: normalized },
       location.origin,
@@ -148,9 +159,18 @@ export function PlayerDialog() {
           />
           <Button
             variant="outline"
-            onClick={() =>
-              active && overlay.actions.open({ type: "detail", videoId: active.videoId })
-            }
+            onPointerEnter={() => void loadJobDetailDialog()}
+            onFocus={() => void loadJobDetailDialog()}
+            onPointerDown={() => void loadJobDetailDialog()}
+            onClick={async () => {
+              if (!active) return
+              await loadJobDetailDialog()
+              overlay.actions.open({
+                type: "detail",
+                videoId: active.videoId,
+                tab: "about",
+              })
+            }}
           >
             查看處理紀錄
           </Button>

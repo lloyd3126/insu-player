@@ -1,7 +1,11 @@
 import { RefreshCwIcon, SearchIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 
-import { useOverlay } from "@/app/overlay-context"
+import { useOverlay, type LibraryView } from "@/app/overlay-context"
+import {
+  loadJobDetailDialog,
+  loadPlayerDialog,
+} from "@/app/overlay-loaders"
 import { AppDialog } from "@/components/shared/AppDialog"
 import {
   EmptyState,
@@ -47,8 +51,6 @@ import { ACTIVE_STATES, ATTENTION_STATES } from "@shared/domain/job-status"
 import { formatBytes, formatDuration } from "@shared/domain/format"
 
 type Filter = "all" | "active" | "attention" | "watchable" | "ready"
-type LibraryView = "grid" | "list"
-
 const FILTERS = [
   { value: "all", label: "全部狀態" },
   { value: "active", label: "處理中" },
@@ -97,6 +99,18 @@ function JobRow({ job }: { job: JobSummary }) {
   const caption = job.captionCodes.includes(selectedCaption)
     ? selectedCaption
     : getPreferredCaption(job.captionCodes)
+  const openPlayer = async () => {
+    await loadPlayerDialog()
+    actions.open({
+      type: "player",
+      videoId: job.videoId,
+      caption: caption === NO_CAPTION ? undefined : caption,
+    })
+  }
+  const openDetails = async () => {
+    await loadJobDetailDialog()
+    actions.open({ type: "detail", videoId: job.videoId, tab: "about" })
+  }
   return (
     <TableRow>
       <TableCell data-label="影音">
@@ -131,20 +145,20 @@ function JobRow({ job }: { job: JobSummary }) {
           <Button
             className="job-action-button"
             disabled={!job.watchable}
-            onClick={() =>
-              actions.open({
-                type: "player",
-                videoId: job.videoId,
-                caption: caption === NO_CAPTION ? undefined : caption,
-              })
-            }
+            onPointerEnter={() => void loadPlayerDialog()}
+            onFocus={() => void loadPlayerDialog()}
+            onPointerDown={() => void loadPlayerDialog()}
+            onClick={openPlayer}
           >
             觀看
           </Button>
           <Button
             className="job-action-button"
             variant="ghost"
-            onClick={() => actions.open({ type: "detail", videoId: job.videoId })}
+            onPointerEnter={() => void loadJobDetailDialog()}
+            onFocus={() => void loadJobDetailDialog()}
+            onPointerDown={() => void loadJobDetailDialog()}
+            onClick={openDetails}
           >
             詳情
           </Button>
@@ -158,9 +172,13 @@ function JobGridCard({ job }: { job: JobSummary }) {
   const { actions } = useOverlay()
   const caption = getPreferredCaption(job.captionCodes)
   const duration = formatDuration(job.durationSeconds)
-  const openJob = () => {
+  const loadJobDialog = job.watchable
+    ? loadPlayerDialog
+    : loadJobDetailDialog
+  const openJob = async () => {
+    await loadJobDialog()
     if (!job.watchable) {
-      actions.open({ type: "detail", videoId: job.videoId })
+      actions.open({ type: "detail", videoId: job.videoId, tab: "about" })
       return
     }
     actions.open({
@@ -175,6 +193,9 @@ function JobGridCard({ job }: { job: JobSummary }) {
         variant="ghost"
         className="video-grid-card__action"
         aria-label={`${job.watchable ? "觀看" : "查看"} ${job.title}`}
+        onPointerEnter={() => void loadJobDialog()}
+        onFocus={() => void loadJobDialog()}
+        onPointerDown={() => void loadJobDialog()}
         onClick={openJob}
       >
         <div className="video-grid-card__thumbnail">
@@ -238,9 +259,9 @@ export function LibraryDialog() {
   const query = useJobsQuery()
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<Filter>("all")
-  const [view, setView] = useState<LibraryView | null>(null)
   const jobs = query.data?.jobs ?? []
-  const selectedView = view ?? (jobs.length > 0 ? "grid" : "list")
+  const active = overlay.state?.type === "library" ? overlay.state : null
+  const selectedView = active?.view ?? (jobs.length > 0 ? "grid" : "list")
   const searched = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase("zh-TW")
     return jobs.filter(
@@ -275,7 +296,7 @@ export function LibraryDialog() {
 
   return (
     <AppDialog
-      open={overlay.state?.type === "library"}
+      open={Boolean(active)}
       onOpenChange={(open) => (open ? undefined : overlay.actions.close("library"))}
       kicker="LOCAL LIBRARY · LIVE"
       title="影音中心"
@@ -286,7 +307,12 @@ export function LibraryDialog() {
       <Tabs
         className="app-dialog-tabs grouped-dialog-tabs library-view-tabs"
         value={selectedView}
-        onValueChange={(value) => setView(value as LibraryView)}
+        onValueChange={(value) =>
+          overlay.actions.open({
+            type: "library",
+            view: value as LibraryView,
+          })
+        }
       >
         <TabsList variant="line" aria-label="影音中心分頁">
           <TabsTrigger value="grid">我的影音</TabsTrigger>

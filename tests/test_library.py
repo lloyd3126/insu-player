@@ -323,6 +323,9 @@ class LibraryApplicationTests(unittest.TestCase):
                     self.assertEqual(response.status, 200)
                     markup = response.read().decode("utf-8")
                 self.assertIn('<div id="root"></div>', markup)
+                with urlopen(actual_url.rstrip("/") + "/jobs/demo-video/activity", timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertIn('<div id="root"></div>', response.read().decode("utf-8"))
                 asset_path = re.search(r'(?:src|href)="(/assets/[^"]+)"', markup)
                 self.assertIsNotNone(asset_path)
                 with urlopen(actual_url.rstrip("/") + asset_path.group(1), timeout=2) as response:

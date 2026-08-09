@@ -715,7 +715,21 @@ class LibraryRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         try:
-            if path in {"/", "/index.html"}:
+            library_route_prefixes = (
+                "/guide/",
+                "/settings/",
+                "/library/",
+                "/jobs/",
+                "/player/",
+            )
+            if path in {
+                "/",
+                "/index.html",
+                "/guide",
+                "/settings",
+                "/library",
+                "/policy",
+            } or path.startswith(library_route_prefixes):
                 self.send_file(self.application.library_template / "index.html", head_only=head_only, cache="no-store")
                 return
             if path.startswith("/assets/"):

@@ -3,6 +3,142 @@ import { expect, test } from "@playwright/test"
 import { HomePage } from "../pages/home.page"
 
 test.describe("library and details @critical", () => {
+  test("does not reveal the homepage while the player modal loads", async ({
+    page,
+  }) => {
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    let playerBundleRequested = false
+
+    await page.route(/\/assets\/PlayerDialog-[^/]+\.js$/, async (route) => {
+      playerBundleRequested = true
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      await route.continue()
+    })
+
+    const card = library.locator(".video-grid-card").filter({
+      hasText: "雙語測試影音",
+    })
+    await card.getByRole("button", { name: "觀看 雙語測試影音" }).click()
+
+    await expect.poll(() => playerBundleRequested).toBe(true)
+    await expect(library).toBeVisible()
+    await expect(page).toHaveURL(/\/library$/)
+    await expect(
+      page.getByRole("dialog", { name: "雙語測試影音" }),
+    ).toBeVisible()
+    await expect(page).toHaveURL(/\/player\/demo-video\?caption=zh-TW$/)
+  })
+
+  test("hands the library directly to the player without a transparent frame", async ({
+    page,
+  }) => {
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    const cardButton = library
+      .locator(".video-grid-card")
+      .filter({ hasText: "雙語測試影音" })
+      .getByRole("button", { name: "觀看 雙語測試影音" })
+
+    await cardButton.hover()
+    await expect(library).toHaveCSS("opacity", "1")
+    const frames = await cardButton.evaluate(async (button) => {
+      const results: Array<{
+        path: string
+        dialogOpacity: number | null
+        backdropOpacity: number | null
+      }> = []
+
+      const action = button as HTMLButtonElement
+      action.click()
+      await new Promise<void>((resolve) => {
+        let stablePlayerFrames = 0
+        let sampledFrames = 0
+        const sample = () => {
+          sampledFrames += 1
+          const dialog = document.querySelector<HTMLElement>("[role=dialog]")
+          const backdrop = document.querySelector<HTMLElement>(
+            '[data-slot="dialog-overlay"]',
+          )
+          const player = document.querySelector<HTMLElement>(".player-stage")
+          const dialogOpacity = dialog
+            ? Number(getComputedStyle(dialog).opacity)
+            : null
+          const backdropOpacity = backdrop
+            ? Number(getComputedStyle(backdrop).opacity)
+            : null
+          results.push({
+            path: location.pathname,
+            dialogOpacity,
+            backdropOpacity,
+          })
+
+          stablePlayerFrames =
+            player && dialogOpacity === 1 && backdropOpacity === 1
+              ? stablePlayerFrames + 1
+              : 0
+          if (stablePlayerFrames >= 2 || sampledFrames >= 240) {
+            resolve()
+            return
+          }
+          requestAnimationFrame(sample)
+        }
+        requestAnimationFrame(sample)
+      })
+      return results
+    })
+
+    const playerFrames = frames.filter((frame) =>
+      frame.path.startsWith("/player/"),
+    )
+    expect(playerFrames.length).toBeGreaterThan(0)
+    expect(
+      playerFrames.every(
+        (frame) =>
+          frame.dialogOpacity === 1 && frame.backdropOpacity === 1,
+      ),
+    ).toBe(true)
+    await expect(
+      page.getByRole("dialog", { name: "雙語測試影音" }),
+    ).toBeVisible()
+  })
+
+  test("keeps modal tabs open after a page reload", async ({ page }) => {
+    const home = new HomePage(page)
+    await home.goto()
+
+    const guide = await home.openNavigationDialog("使用說明", "使用說明")
+    await guide.getByRole("tab", { name: "我的提示" }).click()
+    await expect(page).toHaveURL(/\/guide\/my-prompts$/)
+    await page.reload()
+    await expect(
+      page.getByRole("dialog", { name: "使用說明" }).getByRole("tab", {
+        name: "我的提示",
+      }),
+    ).toHaveAttribute("aria-selected", "true")
+
+    await page.getByRole("dialog", { name: "使用說明" }).getByRole("button", {
+      name: "關閉",
+    }).click()
+    const library = await home.openLibrary()
+    await library.getByRole("tab", { name: "詳細資訊" }).click()
+    await expect(page).toHaveURL(/\/library\/list$/)
+    const row = library.getByRole("row").filter({ hasText: "雙語測試影音" })
+    await row.getByRole("button", { name: "詳情" }).click()
+    const detail = page.getByRole("dialog", { name: "雙語測試影音" })
+    await detail.getByRole("tab", { name: "處理紀錄" }).click()
+    await expect(page).toHaveURL(/\/jobs\/demo-video\/activity$/)
+
+    await page.reload()
+    await expect(
+      page.getByRole("dialog", { name: "雙語測試影音" }).getByRole("tab", {
+        name: "處理紀錄",
+      }),
+    ).toHaveAttribute("aria-selected", "true")
+  })
+
   test("defaults to a YouTube-style grid when media exists", async ({ page }) => {
     const home = new HomePage(page)
     await home.goto()

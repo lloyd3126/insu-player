@@ -89,7 +89,9 @@ export function App() {
           <Button
             className="nav-library"
             variant="outline"
-            onClick={() => overlay.actions.open({ type: "library" })}
+            onClick={() =>
+              overlay.actions.open({ type: "library", view: null })
+            }
           >
             <LibraryBigIcon data-icon="inline-start" />
             影音中心

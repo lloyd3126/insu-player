@@ -4,7 +4,7 @@
 
 INSU Player 是為 Codex Agent 設計的本機影音與字幕工作台。把你有權處理的單支影音網址交給 `$watch-video`，Agent 會開啟目前專案的首頁，再協調下載、轉錄、翻譯、字幕重排與播放。
 
-產品以一個固定的 React 首頁為中心，導覽只保留使用說明、功能設定與影音中心。播放器、詳情、字幕對照和處理進度都在同一頁內開啟，不會為每支影音另建一個首頁，也不保留舊版首頁或資產 fallback。
+產品以一個固定的 React 首頁為中心，導覽只保留使用說明、功能設定與影音中心。播放器、詳情、字幕對照和處理進度都在同一頁內開啟，不會為每支影音另建一個首頁，也不保留舊版首頁或資產 fallback。React Router 只負責把目前開啟的 modal、影音與 tab 寫進網址，因此重新整理後會回到同一畫面。
 
 ## 安裝 Codex plugin
 
@@ -105,7 +105,7 @@ Agent 處理一支影音時會：
 
 | 層級 | 技術 | 職責 |
 | --- | --- | --- |
-| 前端 | React、Vite、shadcn/ui、Lucide | 固定首頁、共用對話框、影音中心、字幕對照與同源播放器 |
+| 前端 | React、React Router、Vite、shadcn/ui、Lucide | 固定首頁、可重新整理的 modal/tab 路由、影音中心、字幕對照與同源播放器 |
 | API | Hono on Bun | localhost JSON API、媒體 Range request、WebVTT、播放進度與本次服務環境變數 |
 | 查詢投影 | Drizzle、Bun SQLite | 將工作流程資料投影到 workspace 的 `app.db`，供首頁快速查詢 |
 | 工作流程 | `status.json`、history、log | 作為中斷復原與 job 狀態的事實來源，不被 `app.db` 反向覆寫 |

@@ -1,37 +1,75 @@
 import { lazy, Suspense } from "react"
 
 import { useOverlay } from "@/app/overlay-context"
+import {
+  loadFeatureSettingsDialog,
+  loadJobDetailDialog,
+  loadLibraryDialog,
+  loadPlayerDialog,
+  loadUsageGuideDialog,
+  loadUsagePolicyDialog,
+} from "@/app/overlay-loaders"
 
 const UsageGuideDialog = lazy(() =>
-  import("@/features/home/UsageGuideDialog").then((module) => ({
+  loadUsageGuideDialog().then((module) => ({
     default: module.UsageGuideDialog,
   })),
 )
 const JobDetailDialog = lazy(() =>
-  import("@/features/job-detail/JobDetailDialog").then((module) => ({
+  loadJobDetailDialog().then((module) => ({
     default: module.JobDetailDialog,
   })),
 )
 const LibraryDialog = lazy(() =>
-  import("@/features/library/LibraryDialog").then((module) => ({
+  loadLibraryDialog().then((module) => ({
     default: module.LibraryDialog,
   })),
 )
 const PlayerDialog = lazy(() =>
-  import("@/features/player/PlayerDialog").then((module) => ({
+  loadPlayerDialog().then((module) => ({
     default: module.PlayerDialog,
   })),
 )
 const UsagePolicyDialog = lazy(() =>
-  import("@/features/policy/UsagePolicyDialog").then((module) => ({
+  loadUsagePolicyDialog().then((module) => ({
     default: module.UsagePolicyDialog,
   })),
 )
 const FeatureSettingsDialog = lazy(() =>
-  import("@/features/settings/FeatureSettingsDialog").then((module) => ({
+  loadFeatureSettingsDialog().then((module) => ({
     default: module.FeatureSettingsDialog,
   })),
 )
+
+const DIALOG_LABELS = {
+  "usage-guide": "使用說明",
+  "feature-settings": "功能設定",
+  library: "影音中心",
+  player: "影音播放器",
+  detail: "影音詳情",
+  policy: "使用規範",
+} as const
+
+function OverlayLoadingFallback() {
+  const { state } = useOverlay()
+  if (!state) return null
+  const label = DIALOG_LABELS[state.type]
+
+  return (
+    <>
+      <div className="overlay-loading-backdrop" aria-hidden="true" />
+      <section
+        className="overlay-loading-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`正在開啟${label}`}
+      >
+        <span className="overlay-loading-indicator" aria-hidden="true" />
+        <strong>正在開啟{label}</strong>
+      </section>
+    </>
+  )
+}
 
 export function OverlayCoordinator() {
   const { state } = useOverlay()
@@ -55,6 +93,8 @@ export function OverlayCoordinator() {
   })()
 
   return (
-    <Suspense fallback={null}>{activeDialog}</Suspense>
+    <Suspense fallback={<OverlayLoadingFallback />}>
+      {activeDialog}
+    </Suspense>
   )
 }

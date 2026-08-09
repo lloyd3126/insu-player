@@ -1,4 +1,7 @@
-import { createContext, use, useMemo, useState } from "react"
+import { createContext, use, useMemo } from "react"
+import { useLocation, useNavigate } from "react-router-dom"
+
+import { overlayFromLocation, pathForOverlay } from "@/app/overlay-routes"
 
 export type UsageGuideTab =
   | "getting-started"
@@ -8,13 +11,19 @@ export type FeatureSettingsTab =
   | "environment"
   | "local-models"
   | "cloud-models"
+export type LibraryView = "grid" | "list"
+export type JobDetailTab =
+  | "about"
+  | "subtitle"
+  | "segmentation"
+  | "activity"
 
 export type OverlayState =
   | { type: "usage-guide"; tab: UsageGuideTab }
   | { type: "feature-settings"; tab: FeatureSettingsTab }
-  | { type: "library" }
+  | { type: "library"; view: LibraryView | null }
   | { type: "player"; videoId: string; caption?: string }
-  | { type: "detail"; videoId: string }
+  | { type: "detail"; videoId: string; tab: JobDetailTab }
   | { type: "policy"; required: boolean }
   | null
 
@@ -23,7 +32,10 @@ type OverlayType = NonNullable<OverlayState>["type"]
 interface OverlayContextValue {
   state: OverlayState
   actions: {
-    open: (overlay: Exclude<OverlayState, null>) => void
+    open: (
+      overlay: Exclude<OverlayState, null>,
+      options?: { replace?: boolean },
+    ) => void
     close: (expectedType?: OverlayType) => void
   }
   meta: {
@@ -34,20 +46,26 @@ interface OverlayContextValue {
 const OverlayContext = createContext<OverlayContextValue | null>(null)
 
 export function OverlayProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<OverlayState>(null)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const state = useMemo(
+    () => overlayFromLocation(location.pathname, location.search),
+    [location.pathname, location.search],
+  )
   const value = useMemo<OverlayContextValue>(
     () => ({
       state,
       actions: {
-        open: setState,
-        close: (expectedType) =>
-          setState((current) =>
-            expectedType && current?.type !== expectedType ? current : null,
-          ),
+        open: (overlay, options) =>
+          navigate(pathForOverlay(overlay), { replace: options?.replace }),
+        close: (expectedType) => {
+          if (expectedType && state?.type !== expectedType) return
+          navigate("/")
+        },
       },
       meta: { isOpen: state !== null },
     }),
-    [state],
+    [navigate, state],
   )
   return <OverlayContext value={value}>{children}</OverlayContext>
 }

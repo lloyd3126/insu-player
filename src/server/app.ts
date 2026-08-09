@@ -99,8 +99,24 @@ export function createApplication(options: ApplicationOptions) {
     )
   })
 
-  app.on(["GET", "HEAD"], ["/", "/index.html"], (context) =>
-    serveFile(context.req.raw, path.join(options.libraryAppRoot, "index.html")),
+  app.on(
+    ["GET", "HEAD"],
+    [
+      "/",
+      "/index.html",
+      "/guide",
+      "/guide/*",
+      "/settings",
+      "/settings/*",
+      "/library",
+      "/library/*",
+      "/jobs/:videoId",
+      "/jobs/:videoId/*",
+      "/player/:videoId",
+      "/policy",
+    ],
+    (context) =>
+      serveFile(context.req.raw, path.join(options.libraryAppRoot, "index.html")),
   )
 
   app.on(["GET", "HEAD"], "/assets/*", (context) => {
