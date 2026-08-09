@@ -13,9 +13,13 @@ codex plugin marketplace add https://github.com/lloyd3126/insu-player.git
 codex plugin add insu-player@insu-player
 ```
 
-安裝後重新開啟 Codex task，在要建立影音庫的專案中輸入：
+安裝後重新開啟 Codex task，在要建立影音庫的專案中開啟 INSU Player plugin，選擇「試用」。
 
-> 使用 $watch-video。先啟動目前專案的 INSU Player 首頁並用 Codex 內建瀏覽器開啟，在取得字幕前先問我是否需要翻譯及目標語言；最後把這支影音加入影音庫：VIDEO_URL
+如果找不到「試用」，請直接輸入：
+
+```text
+用 $watch-video 初始化 INSU Player：安裝所有依賴及 OpenAI SDK、設定 SQLite、完成所有設定並下載 Whisper medium；完成後用 Codex 內建瀏覽器開啟首頁並引導我加入影音及設定字幕翻譯。
+```
 
 每個專案都有自己的 `.local/insu-player/` workspace。Plugin 不會因為同一台電腦上有其他 INSU Player 服務，就改用別的專案資料。
 

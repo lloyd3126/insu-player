@@ -38,7 +38,17 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertEqual(manifest["interface"]["brandColor"], "#8B7CF6")
         self.assertTrue((PLUGIN_ROOT / manifest["interface"]["logo"]).is_file())
         self.assertIn("用 Agent", manifest["interface"]["shortDescription"])
-        self.assertIn("$watch-video", manifest["interface"]["defaultPrompt"])
+        prompts = manifest["interface"]["defaultPrompt"]
+        self.assertIsInstance(prompts, list)
+        self.assertEqual(len(prompts), 1)
+        self.assertLessEqual(len(prompts[0]), 128)
+        self.assertIn("$watch-video", prompts[0])
+        self.assertIn("OpenAI SDK", prompts[0])
+        self.assertIn("SQLite", prompts[0])
+        self.assertIn("Whisper medium", prompts[0])
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("選擇「試用」", readme)
+        self.assertIn(f"```text\n{prompts[0]}\n```", readme)
 
     def test_product_docs_use_the_insu_repository_and_brand(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -89,7 +99,8 @@ class ProductBoundaryTests(unittest.TestCase):
         )
         self.assertIn("## 階段 1：先開啟目前 Workspace 的首頁", workflow)
         self.assertLess(workflow.index("## 階段 1："), workflow.index("## 階段 3：從零盤點環境"))
-        self.assertIn("Codex 內建瀏覽器", manifest["interface"]["defaultPrompt"])
+        self.assertIn("Codex 內建瀏覽器", manifest["interface"]["defaultPrompt"][0])
+        self.assertIn("引導我加入影音", manifest["interface"]["defaultPrompt"][0])
         self.assertIn("First open this project's INSU Player homepage", plugin_agent)
         self.assertEqual(plugin_agent, bridge_agent)
         self.assertIn("First open this project's INSU Player homepage", library_agent)
