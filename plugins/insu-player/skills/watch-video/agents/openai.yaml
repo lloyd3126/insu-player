@@ -1,4 +1,4 @@
 interface:
   display_name: "INSU Player"
   short_description: "下載、轉錄、翻譯並切分影音字幕，管理本機 INSU Player 播放庫"
-  default_prompt: "Use $watch-video. First open this project’s INSU Player homepage, then ask separately for subtitle mode, BCP 47 languages, timing processor, content processor, and segmentation processor before adding the authorized video."
+  default_prompt: "Use $watch-video. Open this project's INSU Player homepage first. Ask only plain-language outcome and consent questions, detect the source language, recommend safe processing internally, and finish validated subtitle segmentation."

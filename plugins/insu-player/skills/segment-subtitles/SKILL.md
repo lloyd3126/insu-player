@@ -20,6 +20,8 @@ Consume a completed schema-version 4 content manifest from `$proofread-subtitles
 
 BCP 47 metadata and verified model capability are authoritative. Do not infer universal model coverage from schema acceptance.
 
+This skill never asks the user to supply a language code, processor, model, Source Alignment choice, width profile, or command parameter. Consume the canonical source and output tags already recorded by the current content artifact. If they are missing or ambiguous, return to the owning content workflow instead of guessing or reading an older schema.
+
 ## Require the Correct Inputs
 
 Require all of the following:
@@ -32,7 +34,7 @@ Require all of the following:
 
 Manual CC may be inherited as text-reference provenance through the content artifact. Never use platform cue timing for precise alignment, and never accept platform automatic captions.
 
-Choose and record a segmentation processor independently from the content processor. Segmentation may use a local model, an explicitly authorized OpenAI model, or the current Agent; source timing remains restricted to local or OpenAI audio transcription.
+Choose and record a segmentation processor independently from the content processor after inspecting available capabilities. Default to the current Agent. A local model or explicitly authorized OpenAI model may be used when it better matches the user's already stated privacy or quality request. Source timing remains restricted to local or OpenAI audio transcription. Do not ask the user to make this internal selection.
 
 ## Prepare Output-First Pieces
 
@@ -104,4 +106,4 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
 
 Only a ready, validated segmentation revision with no hard defects can outrank its content parent for playback. A failed, invalid, or processing revision must never replace a valid proofread or translation fallback.
 
-Preserve the model transcript, content manifest, content artifact, and every frozen segmentation revision. The import processor must exactly match `segmentationProcessor` in the plan. Report languages, content mode, timing/content/segmentation processors, timing and content parent IDs, artifact ID/revision, piece count, width profile, warnings, hard defects, alignment coverage, rendered paths, and active playback result.
+Preserve the model transcript, content manifest, content artifact, and every frozen segmentation revision. The import processor must exactly match `segmentationProcessor` in the plan. Lead with the plain-language result and where the user can view the segmented subtitles. Then report languages, content mode, timing/content/segmentation processors, timing and content parent IDs, artifact ID/revision, piece count, width profile, warnings, hard defects, alignment coverage, rendered paths, and active playback result.

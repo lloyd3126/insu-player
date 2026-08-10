@@ -19,9 +19,11 @@ class SubtitleSegmentationTests(unittest.TestCase):
         self.transcript.write_text(
             json.dumps(
                 {
+                    "schemaVersion": 2,
                     "provider": "local",
                     "model": "medium",
                     "language": "en",
+                    "engineLanguage": "en",
                     "words": [
                         {"id": 0, "word": "This", "start": 0.0, "end": 0.5},
                         {"id": 1, "word": "is", "start": 0.5, "end": 0.9},

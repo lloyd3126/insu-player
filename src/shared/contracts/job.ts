@@ -60,8 +60,11 @@ export interface SubtitlePipeline {
 }
 
 export interface TranscriptionSummary {
-  provider: string
+  provider: "local" | "openai"
   model: string
+  languageTag: string
+  engineLanguage: string | null
+  updatedAt: string
 }
 
 export interface JobHistoryEntry {

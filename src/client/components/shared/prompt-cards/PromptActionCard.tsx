@@ -1,7 +1,10 @@
+import type { ReactNode } from "react"
+
 import { CopyButton } from "@/components/shared/CopyButton"
 import {
   Card,
   CardAction,
+  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -12,6 +15,9 @@ interface PromptActionCardProps {
   title: string
   description: string
   prompt: string
+  copyLabel?: string
+  copyDisabled?: boolean
+  children?: ReactNode
 }
 
 function PromptActionCardLayout({
@@ -19,6 +25,9 @@ function PromptActionCardLayout({
   title,
   description,
   prompt,
+  copyLabel,
+  copyDisabled,
+  children,
   className,
 }: PromptActionCardProps & { className: string }) {
   return (
@@ -30,9 +39,14 @@ function PromptActionCardLayout({
         </CardTitle>
         <CardDescription>{description}</CardDescription>
         <CardAction>
-          <CopyButton value={prompt} />
+          <CopyButton
+            value={prompt}
+            label={copyLabel}
+            disabled={copyDisabled}
+          />
         </CardAction>
       </CardHeader>
+      {children ? <CardContent>{children}</CardContent> : null}
     </Card>
   )
 }

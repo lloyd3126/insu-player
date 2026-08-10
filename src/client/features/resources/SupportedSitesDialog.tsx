@@ -15,14 +15,7 @@ import {
   useObservedWidth,
   useVirtualRows,
 } from "@/hooks/use-virtual-rows"
-
-const CHECK_SOURCE_SUPPORT_PROMPT = `請檢查 INSU Player 是否支援以下平台或單支影音網址：
-PLATFORM_OR_VIDEO_URL
-
-請先確認目前 workspace 內的 yt-dlp 是否已有對應解析器。
-如果沒有，請更新目前 INSU Player workspace 內的 yt-dlp 到最新可用版本。只能使用這個 workspace 內的 runtime，不要使用 sudo、Homebrew、apt、全域 pip 或全域 npm。更新後請回報 yt-dlp 版本，重新讀取支援網站清單，並再次檢查。
-如果更新後仍不支援，請使用 INSU PLAYER 研究這個平台是否能支援，檢查 yt-dlp、公開介面與媒體格式，找出安全可行且不繞過 DRM、付費牆、私人存取或帳號控制的方式。
-全程保留既有影音、字幕與任務資料，最後請回報是否支援及建議的下一步。`
+import { CHECK_SOURCE_SUPPORT_PROMPT } from "@shared/prompts/insu-prompts"
 const estimateSourceRow = () => 39
 
 export function SupportedSitesContent() {

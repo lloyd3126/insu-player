@@ -14,7 +14,6 @@ import {
   ErrorState,
   LoadingState,
 } from "@/components/shared/AsyncState"
-import { PromptActionCard } from "@/components/shared/prompt-cards/PromptActionCard"
 import {
   Select,
   SelectContent,
@@ -26,6 +25,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SubtitleRevisionPreviewDialog } from "@/features/job-detail/SubtitleRevisionPreviewDialog"
 import { SubtitleRevisionTable } from "@/features/job-detail/SubtitleRevisionTable"
+import { JobNextActionCard } from "@/features/job-detail/JobNextActionCard"
 import {
   SUBTITLE_KIND_COPY,
   SUBTITLE_VIEWS,
@@ -36,10 +36,6 @@ import type {
   SubtitleArtifactKind,
   SubtitleCatalogResponse,
 } from "@shared/contracts/subtitle-catalog"
-
-function subtitleAgentPrompt(videoId: string) {
-  return `請管理 INSU Player 中影音 ${videoId} 的字幕。先唯讀檢查目前的字幕產物與狀態，並詢問我要「校正原語字幕」或「翻譯字幕」。若選擇翻譯，再詢問目標 BCP 47 語言碼。來源語言細粒度時間軸只能從原始音訊以本機模型或 OpenAI API 模型建立。內容校正或翻譯，以及後續字幕切分，則各自詢問要由本機模型、OpenAI API 模型或目前的 Agent 處理。人工建立的 CC 字幕可以作為文字參考並立即播放，平台自動字幕一律不要下載、匯入或作為參考。校正路徑使用 $proofread-subtitles，翻譯路徑使用 $translate-subtitles，兩條路徑完成完整句內容後都必須再使用獨立的 $segment-subtitles，採 target-first 切分並對齊連續的 source timing，驗證通過後匯入 INSU Player。開始任何會上傳資料到 API 的操作前先取得我的明確同意。不要替我刪除字幕，也不要替我切換目前播放的字幕版本，這兩項由我在字幕管理介面操作。`
-}
 
 interface SubtitleManagementState {
   catalog: SubtitleCatalogResponse
@@ -275,12 +271,7 @@ function SubtitleManagementContent() {
   const { meta } = useSubtitleManagement()
   return (
     <div className="subtitle-management-layout">
-      <PromptActionCard
-        kicker="AGENT WORKFLOW"
-        title="製作與更新字幕"
-        description="複製提示，讓 Agent 檢查現有產物、確認處理路徑並使用對應的字幕 skills。"
-        prompt={subtitleAgentPrompt(meta.job.videoId)}
-      />
+      <JobNextActionCard job={meta.job} />
       <SubtitlePlaybackSelector />
       <SubtitleManagementTabs />
     </div>

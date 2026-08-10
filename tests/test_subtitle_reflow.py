@@ -19,9 +19,11 @@ class SubtitleRevisionTests(unittest.TestCase):
         self.transcript.write_text(
             json.dumps(
                 {
+                    "schemaVersion": 2,
                     "provider": "local",
                     "model": "medium",
                     "language": "en",
+                    "engineLanguage": "en",
                     "words": [
                         {"id": 0, "word": "Hello", "start": 0.0, "end": 0.5},
                         {"id": 1, "word": "world.", "start": 0.5, "end": 1.0},

@@ -2,7 +2,7 @@
 
 ## Language and timing
 
-Require identical valid BCP 47 source and output language codes. Preserve script and region subtags when they affect spelling or wording. Use `word`, `token`, or `grapheme-group` model timing; never claim word-accurate alignment from platform cue timing.
+Consume the detected source language from the model transcript and resolve it to identical valid BCP 47 source and output tags. Do not ask the user to guess the language or supply codes. Clarify with an ordinary language name only when detection is unreliable, speech is multilingual, or script and region materially affect spelling or wording. Preserve script and region subtags when they matter. Use `word`, `token`, or `grapheme-group` model timing. Never claim word-accurate alignment from platform cue timing.
 
 ## Allowed corrections
 

@@ -2,7 +2,7 @@
 
 這是一個不需要建置工具或外部 CDN 的靜態播放器。它使用瀏覽器原生 `<video controls>` 播放本機 MP4，以 JavaScript 讀取外部 VTT，並依影片時間切換字幕。
 
-模板有兩種用途：影片庫透過 `/watch/<video-id>/?embed=1` 動態注入設定並放在 iframe modal；`prepare-player.sh` 則可選擇性匯出一支獨立播放器。嵌入模式會用同源 `postMessage` 回報 ready、播放時間與狀態，並接受 pause、seek 與字幕切換命令。
+模板有兩種用途：影片庫透過 `/watch/<video-id>/?embed=1` 動態注入設定並放在 iframe modal。`prepare-player.sh` 則可選擇性匯出一支獨立播放器。嵌入模式會用同源 `postMessage` 回報 ready、播放時間與狀態，並接受 pause、seek 與字幕切換命令。
 
 ## 完成資料夾
 
@@ -16,7 +16,7 @@ player/
 └── media-info.txt                  # prepare-player.sh 產生的檢查資訊
 ```
 
-固定檔名是預設值，不是硬限制；可以在 `config.js` 修改影片和字幕來源。
+固定檔名是預設值，不是硬限制。可以在 `config.js` 修改影片和字幕來源。
 
 ## 從完全沒有工具開始
 
@@ -65,7 +65,7 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory <player-directory>
 
 影片庫的日常入口是 `serve-library.sh`，不需要替每支影片建立 `player/`。再次使用只要重新啟動同一個 server，首頁會掃描 `jobs/<video-id>/`。
 
-只有需要攜出單支影片時，才用 `prepare-player.sh` 建立固定命名的 export；它會先驗證 VTT 和媒體，再複製模板與素材。
+只有需要攜出單支影片時，才用 `prepare-player.sh` 建立固定命名的 export。它會先驗證 VTT 和媒體，再複製模板與素材。
 
 ## 更新模板
 

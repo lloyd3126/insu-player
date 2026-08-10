@@ -435,7 +435,74 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schemaVersion 4", result.stdout)
+        self.assertIn("schemaVersion 5", result.stdout)
+
+    def test_job_state_requires_current_transcription_language_metadata(self) -> None:
+        job_dir = self.workspace / "jobs" / "test-video"
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "init",
+                "--job-dir",
+                str(job_dir),
+                "--video-id",
+                "test-video",
+                "--source-url",
+                "https://example.test/video",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "transcription",
+                "--job-dir",
+                str(job_dir),
+                "--provider",
+                "local",
+                "--model",
+                "medium",
+                "--language-tag",
+                "en-US",
+                "--engine-language",
+                "en",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(status["schemaVersion"], 5)
+        self.assertEqual(
+            status["transcription"],
+            {
+                "provider": "local",
+                "model": "medium",
+                "languageTag": "en-US",
+                "engineLanguage": "en",
+                "updatedAt": status["transcription"]["updatedAt"],
+            },
+        )
+
+        status["transcription"] = {"provider": "local", "model": "medium"}
+        (job_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "show",
+                "--job-dir",
+                str(job_dir),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid language code", result.stdout)
 
     def test_job_state_rejects_flat_subtitle_artifact_processor_fields(self) -> None:
         job_dir = self.workspace / "jobs" / "test-video"
@@ -443,7 +510,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         (job_dir / "status.json").write_text(
             json.dumps(
                 {
-                    "schemaVersion": 4,
+                    "schemaVersion": 5,
                     "videoId": "test-video",
                     "state": "queued",
                     "stage": "queued",
@@ -452,6 +519,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                         {"id": "legacy-source", "provider": "local", "model": "medium"}
                     ],
                     "activeSubtitleTracks": {},
+                    "history": [],
                 }
             ),
             encoding="utf-8",

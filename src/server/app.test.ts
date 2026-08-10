@@ -191,7 +191,7 @@ function seedJob() {
   writeFileSync(
     path.join(job, "status.json"),
     `${JSON.stringify({
-      schemaVersion: 4,
+      schemaVersion: 5,
       videoId: "demo-video",
       title: "雙語測試影音",
       sourceUrl: "https://example.test/video",

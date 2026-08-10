@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test"
 
 import { HomePage } from "../pages/home.page"
+import {
+  BUILT_IN_PROMPTS,
+  CHECK_SOURCE_SUPPORT_PROMPT,
+  ENVIRONMENT_PROMPT,
+  buildAddVideoPrompt,
+} from "../../../src/shared/prompts/insu-prompts"
 
 test.describe("INSU Player home @smoke", () => {
   test("keeps the homepage focused on three primary destinations", async ({ page }) => {
@@ -45,6 +51,10 @@ test.describe("INSU Player home @smoke", () => {
   })
 
   test("groups all guidance into three reusable tabs", async ({ page }) => {
+    await page.context().grantPermissions([
+      "clipboard-read",
+      "clipboard-write",
+    ])
     await page.route("**/api/prompts", (route) =>
       route.fulfill({
         status: 200,
@@ -87,10 +97,10 @@ test.describe("INSU Player home @smoke", () => {
     const guide = await home.openNavigationDialog("使用說明", "使用說明")
     await expect(guide.getByRole("tab")).toHaveCount(3)
     await expect(guide.getByRole("tab", { name: "使用情境" })).toHaveCount(0)
-    await expect(guide.getByText("把網址貼到對話")).toBeVisible()
+    await expect(guide.getByText("加入一支影音", { exact: true })).toBeVisible()
     await expect(
       guide.getByText(
-        "複製並把 YouTube 網址貼回提示並告訴 Agent，Agent 準備完成後，影音就會出現在 INSU Player。",
+        "貼上影音網址並複製提示，接下來只需要用一般語言回答想要哪種字幕。",
       ),
     ).toBeVisible()
     const firstContentTop = async (tabName: string) => {
@@ -107,9 +117,31 @@ test.describe("INSU Player home @smoke", () => {
 
     const usageCallout = guide.locator(".usage-layout > .prompt-action-card")
     await expect(usageCallout).toBeVisible()
+    const videoUrl = "https://www.youtube.com/watch?v=demo-video"
+    const videoUrlInput = usageCallout.getByLabel("影音網址")
+    const addVideoCopy = usageCallout.locator(
+      '[data-slot="card-action"] [data-slot="button"]',
+    )
+    await expect(addVideoCopy).toHaveAccessibleName("複製加入提示")
+    await expect(addVideoCopy).toBeDisabled()
+    await videoUrlInput.fill("not-a-url")
+    await expect(usageCallout.getByRole("alert")).toContainText(
+      "完整的 http 或 https",
+    )
+    await videoUrlInput.fill(videoUrl)
+    await expect(usageCallout.getByRole("alert")).toHaveCount(0)
+    await expect(addVideoCopy).toBeEnabled()
+    await addVideoCopy.click()
+    await expect(addVideoCopy).toHaveText("已複製")
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(buildAddVideoPrompt(videoUrl))
+    await expect(usageCallout).not.toContainText("VIDEO_ID")
+    await expect(usageCallout).not.toContainText("VIDEO_URL")
+    await expect(guide.locator(".tutorial-step-list > li")).toHaveCount(4)
     const usageCopy = await usageCallout.boundingBox()
     const usageAction = await usageCallout
-      .getByRole("button", { name: "複製提示" })
+      .getByRole("button", { name: /已複製|複製加入提示/ })
       .boundingBox()
     const tutorialCard = await guide.locator(".tutorial-card").boundingBox()
     expect(usageCopy).not.toBeNull()
@@ -192,7 +224,7 @@ test.describe("INSU Player home @smoke", () => {
       element.scrollTop = 0
     })
     await expect(
-      guide.getByRole("heading", { name: "準備影音與翻譯字幕" }),
+      guide.getByRole("heading", { name: BUILT_IN_PROMPTS[0].title }),
     ).toBeVisible()
     await expect(guide.getByText("READY TO COPY")).toHaveCount(0)
     await expect(guide.getByText("BUILT-IN PLAYBOOK")).toHaveCount(0)
@@ -201,7 +233,7 @@ test.describe("INSU Player home @smoke", () => {
       ":scope > .prompt-action-card-list",
     )
     const promptCards = promptCardList.locator(".prompt-action-card--compact")
-    await expect(promptCards).toHaveCount(4)
+    await expect(promptCards).toHaveCount(BUILT_IN_PROMPTS.length)
     const [calloutBox, promptListBox] = await Promise.all([
       myPromptsCallout.boundingBox(),
       promptCardList.boundingBox(),
@@ -243,10 +275,6 @@ test.describe("INSU Player home @smoke", () => {
     )
     expect(reusableAction!.y).toBeLessThan(
       reusableBox!.y + reusableBox!.height / 3,
-    )
-    await page.context().grantPermissions(
-      ["clipboard-read", "clipboard-write"],
-      { origin: new URL(page.url()).origin },
     )
     await createPrompt.click()
     await expect(createPrompt).toHaveText("已複製")
@@ -343,10 +371,10 @@ test.describe("INSU Player home @smoke", () => {
     await sourceSupportCard.getByRole("button", { name: "複製提示" }).click()
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain("請更新目前 INSU Player workspace 內的 yt-dlp")
+      .toContain(CHECK_SOURCE_SUPPORT_PROMPT.split("\n")[0])
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain("請使用 INSU PLAYER 研究這個平台是否能支援")
+      .toContain("若更新後仍不支援，再研究 yt-dlp")
     expect(
       Math.max(...tabStartTops) - Math.min(...tabStartTops),
       `tab starts: ${tabStartTops.join(", ")}`,
@@ -462,7 +490,7 @@ test.describe("INSU Player home @smoke", () => {
     ).toBeVisible()
     await expect(
       environmentPrompt.getByText(
-        "複製提示，請 Agent 在不要讀取 Key 原值的前提下，檢查目前缺少的 API Key 並引導你在此處設定。",
+        ENVIRONMENT_PROMPT.description,
         { exact: true },
       ),
     ).toBeVisible()

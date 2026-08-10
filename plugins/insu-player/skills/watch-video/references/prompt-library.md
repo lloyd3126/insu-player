@@ -6,7 +6,7 @@
 <workspace>/prompts.json
 ```
 
-瀏覽器只透過 `GET /api/prompts` 讀取與複製，不提供新增、修改或刪除端點。使用者把 modal 下方的管理指令貼給 Agent 後，Agent 使用 `prompt_library.py` 更新資料；不可直接以不完整 JSON 覆寫檔案。
+瀏覽器只透過 `GET /api/prompts` 讀取與複製，不提供新增、修改或刪除端點。使用者把 modal 下方的管理提示貼給 Agent 後，Agent 使用 `prompt_library.py` 更新資料。不可直接以不完整 JSON 覆寫檔案。
 
 ## 列出提示
 
@@ -25,7 +25,7 @@ python3 plugins/insu-player/skills/watch-video/scripts/prompt_library.py \
   --id bilingual-review \
   --title '雙語複習' \
   --scenario '保留原文與繁中字幕，方便反覆切換。' \
-  --prompt '請把這支影片加入 INSU Player，並保留原文與繁體中文字幕：VIDEO_URL'
+  --prompt '使用 $watch-video 協助我加入一支影音。先開啟首頁，再請我貼上單支影音網址。只用白話確認我想要的字幕結果，其餘技術選項由你檢查後提出建議。'
 ```
 
 ## 修改提示
@@ -35,7 +35,7 @@ python3 plugins/insu-player/skills/watch-video/scripts/prompt_library.py \
 ```bash
 python3 plugins/insu-player/skills/watch-video/scripts/prompt_library.py \
   update <workspace> bilingual-review \
-  --prompt '請把這支影片加入 INSU Player，保留原文字幕並準備繁中字幕：VIDEO_URL'
+  --prompt '使用 $watch-video 協助我加入一支影音。先開啟首頁，再請我貼上單支影音網址。來源語言由音訊偵測，翻譯時只問我想要哪種語言。'
 ```
 
 ## 移除提示

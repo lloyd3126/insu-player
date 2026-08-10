@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
@@ -75,6 +75,7 @@ SUBTITLE_TRACK_ROLES = {
 PROCESSOR_PROVIDERS = {"local", "openai", "agent"}
 ARTIFACT_PROCESSOR_PROVIDERS = PROCESSOR_PROVIDERS | {"yt-dlp"}
 PROCESSOR_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+JOB_STAGE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 def utc_now() -> str:
@@ -218,13 +219,40 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
         raise ValueError(f"job state videoId must match its directory: {path}")
     if data.get("state") not in STATES:
         raise ValueError(f"job state has an unsupported state: {path}")
-    if not isinstance(data.get("stage"), str) or not data["stage"].strip():
-        raise ValueError(f"job state must contain a non-empty stage: {path}")
+    if not isinstance(data.get("stage"), str) or not JOB_STAGE_PATTERN.fullmatch(data["stage"]):
+        raise ValueError(f"job state must contain a semantic stage token: {path}")
     progress = data.get("progress")
     if isinstance(progress, bool) or not isinstance(progress, (int, float)):
         raise ValueError(f"job state progress must be numeric: {path}")
     if not math.isfinite(float(progress)) or not 0 <= float(progress) <= 100:
         raise ValueError(f"job state progress must be between 0 and 100: {path}")
+    transcription = data.get("transcription")
+    if transcription is not None:
+        if not isinstance(transcription, dict):
+            raise ValueError(f"job state transcription must be an object: {path}")
+        unknown = set(transcription) - {
+            "provider",
+            "model",
+            "languageTag",
+            "engineLanguage",
+            "updatedAt",
+        }
+        if unknown:
+            raise ValueError(f"job state transcription contains unsupported fields: {path}")
+        if transcription.get("provider") not in {"local", "openai"}:
+            raise ValueError(f"job state transcription provider is unsupported: {path}")
+        model = transcription.get("model")
+        if not isinstance(model, str) or not PROCESSOR_NAME_PATTERN.fullmatch(model):
+            raise ValueError(f"job state transcription model is invalid: {path}")
+        language_tag = validate_language(str(transcription.get("languageTag", "")))
+        engine_language = transcription.get("engineLanguage")
+        if language_tag == "und":
+            if engine_language is not None:
+                raise ValueError(f"und transcription cannot have engineLanguage: {path}")
+        elif not isinstance(engine_language, str) or not re.fullmatch(r"[a-z]{2,3}", engine_language):
+            raise ValueError(f"job state transcription engineLanguage is invalid: {path}")
+        if not isinstance(transcription.get("updatedAt"), str):
+            raise ValueError(f"job state transcription updatedAt is missing: {path}")
     pipeline = data.get("subtitlePipeline")
     if pipeline is not None:
         if not isinstance(pipeline, dict):
@@ -269,7 +297,12 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
     if not isinstance(history, list):
         raise ValueError(f"job state must contain history: {path}")
     for entry in history:
-        if not isinstance(entry, dict) or entry.get("state") not in STATES:
+        if (
+            not isinstance(entry, dict)
+            or entry.get("state") not in STATES
+            or not isinstance(entry.get("stage"), str)
+            or not JOB_STAGE_PATTERN.fullmatch(entry["stage"])
+        ):
             raise ValueError(f"job state contains an invalid history entry: {path}")
     return data
 
@@ -361,6 +394,10 @@ def patch_status(
         new_state = str(patch["state"])
         if new_state not in STATES:
             raise ValueError(f"unsupported state: {new_state}")
+    if "stage" in patch:
+        new_stage = str(patch["stage"])
+        if not JOB_STAGE_PATTERN.fullmatch(new_stage):
+            raise ValueError(f"unsupported stage token: {new_stage}")
     if "progress" in patch and patch["progress"] is not None:
         patch["progress"] = max(0.0, min(100.0, float(patch["progress"])))
 
@@ -728,17 +765,37 @@ def set_subtitle_artifact(
     return save_status(job_dir, status)
 
 
-def set_transcription(job_dir: Path, provider: str, model: str) -> dict[str, Any]:
+def set_transcription(
+    job_dir: Path,
+    provider: str,
+    model: str,
+    language_tag: str,
+    engine_language: str | None,
+) -> dict[str, Any]:
     if provider not in {"local", "openai"}:
         raise ValueError(f"unsupported transcription provider: {provider}")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", model):
         raise ValueError(f"invalid transcription model: {model}")
+    language_tag = validate_language(language_tag)
+    if language_tag == "und":
+        if engine_language is not None:
+            raise ValueError("und transcription cannot have an engine language")
+    elif not isinstance(engine_language, str) or not re.fullmatch(r"[a-z]{2,3}", engine_language):
+        raise ValueError("resolved transcription requires an engine language")
     status = load_status(job_dir, create_default=True)
     status["transcription"] = {
         "provider": provider,
         "model": model,
+        "languageTag": language_tag,
+        "engineLanguage": engine_language,
         "updatedAt": utc_now(),
     }
+    return save_status(job_dir, status)
+
+
+def clear_transcription(job_dir: Path) -> dict[str, Any]:
+    status = load_status(job_dir, create_default=True)
+    status["transcription"] = None
     return save_status(job_dir, status)
 
 
@@ -890,6 +947,13 @@ def build_parser() -> argparse.ArgumentParser:
     transcription_parser.add_argument("--job-dir", required=True, type=Path)
     transcription_parser.add_argument("--provider", required=True, choices=("local", "openai"))
     transcription_parser.add_argument("--model", required=True)
+    transcription_parser.add_argument("--language-tag", required=True)
+    transcription_parser.add_argument("--engine-language")
+
+    transcription_clear_parser = subparsers.add_parser(
+        "transcription-clear", help="clear stale transcription metadata before a new run"
+    )
+    transcription_clear_parser.add_argument("--job-dir", required=True, type=Path)
 
     pipeline_parser = subparsers.add_parser(
         "subtitle-pipeline", help="record the visible subtitle pipeline stage"
@@ -968,7 +1032,15 @@ def main() -> int:
             hard_defect_count=max(0, args.hard_defect_count),
         )
     elif args.command == "transcription":
-        status = set_transcription(args.job_dir, args.provider, args.model)
+        status = set_transcription(
+            args.job_dir,
+            args.provider,
+            args.model,
+            args.language_tag,
+            args.engine_language,
+        )
+    elif args.command == "transcription-clear":
+        status = clear_transcription(args.job_dir)
     elif args.command == "subtitle-pipeline":
         status = set_subtitle_pipeline(
             args.job_dir,

@@ -14,8 +14,9 @@ Read [references/proofreading-contract.md](references/proofreading-contract.md) 
 1. Require the normalized model transcript with ordered word, token, or grapheme-group timing.
 2. Treat a creator-provided manual CC track as optional text, spelling, and terminology evidence. Never use its cue boundaries as word timing.
 3. Reject platform automatic captions as evidence.
-4. Confirm the source BCP 47 language. Timing must come from a supported local or explicitly authorized OpenAI transcription model; content correction may use a local model, an explicitly authorized OpenAI model, or the current Agent.
-5. Obtain consent before subtitle text leaves the device. Do not infer consent from an API key.
+4. Consume the detected canonical language from the schema-version 2 model transcript. Do not ask the user to identify the source unless detection is unreliable, speech is multilingual, or script and regional variation materially affect the correction. If clarification is necessary, accept an ordinary language name and resolve the internal BCP 47 tag without asking the user for a code.
+5. Timing must come from a supported local or explicitly authorized OpenAI transcription model. Choose the content processor internally after inspecting available capabilities. Default to the current Agent for text correction and record the processor in the manifest. Do not ask the user for a provider, model ID, processor, or command parameter.
+6. Obtain consent before subtitle text leaves the device. Explain the boundary in ordinary language and do not infer consent from an API key.
 
 ## Prepare the Same-Language Revision
 

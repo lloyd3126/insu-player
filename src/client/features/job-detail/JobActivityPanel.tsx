@@ -2,15 +2,13 @@ import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
 import { PromptActionCard } from "@/components/shared/prompt-cards/PromptActionCard"
 import { Card, CardContent } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { jobPromptContext } from "@/features/job-detail/job-prompt-context"
 import { useJobLog } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
+import { buildRecoveryPrompt } from "@shared/prompts/insu-prompts"
 
 function activityPrompt(job: JobDetail) {
-  return [
-    "請檢查 INSU Player 中以下影音的目前狀態與 Workflow log，判斷是否有錯誤或中斷。請保留已完成的影音與字幕，先說明原因和下一步。若能安全接續，請從正確階段繼續處理。",
-    `影音 ID：${job.videoId}`,
-    `影音標題：${job.title}`,
-  ].join("\n")
+  return buildRecoveryPrompt(jobPromptContext(job))
 }
 
 export function JobActivityPanel({ job }: { job: JobDetail }) {
@@ -21,7 +19,7 @@ export function JobActivityPanel({ job }: { job: JobDetail }) {
       <PromptActionCard
         kicker="CHECK / WORKFLOW"
         title="請 Agent 檢查紀錄"
-        description="複製提示，請 Agent 根據目前狀態與 Workflow log 找出問題，保留已完成成果並從正確階段接續。"
+        description="複製目前狀態提示，讓 Agent 唯讀確認程序與產物，只接續精確失敗階段。"
         prompt={activityPrompt(job)}
       />
       {job.lastError ? <ErrorState message={job.lastError} /> : null}

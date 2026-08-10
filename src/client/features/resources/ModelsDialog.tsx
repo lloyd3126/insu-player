@@ -14,30 +14,9 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { formatBytes } from "@shared/domain/format"
+import { MODEL_PROMPTS } from "@shared/prompts/insu-prompts"
 
 type ModelScope = "local" | "cloud"
-
-const MODEL_PROMPTS: Record<
-  ModelScope,
-  { kicker: string; title: string; description: string; prompt: string }
-> = {
-  local: {
-    kicker: "SETUP / LOCAL MODEL",
-    title: "請 Agent 準備本機模型",
-    description:
-      "複製提示，請 Agent 檢查目前 workspace 並準備合適的本機模型。",
-    prompt:
-      "請檢查目前 INSU Player workspace 的本機模型與 runtime，依我的需求建議合適的本機模型。若缺少必要套件或模型，只能安裝在目前 workspace，不要使用 sudo、Homebrew、apt、全域 pip 或全域 npm。請保留既有影音、字幕與任務資料，完成後回報實際模型名稱、下載大小與可用狀態。",
-  },
-  cloud: {
-    kicker: "SETUP / CLOUD MODEL",
-    title: "請 Agent 檢查雲端模型",
-    description:
-      "複製提示，請 Agent 檢查 SDK 與 API Key 狀態並說明還缺哪些設定。",
-    prompt:
-      "請檢查目前 INSU Player workspace 的雲端模型、SDK 與 API Key 設定狀態，告訴我還缺哪些步驟。不要要求我把 API Key 貼到對話，需要時請引導我在 INSU Player「功能設定」的「環境變數」中設定。任何音訊 API 上傳前，都要先取得我本次明確同意並使用 --allow-api-upload。請勿把 API Key 寫入檔案、log、metadata 或回覆。",
-  },
-}
 
 function ModelsContent({
   scope,

@@ -23,6 +23,21 @@ SPEC.loader.exec_module(transcribe_media)
 
 
 class TranscriptionTests(unittest.TestCase):
+    def test_language_adapter_normalizes_bcp47_and_respects_model_capabilities(self) -> None:
+        self.assertEqual(transcribe_media.canonical_language_tag("EN-us"), "en-US")
+        self.assertEqual(transcribe_media.canonical_language_tag("zh-hant-tw"), "zh-Hant-TW")
+        self.assertEqual(transcribe_media.engine_language_code("en-US"), "en")
+        self.assertEqual(transcribe_media.engine_language_code("zh-Hant-TW"), "zh")
+        self.assertEqual(transcribe_media.engine_language_code("pt-BR"), "pt")
+        self.assertEqual(transcribe_media.engine_language_code("jv-ID"), "jw")
+        self.assertEqual(transcribe_media.engine_language_code("fil-PH"), "tl")
+        self.assertIsNone(transcribe_media.engine_language_code("und"))
+        self.assertIsNone(transcribe_media.engine_language_code(None))
+        with self.assertRaisesRegex(ValueError, "does not accept language"):
+            transcribe_media.engine_language_code("yue-HK")
+        with self.assertRaisesRegex(ValueError, "invalid BCP 47"):
+            transcribe_media.canonical_language_tag("en_US")
+
     def test_timestamp_and_vtt_preserve_segment_timeline(self) -> None:
         segments = transcribe_media.normalize_segments(
             [
@@ -89,7 +104,7 @@ class TranscriptionTests(unittest.TestCase):
             args = Namespace(
                 consent_to_upload=True,
                 model="whisper-1",
-                language="en",
+                language="en-US",
                 output_dir=root,
                 input=input_path,
                 ffmpeg=ffmpeg,
@@ -103,9 +118,10 @@ class TranscriptionTests(unittest.TestCase):
                 segments, words, language, chunks = transcribe_media.transcribe_openai(args)
 
             self.assertEqual(requests[0]["timestamp_granularities"], ["segment", "word"])
+            self.assertEqual(requests[0]["language"], "en")
             self.assertEqual(words[-1]["word"], "world.")
             self.assertEqual(segments[0]["text"], "Hello world.")
-            self.assertEqual(language, "en")
+            self.assertEqual(language, "en-US")
             self.assertEqual(chunks, 1)
 
     def test_local_provider_writes_normalized_artifacts(self) -> None:
@@ -150,9 +166,11 @@ printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Test 
                 check=True,
             )
             payload = json.loads((output / "transcript.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["schemaVersion"], 2)
             self.assertEqual(payload["provider"], "local")
             self.assertEqual(payload["model"], "tiny")
             self.assertEqual(payload["language"], "en")
+            self.assertEqual(payload["engineLanguage"], "en")
             self.assertEqual([word["word"] for word in payload["words"]], ["Test", "line."])
             self.assertIn("Test line", (output / "transcript.vtt").read_text(encoding="utf-8"))
 

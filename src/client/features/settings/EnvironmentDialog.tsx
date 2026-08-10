@@ -17,15 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { EnvironmentVariableStatus } from "@shared/contracts/resources"
-
-const ENVIRONMENT_PROMPT = {
-  kicker: "SETUP / ENVIRONMENT",
-  title: "請 Agent 檢查環境變數",
-  description:
-    "複製提示，請 Agent 在不要讀取 Key 原值的前提下，檢查目前缺少的 API Key 並引導你在此處設定。",
-  prompt:
-    "請檢查目前 INSU Player workspace 所需的環境變數與設定狀態。不要要求我把 API Key 貼到對話，請引導我在 INSU Player「功能設定」的「環境變數」表格中設定。不要讀取或回報 Key 原值，也不要把 Key 寫入檔案、app.db、log、metadata 或回覆。只回報環境變數名稱、用途、設定狀態與建議的下一步。",
-}
+import { ENVIRONMENT_PROMPT } from "@shared/prompts/insu-prompts"
 
 function environmentStatusLabel(variable: EnvironmentVariableStatus) {
   if (!variable.configured) return "尚未設定"

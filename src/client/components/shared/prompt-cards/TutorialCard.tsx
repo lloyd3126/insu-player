@@ -50,7 +50,3 @@ export function TutorialStep({
     </li>
   )
 }
-
-export function TutorialExample({ children }: { children: ReactNode }) {
-  return <pre className="prompt-code tutorial-card__example">{children}</pre>
-}

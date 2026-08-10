@@ -48,6 +48,7 @@ if [ "$content_mode" = "proofread" ]; then
   [ "$language_code" = "$output_language" ] || caption_die "proofreading must preserve the source language"
 else
   [ "$language_code" != "$output_language" ] || caption_die "translation output must differ from the source language"
+  [ "$output_language" != "und" ] || caption_die "translation output language cannot be und"
 fi
 
 caption_set_paths "$workspace_input"
@@ -88,15 +89,17 @@ mkdir -p "$whisper_dir" "$CAPTION_MODELS" "$job_dir/logs"
 fail_job() {
   local exit_code=$?
   trap - ERR
-  caption_job_state update --job-dir "$job_dir" --state failed --stage transcription --message "轉錄失敗" --error "transcribe.sh exited with status $exit_code" --record-history >/dev/null || true
+  caption_job_state update --job-dir "$job_dir" --state failed --stage model_transcription --message "轉錄失敗" --error "transcribe.sh exited with status $exit_code" --record-history >/dev/null || true
   exit "$exit_code"
 }
 trap fail_job ERR
 
+caption_job_state transcription-clear --job-dir "$job_dir" >/dev/null
+
 if [ ! -f "$audio_file" ]; then
   caption_note "Extracting an audio copy from the active media rendition..."
   "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-    --job-dir "$job_dir" --state transcribing --stage extracting_audio --message "正在從影片擷取音訊" --success-message "音訊擷取完成" -- \
+    --job-dir "$job_dir" --state transcribing --stage audio_preparation --message "正在從影片擷取音訊" --success-message "音訊擷取完成" -- \
     "$CAPTION_FFMPEG" -nostdin -hide_banner -y -i "$video_file" -vn -c:a aac -b:a 192k "$audio_file"
   caption_job_state asset --job-dir "$job_dir" --name audio --path "$audio_file" >/dev/null
 fi
@@ -115,8 +118,12 @@ transcribe_args=(
 if [ -n "$language_code" ]; then transcribe_args+=(--language "$language_code"); fi
 if [ "$provider_name" = "openai" ]; then transcribe_args+=(--consent-to-upload); fi
 
-caption_job_state transcription --job-dir "$job_dir" --provider "$provider_name" --model "$model_name" >/dev/null
 caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$content_mode" --stage model_transcription --source-language "$language_code" --output-language "$output_language" --timing-processor-provider "$provider_name" --timing-processor-model "$model_name" >/dev/null
+if [ "$provider_name" = "local" ]; then
+  provider_label="本機模型"
+else
+  provider_label="OpenAI API 模型"
+fi
 caption_note "Transcribing with provider=$provider_name model=$model_name device=$device_name..."
 transcribe_command=("$CAPTION_PYTHON" "${transcribe_args[@]}")
 if [ "$provider_name" = "openai" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -127,7 +134,7 @@ if [ "$provider_name" = "openai" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
   )
 fi
 "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-  --job-dir "$job_dir" --state transcribing --stage "$provider_name" --message "$provider_name 正在轉錄" --success-message "$provider_name 轉錄完成" -- \
+  --job-dir "$job_dir" --state transcribing --stage model_transcription --message "$provider_label 正在轉錄" --success-message "$provider_label 轉錄完成" -- \
   "${transcribe_command[@]}"
 
 vtt_file="$provider_output/transcript.vtt"
@@ -141,6 +148,14 @@ reflow_script="$SCRIPT_DIR/../../translate-subtitles/scripts/reflow_subtitles.py
 caption_require_file "$transcript_json"
 caption_require_file "$reflow_script"
 mkdir -p "$subtitle_work_dir"
+
+IFS=$'\t' read -r language_code engine_language < <(
+  "$CAPTION_PYTHON" -c 'import json,sys; payload=json.load(open(sys.argv[1], encoding="utf-8")); assert payload.get("schemaVersion") == 2; print("{}\t{}".format(payload["language"], payload["engineLanguage"]))' "$transcript_json"
+)
+[ -n "$language_code" ] || caption_die "transcript did not resolve a source language"
+[ -n "$engine_language" ] || caption_die "transcript did not record the model language parameter"
+if [ "$content_mode" = "proofread" ]; then output_language="$language_code"; fi
+caption_job_state transcription --job-dir "$job_dir" --provider "$provider_name" --model "$model_name" --language-tag "$language_code" --engine-language "$engine_language" >/dev/null
 
 "$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$language_code" "$vtt_file" --source-type model-transcript --processor-provider "$provider_name" --processor-model "$model_name" --timing-unit-kind word
 timing_source_artifact="$video_id-source-model-transcript-$language_code-r1"

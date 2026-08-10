@@ -1,0 +1,7 @@
+interface:
+  display_name: "Monitor INSU Player Job"
+  short_description: "監控並安全接續 INSU Player 下載、轉錄與字幕工作"
+  default_prompt: "Use $monitor-player-job to monitor the active INSU Player job in this project, resume authorized stages in the current task, and stop at a terminal or user-decision state."
+
+policy:
+  allow_implicit_invocation: true

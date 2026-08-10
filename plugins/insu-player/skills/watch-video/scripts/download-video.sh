@@ -95,12 +95,12 @@ caption_job_state init "${job_init_args[@]}" >/dev/null
 pipeline_output_language="$source_language"
 if [ "$translation_mode" = "translate" ]; then pipeline_output_language="$translation_target"; fi
 caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
-caption_job_state update --job-dir "$job_dir" --state checking --stage subtitles --message "正在檢查人工 CC 字幕，平台自動字幕不會下載" --progress 0 --clear-error --record-history >/dev/null
+caption_job_state update --job-dir "$job_dir" --state checking --stage manual_caption --message "正在檢查人工 CC 字幕，平台自動字幕不會下載" --progress 0 --clear-error --record-history >/dev/null
 
 fail_job() {
   local exit_code=$?
   trap - ERR
-  caption_job_state update --job-dir "$job_dir" --state failed --stage download --message "下載流程失敗" --error "download-video.sh exited with status $exit_code" --record-history >/dev/null || true
+  caption_job_state update --job-dir "$job_dir" --state failed --stage media_download --message "下載流程失敗" --error "download-video.sh exited with status $exit_code" --record-history >/dev/null || true
   exit "$exit_code"
 }
 trap fail_job ERR
@@ -175,7 +175,7 @@ find_track() {
 source_caption_ready=0
 caption_note "Checking for creator-provided $source_language CC; automatic captions are intentionally excluded..."
 if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-  --job-dir "$job_dir" --state checking --stage subtitles --message "正在取得人工 CC 字幕" --success-message "人工 CC 檢查完成" --allow-failure -- \
+  --job-dir "$job_dir" --state checking --stage manual_caption --message "正在取得人工 CC 字幕" --success-message "人工 CC 檢查完成" --allow-failure -- \
   "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-subs \
   --sub-langs "$source_language.*" --sub-format vtt --output "$youtube_caption_dir/%(id)s.%(ext)s" "$video_url"; then
   caption_note "warning: manual CC download was incomplete; media download will continue"
@@ -233,7 +233,7 @@ else
       fi
 
       if "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-        --job-dir "$job_dir" --state downloading --stage video --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --allow-failure -- \
+        --job-dir "$job_dir" --state downloading --stage media_download --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --allow-failure -- \
         "$CAPTION_YTDLP" "${common_args[@]}" \
         --format "$format_selector" --merge-output-format mp4 --recode-video mp4 --write-info-json \
         --output "$attempt_dir/video.%(ext)s" "$video_url"; then
@@ -306,7 +306,7 @@ fi
 if [ ! -f "$source_dir/audio.m4a" ]; then
   caption_note "Downloading audio for the model timing source..."
   "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-    --job-dir "$job_dir" --state downloading --stage audio --message "正在下載轉錄音訊" --success-message "轉錄音訊下載完成" -- \
+    --job-dir "$job_dir" --state downloading --stage audio_preparation --message "正在下載轉錄音訊" --success-message "轉錄音訊下載完成" -- \
     "$CAPTION_YTDLP" "${common_args[@]}" --format ba --extract-audio --audio-format m4a --audio-quality 0 \
     --output "$source_dir/audio.%(ext)s" "$video_url"
   caption_require_file "$source_dir/audio.m4a"

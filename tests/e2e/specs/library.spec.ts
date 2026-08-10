@@ -666,6 +666,11 @@ test.describe("library and details @critical", () => {
     await expect(detail.getByText("容量", { exact: true })).toBeVisible()
     await expect(detail.getByText("更新時間", { exact: true })).toBeVisible()
     const aboutPanel = detail.getByRole("tabpanel", { name: "關於影音" })
+    const aboutNextAction = aboutPanel.locator(".job-next-action")
+    await expect(aboutNextAction).toContainText("字幕已完成")
+    await expect(aboutNextAction).toContainText(
+      "字幕管理的切分字幕中預覽版本",
+    )
     await expect(aboutPanel.getByText("狀態歷程", { exact: true })).toHaveCount(
       0,
     )
@@ -747,11 +752,11 @@ test.describe("library and details @critical", () => {
     const sourcePanel = subtitlePanel.getByRole("tabpanel", {
       name: "原始字幕",
     })
+    const subtitleNextAction = subtitlePanel.locator(".job-next-action")
+    await expect(subtitleNextAction).toContainText("字幕已完成")
     await expect(
-      subtitlePanel.getByRole("heading", {
-        name: "製作與更新字幕",
-      }),
-    ).toBeVisible()
+      subtitleNextAction.getByRole("button", { name: "複製提示" }),
+    ).toHaveCount(0)
     await expect(
       subtitlePanel.getByRole("region", {
         name: "播放字幕版本",

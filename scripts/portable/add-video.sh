@@ -20,7 +20,7 @@ done
   exit 1
 }
 [ "$provider_choice" -eq 1 ] || {
-  printf 'error: subtitle production requires asking the user to choose --provider local or --provider openai\n' >&2
+  printf 'error: the Agent must resolve --provider local or --provider openai from the approved data boundary before invocation\n' >&2
   exit 1
 }
 exec "$PORTABLE_SKILL/scripts/process-video.sh" "$PORTABLE_WORKSPACE" "$video_url" "$@"

@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button"
 export function CopyButton({
   value,
   label = "複製提示",
+  disabled = false,
 }: {
   value: string
   label?: string
+  disabled?: boolean
 }) {
   const [copied, setCopied] = useState(false)
   const timer = useRef<number | null>(null)
@@ -23,7 +25,11 @@ export function CopyButton({
     }
   }
   return (
-    <Button variant={copied ? "secondary" : "outline"} onClick={copy}>
+    <Button
+      variant={copied ? "secondary" : "outline"}
+      disabled={disabled}
+      onClick={copy}
+    >
       {copied ? (
         <CheckIcon data-icon="inline-start" />
       ) : (

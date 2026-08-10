@@ -8,11 +8,11 @@
 http://127.0.0.1:8000/
 ```
 
-首頁是全高入口頁，navbar 只保留「使用說明」、「功能設定」與「影音中心」。「使用說明」以 tabs 切換開始使用、我的提示與支援網站；內建使用情境提示位於「我的提示」建立卡下方。「功能設定」以 tabs 切換環境變數、本機模型與雲端模型；三個分頁都在上方提供對應的 Agent 提示卡，Tab panel 固定不捲動，只有下方表格捲動。環境變數表格顯示白名單變數、設定狀態、遮蔽的新值輸入與操作，不顯示 SDK 狀態；本機模型顯示 workspace 實際下載的 Whisper 模型與大小，雲端模型顯示 API SDK 安裝狀態與 API Key 選單。「影音中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。有影音時預設開啟「我的影音」，只顯示全寬搜尋列與最多三欄的縮圖標題卡片；沒有影音時預設開啟「詳細資訊」。單筆詳情依序提供關於影音、畫質管理、字幕管理、影音摘要、影音筆記與執行紀錄。「畫質管理」列出來源可下載畫質、本地已下載畫質、目前播放畫質與背景下載進度。「字幕管理」再以內層 tabs 切換原始字幕、翻譯字幕與切分字幕，共用來源→翻譯→切分版本譜系、revision 選單、驗證狀態與多語並排表格；只有表格捲動。字幕內層分頁與 revision 都寫入 localhost URL，重新整理後保留目前畫面。播放器畫質選單只顯示已下載畫質，字幕選單只顯示語言碼。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影音中心，背景任務與狀態輪詢不會中斷。
+首頁是全高入口頁，navbar 只保留「使用說明」、「功能設定」與「影音中心」。「使用說明」以 tabs 切換開始使用、我的提示與支援網站。內建使用情境提示位於「我的提示」建立卡下方。「功能設定」以 tabs 切換環境變數、本機模型與雲端模型。三個分頁都在上方提供對應的 Agent 提示卡，Tab panel 固定不捲動，只有下方表格捲動。環境變數表格顯示白名單變數、設定狀態、遮蔽的新值輸入與操作，不顯示 SDK 狀態。本機模型顯示 workspace 實際下載的 Whisper 模型與大小，雲端模型顯示 API SDK 安裝狀態與 API Key 選單。「影音中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。有影音時預設開啟「我的影音」，只顯示全寬搜尋列與最多三欄的縮圖標題卡片。沒有影音時預設開啟「詳細資訊」。單筆詳情依序提供關於影音、畫質管理、字幕管理、影音摘要、影音筆記與執行紀錄。「畫質管理」列出來源可下載畫質、本地已下載畫質、目前播放畫質與背景下載進度。「字幕管理」再以內層 tabs 切換原始字幕、翻譯字幕與切分字幕，共用來源→翻譯→切分版本譜系、revision 選單、驗證狀態與多語並排表格。只有表格捲動。字幕內層分頁與 revision 都寫入 localhost URL，重新整理後保留目前畫面。播放器畫質選單只顯示已下載畫質，字幕選單只顯示語言碼。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影音中心，背景任務與狀態輪詢不會中斷。
 
-首頁仍是單一 React 應用程式，但使用 React Router 將使用說明、功能設定、影音中心、影音詳情、播放器及其 tab 狀態映射到 localhost URL。重新整理或直接開啟該 URL 必須恢復同一個 modal 與 tab；Hono/Bun 服務要對這些 allowlist 前端路徑回傳同一份 React `index.html`。
+首頁仍是單一 React 應用程式，但使用 React Router 將使用說明、功能設定、影音中心、影音詳情、播放器及其 tab 狀態映射到 localhost URL。重新整理或直接開啟該 URL 必須恢復同一個 modal 與 tab。Hono/Bun 服務要對這些 allowlist 前端路徑回傳同一份 React `index.html`。
 
-支援網站在搜尋列上方提供單一「詢問 Agent 是否支援」提示卡；提示會先檢查目前解析器，必要時安全更新 workspace 內的 yt-dlp，仍不支援才研究平台。
+支援網站在搜尋列上方提供單一「詢問 Agent 是否支援」提示卡。提示會先檢查目前解析器，必要時安全更新 workspace 內的 yt-dlp，仍不支援才研究平台。
 
 首頁除了保存播放位置、字幕語言偏好與經過預覽確認的影音／字幕刪除外，仍是讀取為主的控制台。新增、重試、翻譯、取消與清理由 Agent 或明確的腳本命令執行。
 
@@ -24,7 +24,8 @@ http://127.0.0.1:8000/
 
 - 目前 workflow-local yt-dlp 有對應 extractor 的單支影片 URL
 - 專用 workspace 路徑
-- 在取得字幕前確認是否需要翻譯；需要時確認原始語言、目標字幕語言與可接受的機器翻譯範圍
+- 使用者以一般語言表達要整理原語字幕或翻譯，以及翻譯時想要的語言
+- Agent 從音訊偵測來源語言並在內部解析語言碼、模型參數與三個處理階段
 
 輸出：
 
@@ -33,7 +34,7 @@ http://127.0.0.1:8000/
 - 可中斷恢復的 `status.json` 與 workflow log
 - 同源、本機限定、支援影片 Range request 的影片庫首頁
 
-完成標準：影片能從 navbar 的影音中心開啟播放，字幕可切換且時間同步；若尚待轉錄或翻譯，列表要正確顯示待辦，而不是假裝完成。
+完成標準：影片能從 navbar 的影音中心開啟播放，完整句字幕與切分字幕都已通過驗證、可切換且時間同步。若還在下載、轉錄、內容處理或切分，介面要顯示實際狀態與下一步，而不是假裝完成。
 
 ## 不處理的範圍
 
@@ -41,7 +42,7 @@ http://127.0.0.1:8000/
 - 不把影片、字幕、cookie、模型、venv 或快取 commit 到 repository。
 - 不保證來源平台一定提供字幕或自動翻譯。
 - 找不到 extractor 時，Agent 應使用 INSU Player 研究來源、公開介面與媒體格式，研究不等於繞過存取控制。
-- 不把 Whisper 的英語 translation task 當成任意目標語言翻譯；完整目標語翻譯由明確選定並記錄的本機或 API 語言模型完成。
+- 不把 Whisper 的英語 translation task 當成任意目標語言翻譯。完整目標語翻譯由明確選定並記錄的本機或 API 語言模型完成。
 - 不讀取登入 cookie，除非使用者明確要求並理解授權範圍。cookie 不得貼入聊天或寫進 repository。
 - 不把本機服務公開到 LAN 或 Internet。
 
@@ -86,16 +87,16 @@ http://127.0.0.1:8000/
 
 `status.json` 記錄標題、來源、目前 state/stage、0–100 進度、程序 PID、錯誤、產物、最多 120 筆歷程，以及 revisioned `subtitleArtifacts`、親子依賴、tracks 與選用的 `activeSubtitleTracks`。寫入採暫存檔加 atomic replace，避免首頁在更新中讀到半份 JSON。`app.db` 只做可重建的查詢投影。
 
-「我的提示」分頁先顯示建立提示卡，再顯示內建情境與可直接複製的提示，最後列出 Agent 維護的 workspace 提示。建立卡右上角可複製提示交給 Agent 共同整理。Agent 依 [prompt-library.md](prompt-library.md) 使用專用腳本新增或修改，首頁只提供 `GET /api/prompts`，不允許使用者在瀏覽器直接編輯 workspace。「環境變數」分頁以安全提示卡與表格管理程式白名單中的變數，目前為 `OPENAI_API_KEY`。值只存在本機服務程序，公開 API 只回傳是否已設定，停止服務後即消失；SDK 安裝狀態只在雲端模型分頁呈現。
+「我的提示」分頁先顯示建立提示卡，再顯示內建情境與可直接複製的提示，最後列出 Agent 維護的 workspace 提示。建立卡右上角可複製提示交給 Agent 共同整理。Agent 依 [prompt-library.md](prompt-library.md) 使用專用腳本新增或修改，首頁只提供 `GET /api/prompts`，不允許使用者在瀏覽器直接編輯 workspace。「環境變數」分頁以安全提示卡與表格管理程式白名單中的變數，目前為 `OPENAI_API_KEY`。值只存在本機服務程序，公開 API 只回傳是否已設定，停止服務後即消失。SDK 安裝狀態只在雲端模型分頁呈現。
 
 ## Workspace 與服務邊界
 
 - Plugin 安裝只共用 skill 程式碼，不會建立全機共用的影片庫。每個專案的 runtime、jobs、字幕與播放進度都留在該專案選定的 workspace。
-- Portable 模式使用該 repository 的 `.local/insu-player/`。Developer checkout 或 installed plugin 優先使用者明確指定的 project-local workspace；未指定時才使用 `<目前專案根目錄>/.local/insu-player/`。
+- Portable 模式使用該 repository 的 `.local/insu-player/`。Developer checkout 或 installed plugin 優先使用者明確指定的 project-local workspace。未指定時才使用 `<目前專案根目錄>/.local/insu-player/`。
 - 在執行 doctor、setup、serve 或 process 前先解析一次 workspace 的絕對路徑，回報給使用者，後續每一步固定使用同一路徑。
 - 不搜尋目前專案之外的 INSU workspace，也不因另一個 workspace 已完成安裝、有影片或正在背景執行而改用它。只有使用者明確指定時才能跨越專案邊界。
 - 只有選定 workspace 內的 `.insu-player-server.pid`、`.insu-player-server.json` 與 live process 能證明服務屬於該 workspace。單看 localhost port、程序名稱或其他專案的 PID 不足以沿用服務。
-- Port 衝突不會改變 workspace 身分。一般啟動不指定 port；服務先嘗試 `8000`，若已被占用就原子性地綁定作業系統分配的可用 localhost port，把實際 endpoint 寫入 `.insu-player-server.json`，並回報實際首頁網址。只有使用者明確要求特定 port 時才嚴格使用該 port。
+- Port 衝突不會改變 workspace 身分。一般啟動不指定 port。服務先嘗試 `8000`，若已被占用就原子性地綁定作業系統分配的可用 localhost port，把實際 endpoint 寫入 `.insu-player-server.json`，並回報實際首頁網址。只有使用者明確要求特定 port 時才嚴格使用該 port。
 - Workspace 解析完成後，第一個使用者可見動作是啟動或沿用該 workspace 的服務，並用 Codex 內建瀏覽器開啟實際首頁。不要等 doctor、安裝、下載或字幕處理完成才開啟，也不要只把 URL 印在回覆中。
 
 主要狀態：
@@ -104,14 +105,24 @@ http://127.0.0.1:8000/
 | --- | --- | --- |
 | `checking` / `downloading` | 正在檢查字幕或下載媒體 | 等待或查看 log |
 | `needs_transcription` | 沒有可用文字軌 | 執行 `transcribe.sh` |
-| `transcribing` | 選定 provider 轉錄中 | 等待；可在中斷後重跑 |
+| `transcribing` | 選定 provider 轉錄中 | 等待。可在中斷後重跑 |
 | `needs_translation` | 有來源 timed units，沒有完整目標語翻譯 | 選定模型完成初譯與完整句潤色 |
-| `translating` | 正在翻譯或建立新字幕 revision | 匯入完整句翻譯後即可播放；切分可後續升級 |
+| `translating` | 正在翻譯或建立新字幕 revision | 匯入完整句翻譯後即可播放。切分可後續升級 |
 | `ready` | 影片與所需字幕可觀看 | 首頁觀看或清理中間檔 |
 | `interrupted` | active state 的程序已消失 | Agent 檢查產物後從該階段續跑 |
 | `failed` | 命令失敗 | 查看 detail/log，再做針對性修復 |
 
 影片存在時，即使仍待轉錄或翻譯也可以先觀看。`ready` 是完整工作完成，不是播放的唯一條件。
+
+## 長時間工作與 current-task heartbeat
+
+下載 runtime、Whisper 模型、影音、指定畫質或執行本機轉錄超出目前 turn 時，使用獨立的 [`$monitor-player-job`](../../monitor-player-job/SKILL.md) 建立附著目前 task 的五分鐘 heartbeat。前一分鐘仍由目前 turn 直接觀察，以便立即捕捉權限、參數、磁碟與來源錯誤。確認程序持續運作後才建立排程。
+
+Heartbeat 不建立新的 INSU 狀態機，也不寫入 `app.db`、`status.json` 或 media catalog。每次喚醒時使用唯讀 inspector 重新讀取目前 workspace 的固定 job。PID 存活且狀態持續更新就只等待。到達 `needs_transcription`、`needs_proofreading`、`needs_translation` 或 `needs_segmentation` 時，只接續本 task 已解析的結果與處理計畫。到達 `ready` 時先驗證影音、完整句字幕與切分字幕，再移除 heartbeat。
+
+Active state 的 PID 消失、進度超過十五分鐘未更新、`interrupted` 或 `failed` 時先診斷。只有原操作可重入、沒有新 API 上傳或其他使用者決策，且尚未自動續跑過時，才能續跑一次。第二次中斷、低畫質例外、API 同意、刪除、provider／語言變更或其他安全邊界都必須停止 heartbeat 並詢問使用者。
+
+媒體監控固定使用目前專案的 local checkout，不使用 worktree 或 standalone scheduled task。若目前 Codex 環境沒有 Scheduled tasks 能力，明確回報自動追蹤不可用。不要以 `sleep`、terminal polling、cron、daemon、SQLite 或 server loop 建立相容 fallback。首頁仍以現有 polling 顯示即時狀態，heartbeat 只負責 Agent 稍後回到同一 task。
 
 ## 使用優先序
 
@@ -124,7 +135,7 @@ http://127.0.0.1:8000/
 
 ## 階段 0：取得 skills
 
-建議從 GitHub Release 下載 `insu-player-vX.Y.Z-portable.zip` 與 checksum。解壓縮後用 Agent 開啟整個資料夾並從根目錄 `START-HERE.md` 開始；不需要安裝 Git。已有 Git 且要參與維護時才使用 `git clone`。
+建議從 GitHub Release 下載 `insu-player-vX.Y.Z-portable.zip` 與 checksum。解壓縮後用 Agent 開啟整個資料夾並從根目錄 `START-HERE.md` 開始。不需要安裝 Git。已有 Git 且要參與維護時才使用 `git clone`。
 
 Agent 先讀根目錄 `AGENTS.md` 與本文件。
 
@@ -137,9 +148,9 @@ plugins/insu-player/skills/watch-video/scripts/serve-library.sh \
   .local/insu-player
 ```
 
-讓 `serve-library.sh` 在獨立 terminal／執行 session 持續運作，讀取它回報並寫入 `.insu-player-server.json` 的實際網址，再用 Codex 內建瀏覽器開啟該網址，而不是只在訊息中提供網址。這是第一個使用者可見的產品動作；首頁保持開啟，後續 doctor、安裝與 job 狀態會在同一頁逐步更新。
+讓 `serve-library.sh` 在獨立 terminal／執行 session 持續運作，讀取它回報並寫入 `.insu-player-server.json` 的實際網址，再用 Codex 內建瀏覽器開啟該網址，而不是只在訊息中提供網址。這是第一個使用者可見的產品動作。首頁保持開啟，後續 doctor、安裝與 job 狀態會在同一頁逐步更新。
 
-若 `8000` 已由另一個 workspace 占用，不要改用、檢查或停止該服務；這次啟動會自動取得其他可用 port，記錄後再用內建瀏覽器開啟實際網址，不需要猜測 `8010` 或逐一試 port。`serve-library.sh` 在 workflow runtime 尚未安裝時可先使用系統 Python 3 顯示空白首頁。若系統沒有 Python 3，先明確回報這個例外阻塞，再執行 workspace 內的安裝流程，workflow Python 一可用就立刻開啟首頁。
+若 `8000` 已由另一個 workspace 占用，不要改用、檢查或停止該服務。這次啟動會自動取得其他可用 port，記錄後再用內建瀏覽器開啟實際網址，不需要猜測 `8010` 或逐一試 port。`serve-library.sh` 在 workflow runtime 尚未安裝時可先使用系統 Python 3 顯示空白首頁。若系統沒有 Python 3，先明確回報這個例外阻塞，再執行 workspace 內的安裝流程，workflow Python 一可用就立刻開啟首頁。
 
 Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產、job JSON、唯讀提示 JSON、模型安裝摘要 JSON、環境變數遮罩狀態與同源工作階段寫入、log 尾端、標準化 MP4、縮圖、VTT、player，以及只寫 `ui-state.json` 的播放進度端點。模型摘要只包含名稱、實際大小、provider 狀態與 API Key 是否已設定，不包含 Key、路徑或檔案內容。環境變數的原值不會從公開端點讀回，Agent 的轉錄子程序只能透過服務啟動時建立的短期 capability 取得，而且仍須先有本次 API 上傳同意。它不提供任意目錄瀏覽，也不會公開 `.agent-tools` 或模型。
 
@@ -151,13 +162,15 @@ Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產�
 
 下載前確認：
 
-1. URL 與是否只處理單支影片；腳本固定 `--no-playlist`。
-2. 使用者已接受首頁集中顯示的使用規範；來源平台條款與所在地規範仍可能適用。
-3. 在任何字幕檢查或下載前，先問要「同語言校正」或「翻譯」，並確認來源 BCP 47 語言；翻譯時再確認輸出 BCP 47 語言。
-4. 分別確認 timing、內容與切分 processor。Timing 只能選本機或 OpenAI API 模型；內容與切分各自可選本機模型、OpenAI API 模型或目前的 Agent。本機需下載大型依賴與模型；OpenAI 會上傳音訊或文字並可能產生費用，每一次 API 上傳都要先取得明確同意。
-5. workspace 是否可能包含敏感內容。
+1. URL 與是否只處理單支影片。腳本固定 `--no-playlist`。
+2. 使用者已接受首頁集中顯示的使用規範。來源平台條款與所在地規範仍可能適用。
+3. 在任何字幕檢查或下載前，只用一般語言問要整理影片原本語言的字幕，還是翻譯成另一種語言。翻譯時只問想要哪種語言，不要求使用者提供語言碼。
+4. 來源語言預設由 timing 模型從音訊偵測。只有偵測不可靠、多語混用或語系差異會影響結果時才用一般語言名稱追問。Agent 在內部正規化保存用 BCP 47 tag，再轉成模型接受的參數。完成產物不得保留 `und`。
+5. Agent 唯讀檢查 workspace 能力後提出一個白話建議。預設用本機 Whisper medium 建立細粒度來源時間，再由目前 Agent 處理完整句內容與切分。不得要求使用者選 skill、模型名稱、provider、processor、timing、content、segmentation、artifact、Source Alignment 或模型參數。
+6. 說明音訊是否留在本機、Agent 是否會讀取轉錄文字、是否使用額外 API 及可能費用。只有實際準備使用 API 時才取得本次上傳同意。
+7. workspace 是否可能包含敏感內容。
 
-字幕來源只接受創作者人工 CC 與模型轉錄。人工 CC 可在兩條路徑中下載、立即播放，並作為拼字與術語參考；平台自動字幕一律不得下載、匯入或參考。無論有沒有人工 CC，只要要校正、翻譯或切分，都必須由選定模型從原始音訊建立來源語言的 word、token 或 grapheme-group timing。
+字幕來源只接受創作者人工 CC 與模型轉錄。人工 CC 可在兩條路徑中下載、立即播放，並作為拼字與術語參考。平台自動字幕一律不得下載、匯入或參考。無論有沒有人工 CC，只要要校正、翻譯或切分，都必須由 Agent 解析的 timing 模型從原始音訊建立來源語言的 word、token 或 grapheme-group timing。
 
 ## 階段 3：從零盤點環境
 
@@ -167,7 +180,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh .local/insu-player
 
 `doctor.sh` 唯讀，不安裝或刪除。Agent 要用白話說明 OS／CPU、磁碟、`curl`、`unzip`、workflow-local FFmpeg、runtime、模型和既有 jobs。系統 Python、FFmpeg、yt-dlp、Deno 與 uv 只列為「偵測但不使用」。
 
-若缺 `curl` 或 `unzip`，停止並說明；這版不會呼叫套件管理器或 `sudo`。Release 的支援環境預期已有作業系統基礎的 HTTPS 下載與 ZIP 解壓能力。
+若缺 `curl` 或 `unzip`，停止並說明。這版不會呼叫套件管理器或 `sudo`。Release 的支援環境預期已有作業系統基礎的 HTTPS 下載與 ZIP 解壓能力。
 
 ## 階段 4：隔離安裝
 
@@ -187,9 +200,9 @@ plugins/insu-player/skills/watch-video/scripts/setup-environment.sh \
 - 本機 provider 才需要的 Whisper 模型
 - workflow-local Deno
 
-Deno 不是拿來開網頁伺服器；它提供部分 yt-dlp extractors 所需的 JavaScript runtime。影片庫伺服器固定使用 workspace 內的 Bun 執行 Hono，資料投影由 Drizzle 與 Bun SQLite 管理。
+Deno 不是拿來開網頁伺服器。它提供部分 yt-dlp extractors 所需的 JavaScript runtime。影片庫伺服器固定使用 workspace 內的 Bun 執行 Hono，資料投影由 Drizzle 與 Bun SQLite 管理。
 
-腳本不修改 shell profile、不取代系統 Python、不把工具加入全域 `PATH`，也不使用 Homebrew、APT、DNF 或 Pacman。執行時把 `HOME`、`TMPDIR`、`UV_*`、完整 XDG config/data/state/cache、`TORCH_HOME`、`TIKTOKEN_CACHE_DIR`、`HF_HOME`、Python bytecode、Deno 與 yt-dlp cache 全部改到 runtime；yt-dlp 加上 `--ignore-config`，不讀使用者全域設定。低資源環境可用 `--model small`；API-only 使用 `--provider openai`，不會安裝 Whisper 或下載模型。
+腳本不修改 shell profile、不取代系統 Python、不把工具加入全域 `PATH`，也不使用 Homebrew、APT、DNF 或 Pacman。執行時把 `HOME`、`TMPDIR`、`UV_*`、完整 XDG config/data/state/cache、`TORCH_HOME`、`TIKTOKEN_CACHE_DIR`、`HF_HOME`、Python bytecode、Deno 與 yt-dlp cache 全部改到 runtime。yt-dlp 加上 `--ignore-config`，不讀使用者全域設定。低資源環境可用 `--model small`。API-only 使用 `--provider openai`，不會安裝 Whisper 或下載模型。
 
 安裝後再次執行 doctor，必須看到 `status: ready`。
 
@@ -210,15 +223,15 @@ plugins/insu-player/skills/watch-video/scripts/process-video.sh \
 流程會：
 
 1. 解析影片 ID 與標題並建立／續用 job。
-2. 只檢查並匯入創作者人工 CC；明確排除平台自動字幕。
+2. 只檢查並匯入創作者人工 CC。明確排除平台自動字幕。
 3. 下載瀏覽器相容 MP4 與縮圖。
-4. 固定準備音訊，並用使用者選定的 provider 建立細粒度來源時間軸；人工 CC 只作文字參考。
+4. 固定準備音訊，並用 Agent 已解析且符合資料邊界的 provider 建立細粒度來源時間軸。人工 CC 只作文字參考。
 5. 即時更新狀態、進度、PID 與 log。
 6. 翻譯路徑停在 `needs_translation`，校正路徑停在 `needs_proofreading`。完整句 revision 驗證後即可播放，再由 `$segment-subtitles` 建立獨立的切分 revision。
 
-影片畫質採獨立的播放品質契約：預設先選擇不超過 1080p 的最高瀏覽器相容 MP4。每個候選畫質在下載前都重新解析串流 URL 並做小段 HTTP Range probe；一次 403 不能判定該畫質不可用，同一畫質必須以新 URL 再驗證一次。只有兩次都失敗才往下一個實際存在的畫質嘗試。720p 以上可以自動降級並完整記錄；低於 720p 時停止，要求使用者明確同意後才可加入 `--allow-low-quality`。轉錄固定使用另外準備的音訊，影片畫質不參與 Whisper 速度判斷。
+影片畫質採獨立的播放品質契約：預設先選擇不超過 1080p 的最高瀏覽器相容 MP4。每個候選畫質在下載前都重新解析串流 URL 並做小段 HTTP Range probe。一次 403 不能判定該畫質不可用，同一畫質必須以新 URL 再驗證一次。只有兩次都失敗才往下一個實際存在的畫質嘗試。720p 以上可以自動降級並完整記錄。低於 720p 時停止，要求使用者明確同意後才可加入 `--allow-low-quality`。轉錄固定使用另外準備的音訊，影片畫質不參與 Whisper 速度判斷。
 
-來源畫質、已下載 rendition、目前播放 rendition 及執行狀態寫入 `<job>/media-work/catalog.json`；每次執行的 HTTP 狀態、下載結果、選定 format ID、實際寬高、codec 與驗證結果寫入 `<job>/media-work/runs/<run-id>/`。下載後以 workflow-local FFmpeg 重新讀取實際解析度；與指定畫質不一致或無法確認解析度時，不得發布到 `source/renditions/`。初次下載仍使用 720p 自動選擇下限；使用者從「畫質管理」明確點選的畫質則是 exact-height 操作，不套用自動降級，也不自動切換 active rendition。
+來源畫質、已下載 rendition、目前播放 rendition 及執行狀態寫入 `<job>/media-work/catalog.json`。每次執行的 HTTP 狀態、下載結果、選定 format ID、實際寬高、codec 與驗證結果寫入 `<job>/media-work/runs/<run-id>/`。下載後以 workflow-local FFmpeg 重新讀取實際解析度。與指定畫質不一致或無法確認解析度時，不得發布到 `source/renditions/`。初次下載仍使用 720p 自動選擇下限。使用者從「畫質管理」明確點選的畫質則是 exact-height 操作，不套用自動降級，也不自動切換 active rendition。
 
 重新取得來源清單或下載指定畫質：
 
@@ -256,7 +269,7 @@ plugins/insu-player/skills/watch-video/scripts/process-video.sh \
 
 低於 720p 仍需使用者明確同意後加入 `--allow-low-quality`。
 
-重新執行會沿用固定 job，不建立重複首頁或覆蓋其他影片。yt-dlp 使用 `--no-overwrites`；若檔案損壞，Agent 先確認精確目標再移除並重跑。
+重新執行會沿用固定 job，不建立重複首頁或覆蓋其他影片。yt-dlp 使用 `--no-overwrites`。若檔案損壞，Agent 先確認精確目標再移除並重跑。
 
 ## 階段 6：只重跑指定階段
 
@@ -284,7 +297,7 @@ plugins/insu-player/skills/watch-video/scripts/transcribe.sh \
   --device cpu
 ```
 
-若 `audio.m4a` 不存在，腳本會從同一 job 的 active rendition 擷取，不必再下載一份媒體。Apple Silicon 或不確定 GPU 環境預設 CPU；確定 CUDA 可用才指定 `--device cuda`。
+若 `audio.m4a` 不存在，腳本會從同一 job 的 active rendition 擷取，不必再下載一份媒體。Apple Silicon 或不確定 GPU 環境預設 CPU。確定 CUDA 可用才指定 `--device cuda`。
 
 OpenAI API 轉錄必須先取得這次音訊上傳的明確同意，並只在目前 terminal 設定 key：
 
@@ -302,14 +315,14 @@ API 音訊會先轉為低位元率分段，單檔低於 25 MB，再把 segment �
 
 ## 階段 7：完整句內容與獨立字幕切分
 
-`transcribe.sh` 以模型 timed units 建立 schema-version 4 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言；timed units 可以是 word、token 或 grapheme-group。
+`transcribe.sh` 先建立 schema-version 2 model transcript，保存 canonical `language`、實際 `engineLanguage` 與 timed units，再建立 schema-version 4 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言。timed units 可以是 word、token 或 grapheme-group。Job status 固定使用 schema version 5。舊 status、transcript 或 manifest 不遷移、不轉換、不走 legacy reader，直接重建。
 
 - `mode=proofread`：使用 `$proofread-subtitles`，來源與輸出語言相同，完成同語校正與潤色。
 - `mode=translate`：使用 `$translate-subtitles`，先對完整句初譯，再完成自然目標語潤色。
 
 兩者都把初稿寫入 `draftOutputText`、定稿寫入 `outputText`，保存 source timed-unit ranges、raw punctuation、專有名詞、數字、邏輯關係、required terms 與 processor metadata。不要在這一步依 cue 或字數切分。
 
-完整句 pair 驗證後，用統一 importer 寫成 immutable `proofread` 或 `translation` artifact；它立即可供播放，不需要等待切分：
+完整句 pair 驗證後，用統一 importer 寫成 immutable `proofread` 或 `translation` artifact。它立即可供播放，不需要等待切分：
 
 ```bash
 plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
@@ -337,7 +350,7 @@ python3 plugins/insu-player/skills/segment-subtitles/scripts/segment_subtitles.p
   --provider agent --service codex
 ```
 
-先依 finalized output language 決定 pieces，翻譯模式即採 target-first；凍結 target revision 後才能填入連續 source spans。不得使用 risky／blocked boundary，也不得為了 timing 改寫 frozen output。
+先依 finalized output language 決定 pieces，翻譯模式即採 target-first。凍結 target revision 後才能填入連續 source spans。不得使用 risky／blocked boundary，也不得為了 timing 改寫 frozen output。
 
 Validation 通過後，以同一 importer 寫入 `segmentation` artifact，並指定 `--timing-source-artifact` 與 `--content-parent-artifact`。每個 revision 都只寫入自己的 `subtitle-work/artifacts/<artifact-id>/`。
 
@@ -346,30 +359,32 @@ Validation 通過後，以同一 importer 寫入 `segmentation` artifact，並�
 ## 階段 8：首頁驗證
 
 - [ ] 首頁不重新導向，每支 job 只占一列
-- [ ] processing job 的進度會更新；程序消失後顯示中斷
+- [ ] processing job 的進度會更新。程序消失後顯示中斷
 - [ ] 按「觀看」開啟 iframe modal，關閉後仍在首頁
 - [ ] MP4 能播放、有聲音、duration 合理
-- [ ] 預設沿用上次選擇，否則依 workflow 目標語、來源語與可用語言排序；下拉只顯示 BCP 47 語言碼與關閉
+- [ ] 預設沿用上次選擇，否則依 workflow 目標語、來源語與可用語言排序。下拉只顯示 BCP 47 語言碼與關閉
 - [ ] 播放、暫停、拖曳後字幕同步
 - [ ] 關閉 modal 後 iframe `src` 被清除，影片停止解碼
 - [ ] 重開同支影片可從 job 內 `ui-state.json` 的進度接續
 - [ ] 「詳情」依序顯示關於影音、畫質管理、字幕管理、影音摘要、影音筆記與執行紀錄
-- [ ] 「字幕管理」內以原始字幕、翻譯字幕、切分字幕 tabs 共用版本譜系與 revision 選擇；原始字幕包含 yt-dlp 來源或本機、雲端模型轉錄的字幕，翻譯與切分表格都以多語並排呈現，且只有表格區域捲動
-- [ ] 字幕內層 tab 與 revision 都映射到 URL，重新整理可恢復同一畫面；舊的三個字幕頂層路徑不再接受
-- [ ] 完整翻譯一完成就可播放；有效切分稿完成時在不中斷播放偏好的前提下自動升級；無效或處理中的新版不取代舊版
+- [ ] 「字幕管理」內以原始字幕、翻譯字幕、切分字幕 tabs 共用版本譜系與 revision 選擇。原始字幕包含 yt-dlp 來源或本機、雲端模型轉錄的字幕，翻譯與切分表格都以多語並排呈現，且只有表格區域捲動
+- [ ] 字幕內層 tab 與 revision 都映射到 URL，重新整理可恢復同一畫面。舊的三個字幕頂層路徑不再接受
+- [ ] 完整翻譯一完成就可播放。有效切分稿完成時在不中斷播放偏好的前提下自動升級。無效或處理中的新版不取代舊版
 - [ ] 開啟「關於影音」時不先請求字幕與 log，只有切到字幕或執行紀錄分頁才按需載入
-- [ ] 斷網時仍可使用原生 `<video controls>` 與本機 VTT；首頁預設不發出 CDN 請求，只有使用者主動選擇 Google Fonts 時載入字體
+- [ ] 斷網時仍可使用原生 `<video controls>` 與本機 VTT。首頁預設不發出 CDN 請求，只有使用者主動選擇 Google Fonts 時載入字體
 
 ## 使用四、五次之後的預期流程
 
 環境與 server 只需設定一次。之後每次：
 
-1. 使用者把 yt-dlp 支援的 URL 交給 Agent；未知來源則請 Agent 先研究支援方式。
+1. 使用者把 yt-dlp 支援的 URL 交給 Agent。未知來源則請 Agent 先研究支援方式。
 2. Agent 先確認目前 workspace 的首頁已用 Codex 內建瀏覽器開啟，沒有開啟就先開啟。
-3. Agent 執行 `process-video.sh`；首頁自動多一列。
-4. 使用者可以繼續留在首頁，從 navbar 開啟影音中心查看下載／轉錄進度或觀看既有影片。
-5. 待翻譯時先完成並匯入完整句目標語翻譯，此時即可觀看；再由 `$segment-subtitles` 產生獨立的 target-first 切分 revision，驗證成功後自動升級 active tracks。
-6. 磁碟累積後只清理已完成 job 的中間檔，保留首頁播放需要的檔案。
+3. 使用者只回答是否有權處理、要整理原語字幕或翻譯，以及翻譯時想要的語言。
+4. Agent 偵測來源語言、檢查能力、說明資料邊界並提出一個建議。使用者不需要回答任何技術選項。
+5. Agent 執行 `process-video.sh`，首頁自動多一列並持續顯示實際狀態。
+6. 待內容處理時先完成並匯入完整句校正或翻譯，此時可以先播放。
+7. `$segment-subtitles` 再產生獨立的 output-first 或 target-first 切分 revision，驗證成功後自動升級 active tracks。此時才宣告字幕流程完成。
+8. 磁碟累積後只清理已完成 job 的中間檔，保留首頁播放需要的檔案。
 
 不需要重裝 Python、重下模型、重建 HTML、重開每支影片的 server，也不需要離開首頁找不同 player 目錄。
 
@@ -402,7 +417,7 @@ plugins/insu-player/skills/watch-video/scripts/clean-job.sh \
   --video-id VIDEO_ID
 ```
 
-首頁的共用刪除對話框會自動執行唯讀 preview，只有沒有 blocker 時才啟用確認按鈕；使用者確認後，server 以該次 digest 執行 `execute --yes` 並 `verify`。digest 或資源狀態有變化就必須重新預覽；active job、symlink、資料庫檢查失敗或非 cascade 關聯都會拒絕移除。字幕分頁使用同一個對話框與 `subtitle-artifact` handler，刪除指定 revision 時會連鎖移除依賴它的下游字幕，但保留影音及其他不相關內容。
+首頁的共用刪除對話框會自動執行唯讀 preview，只有沒有 blocker 時才啟用確認按鈕。使用者確認後，server 以該次 digest 執行 `execute --yes` 並 `verify`。digest 或資源狀態有變化就必須重新預覽。active job、symlink、資料庫檢查失敗或非 cascade 關聯都會拒絕移除。字幕分頁使用同一個對話框與 `subtitle-artifact` handler，刪除指定 revision 時會連鎖移除依賴它的下游字幕，但保留影音及其他不相關內容。
 
 ## 匯出獨立播放器（選用）
 
@@ -421,7 +436,7 @@ plugins/insu-player/skills/watch-video/scripts/serve-player.sh \
   8010
 ```
 
-這會複製大型 MP4；不要把 export 誤當影片庫的必要步驟。
+這會複製大型 MP4。不要把 export 誤當影片庫的必要步驟。
 
 ## 更新
 
@@ -432,7 +447,7 @@ plugins/insu-player/skills/watch-video/scripts/update-environment.sh .local/insu
 plugins/insu-player/skills/watch-video/scripts/doctor.sh .local/insu-player
 ```
 
-`update-environment.sh` 只刷新 workflow-local runtime，可用 `--provider local|openai|both` 選擇依賴。Repository、plugin 或 Release ZIP 本身的版本更新交給 `$player-manager`；更新後重新啟動 `serve-library.sh` 即會使用新版首頁模板，jobs 不需要搬移。
+`update-environment.sh` 只刷新 workflow-local runtime，可用 `--provider local|openai|both` 選擇依賴。Repository、plugin 或 Release ZIP 本身的版本更新交給 `$player-manager`。更新後重新啟動 `serve-library.sh` 即會使用新版首頁模板，jobs 不需要搬移。
 
 ## 完整移除
 
@@ -463,11 +478,11 @@ plugins/insu-player/skills/watch-video/scripts/uninstall.sh \
 
 首次：
 
-> 依照 `$watch-video` 建立本機影片庫。先啟動目前 workspace 的首頁並用 Codex 內建瀏覽器開啟，保持首頁開啟後再跑 doctor，列出會安裝的位置、空間與系統影響；取得我同意後完成安裝並處理這支影片。
+> 使用 `$watch-video` 初始化 INSU Player。先開啟專案首頁，再安裝所有依賴、OpenAI SDK、SQLite 與 Whisper medium。完成後停在首頁，請我點「開始使用」並貼上網址，不要直接詢問網址或技術選項。
 
 日常：
 
-> 沿用既有 `.local/insu-player`，把這支影音加入本機影音庫。先問我是否需要翻譯及目標語言，再分別詢問 timing、內容與切分要使用本機模型、OpenAI 模型或目前的 Agent；timing 不接受 Agent。翻譯模式不取得任何平台字幕，完成來源 timed units、完整自然譯文與 target-first 切分，完成 Source Alignment 和驗證後輸出同步雙語字幕。首頁保持啟動，完成後告訴我狀態。
+> 使用 `$watch-video` 協助我把一支影音加入目前專案的 INSU Player。先開啟首頁，再請我貼上單支影音網址。把我視為第一次使用的人，一次只問一個必要的白話問題。來源語言由音訊偵測，技術選項由你檢查後提出建議。完成影音、完整句字幕、字幕切分與驗證後，再告訴我到字幕管理查看結果。
 
 續跑：
 
@@ -479,9 +494,9 @@ plugins/insu-player/skills/watch-video/scripts/uninstall.sh \
 
 移除：
 
-> 完整移除指定的 INSU Player 影音。請使用 `$video-library`，固定目前專案的 workspace，先以 `remove_library_item.py preview` 列出檔案、資料庫、依賴、容量與可復原性；在我確認該次 plan digest 前不要停止程序或刪除。確認後只執行同一份計畫，最後用 `verify` 檢查並回報。
+> 完整移除指定的 INSU Player 影音。請使用 `$video-library`，固定目前專案的 workspace，先以 `remove_library_item.py preview` 列出檔案、資料庫、依賴、容量與可復原性。在我確認該次 plan digest 前不要停止程序或刪除。確認後只執行同一份計畫，最後用 `verify` 檢查並回報。
 
-> 依 uninstall 章節先做 dry run，分開列出 runtime、模型與 jobs；確認沒有背景程序，先不要真的刪除。
+> 依 uninstall 章節先做 dry run，分開列出 runtime、模型與 jobs。確認沒有背景程序，先不要真的刪除。
 
 ## 上游文件
 

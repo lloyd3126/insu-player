@@ -57,9 +57,9 @@ describe("job status presentation", () => {
         manualReferenceArtifactIds: [],
       },
     })
-    expect(phaseForJob(summary)).toBe("目標語字幕切分")
+    expect(phaseForJob(summary)).toBe("正在重新切分字幕")
     expect(subtitlePipelineLabel(summary)).toEqual({
-      label: "目標語字幕切分",
+      label: "正在重新切分字幕",
       detail: "Agent · codex",
     })
   })

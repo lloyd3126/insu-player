@@ -12,11 +12,12 @@ Read [references/language-contract.md](references/language-contract.md) whenever
 ## Require the Correct Evidence
 
 1. Require a normalized model transcript with ordered `word`, `token`, or `grapheme-group` timing from the original audio.
-2. Require distinct source and output BCP 47 language codes.
+2. Consume the detected source language from the schema-version 2 model transcript. Ask only which language the user wants for the translated subtitles, using ordinary language names. Never ask for codes. Resolve the source and output to distinct canonical BCP 47 tags before invoking scripts.
 3. A creator-provided manual CC track may be used as optional spelling and terminology evidence. Its cue boundaries are never timing authority.
 4. Never inspect, download, import, or reference platform automatic captions.
-5. Verify that the selected content processor supports the requested language pair. It may be a local model, an explicitly authorized OpenAI model, or the current Agent. Schema support does not prove capability.
-6. Obtain explicit consent before audio or subtitle text leaves the device. Never persist an API key.
+5. Inspect available capabilities, choose one suitable content processor internally, and verify that it supports the requested language pair. Default to the current Agent for text translation. A local model or explicitly authorized OpenAI model may be used when it better matches the user's plain-language privacy or quality request. Schema support does not prove capability.
+6. Do not ask the user for a model ID, provider, processor, BCP 47 tag, or command parameter. Explain only the relevant data boundary and result in ordinary language.
+7. Obtain explicit consent before audio or subtitle text leaves the device. Never persist an API key.
 
 ## Prepare Complete Sentences
 
@@ -83,4 +84,4 @@ Hand the content manifest, exact model transcript, timing-source artifact ID, an
 
 ## Report
 
-Report source and output BCP 47 codes, timing processor, content processor, timed-unit kind and count, sentence count, manual CC references, validation result, translation artifact ID/revision, manifest and VTT paths, unresolved terminology, active playback result, and whether segmentation remains pending.
+Lead with the plain-language result and state that subtitle segmentation is still pending. Then report source and output BCP 47 codes, timing processor, content processor, timed-unit kind and count, sentence count, manual CC references, validation result, translation artifact ID/revision, manifest and VTT paths, unresolved terminology, and active playback result. Do not announce the whole subtitle workflow as complete until `$segment-subtitles` succeeds.

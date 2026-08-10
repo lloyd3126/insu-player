@@ -1,6 +1,6 @@
 ---
 name: watch-video
-description: Add an authorized online video to INSU Player and keep the user on one local library page while downloading, obtaining captions, transcribing locally or through the OpenAI API, translating subtitles, resuming work, and watching in an iframe modal. Use whenever a user asks Codex to watch, download, transcribe, translate, subtitle, or reopen a video.
+description: Add an authorized online video to INSU Player and keep the user on one local library page while downloading, obtaining captions, transcribing locally or through the OpenAI API, translating subtitles, monitoring long-running work, resuming interruptions, and watching in an iframe modal. Use whenever a user asks Codex to watch, download, transcribe, translate, subtitle, or reopen a video.
 ---
 
 # INSU Player: Watch Video
@@ -14,19 +14,23 @@ Keep the user on one workspace-scoped localhost library homepage while Codex man
 3. Treat the resolved workspace path as the library identity. Never search outside the current project for a fuller or already-running INSU workspace, and never adopt one merely because it has jobs, a completed runtime, or a server on the default port. Only cross that boundary when the user explicitly selects the other workspace.
 4. Port `8000` is only the preferred starting port, not a machine-wide library identity. Start normally without an explicit port. If `8000` is occupied, the server must atomically bind an OS-selected free localhost port and record the actual `host`, `port`, and `pid` in the selected workspace's `.insu-player-server.json`. Reuse a running server only when that workspace-owned descriptor identifies a live process; leave every other workspace untouched. Treat an explicitly supplied port as strict.
 5. Make the first user-visible product action opening the selected workspace homepage in the Codex in-app browser. Start or reuse its server, open the actual localhost URL instead of merely printing it, and keep the page open before running doctor, setup, media inspection, download, transcription, or translation. If the in-app browser is unavailable, report the exact URL immediately. If Python 3 is unavailable and the server cannot start, report that blocker, install only through the workspace setup flow, and open the homepage as soon as its Python exists.
-6. Before inspecting or downloading subtitles, ask whether the user wants same-language proofreading or translation. Confirm the source BCP 47 language; for translation also ask for the output BCP 47 language. Ask separately for the timing processor, content processor, and segmentation processor: timing must use `local` or `openai`, while content and segmentation independently accept `local`, `openai`, or the current Agent. Pass the timing choice to `--proofread --provider PROVIDER` or `--translate TARGET --provider PROVIDER`; the downstream skills record the other processors. Creator-provided manual CC may be downloaded, imported, used as text evidence, and played immediately in either path. Platform automatic captions must never be inspected, downloaded, imported, or referenced. Proofreading, translation, and segmentation always require source-language word, token, or grapheme-group timing produced from the original audio by the selected timing model.
-7. Confirm that the user has the right to download and process the requested media. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
-8. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill while the homepage remains open.
-9. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB; the API provider avoids the model download but uploads audio externally and may incur API charges.
+6. Treat the user as a first-time user who may not know technical terms or how to describe the desired result. Before inspecting or downloading subtitles, ask in ordinary language whether they want the video's original-language subtitles cleaned up or translated. For translation, ask only for an ordinary target-language name. Do not ask the user to choose a skill, model ID, provider, processor, timing method, artifact, Source Alignment, BCP 47 tag, or model parameter.
+7. Detect the source language from the original audio by default. Ask about it only when detection is unreliable, speech is multilingual, or script and regional variation materially affect the result. Internally resolve ordinary language names to canonical stored BCP 47 tags and then to the timing model's accepted parameter. A completed artifact must contain the detected canonical language rather than `und`.
+8. Inspect installed capabilities and recommend one safe processing plan in plain language. Default to local Whisper medium for fine-grained audio timing and the current Agent for complete-sentence content and subtitle segmentation. Explain whether audio remains local, whether the Agent reads transcript text, whether another API will receive data, and whether charges may apply. Ask for explicit consent only when an API will actually receive audio or subtitle text. Internally record timing, content, and segmentation processors separately.
+9. Creator-provided manual CC may be downloaded, imported, used as text evidence, and played immediately in either path. Platform automatic captions must never be inspected, downloaded, imported, or referenced. Proofreading, translation, and segmentation always require source-language word, token, or grapheme-group timing produced from the original audio by the selected timing model.
+10. Confirm in plain language that the user owns the media or has permission to download, transcribe, and watch it. Never claim authorization on the user's behalf. Do not bypass DRM, paywalls, memberships, private access, region restrictions, or account controls.
+11. Run `scripts/portable/doctor.sh` from the repository root in portable mode, or `scripts/doctor.sh WORKSPACE` from this skill while the homepage remains open.
+12. Before the first setup, explain network use and approximate disk impact. Local Whisper can consume several GB. An API provider avoids the model download but uploads data externally and may incur charges.
 
-## Choose Processors
+## Resolve Processing Internally
 
 - Creator-provided manual CC is the preferred immediate playback track and optional text reference. It never replaces model timing for proofreading, translation, or segmentation. When no manual CC exists, the model transcript is the initial playable source track.
 - Source support follows the extractor set of the workflow-local yt-dlp version. YouTube is the default example, not the only supported platform. When a URL has no matching extractor, use INSU Player to research the source and a safe implementation path before declaring it unsupported.
-- Use local timing when audio must remain on the device. It installs Whisper, PyTorch, and the selected model inside the workspace.
+- Use local timing by default. It installs Whisper, PyTorch, and the recommended `medium` model inside the workspace.
 - Use OpenAI timing only after explicit user authorization to upload audio. Require "OPENAI_API_KEY" in the process environment and never save or print it. The workflow uses "whisper-1" because timestamped segment output is required.
-- Choose content and segmentation processors independently. Each may use a local model, an explicitly authorized OpenAI model, or the current Agent. Record Codex as `agent / codex`; do not add it to the installed model inventory.
-- If both are installed, the default remains local unless the user chooses API upload.
+- Choose content and segmentation processors independently after inspecting what is actually available. The current Agent is the default for these text stages. A verified local model or explicitly authorized OpenAI model may be used when it better matches the user's plain-language privacy or quality request.
+- Record Codex as `agent / codex`. Do not add it to the installed model inventory.
+- If the user says "you decide", use the safe default. If the user says "keep everything local", verify a capable local content and segmentation model rather than treating Whisper as a translation model.
 
 ## Preserve Playback Quality
 
@@ -73,9 +77,9 @@ The homepage prefers "http://127.0.0.1:8000/". When that port is occupied, use t
 
 ## Subtitle Production
 
-The source layer accepts only creator-provided manual CC or a model transcript. Manual CC is playable and may guide spelling and terminology; its cue boundaries never supply precise alignment. Automatic platform captions are forbidden in every path.
+The source layer accepts only creator-provided manual CC or a model transcript. Manual CC is playable and may guide spelling and terminology. Its cue boundaries never supply precise alignment. Automatic platform captions are forbidden in every path.
 
-For same-language correction, follow `$proofread-subtitles`. For translation, follow `$translate-subtitles`. Both paths transcribe the original audio with the explicitly selected local or OpenAI model, preserve normalized fine-grained timed units, reconstruct complete source sentences, and produce a complete polished output before display cuts. Import the validated complete revision as `proofread` or `translation` respectively:
+For same-language correction, follow `$proofread-subtitles`. For translation, follow `$translate-subtitles`. Both paths transcribe the original audio with the internally resolved local or explicitly authorized OpenAI timing model, preserve normalized fine-grained timed units, reconstruct complete source sentences, and produce a complete polished output before display cuts. Import the validated complete revision as `proofread` or `translation` respectively:
 
 ~~~bash
 plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
@@ -91,11 +95,18 @@ Each complete proofread or translation revision is playable before segmentation.
 
 Keep complete corrected or translated sentences separate from derived display segmentation. Final segmented tracks must have identical cue IDs and intervals derived from continuous source timed units. Apply punctuation normalization only through the selected language/output profile. Do not claim that a processor supports an arbitrary language unless that exact capability was verified and recorded. The player exposes only ready validated tracks; artifact kind, provenance, revisions, processor, validation, active-version switching, and deletion belong in 字幕管理.
 
+Current data contracts are clean-break only: job status uses schema 5 and model transcripts use schema 2. Reject any other version and rebuild the job; never migrate, coerce, or invoke a legacy reader.
+
 ## Recovery, Updating, and Removal
 
+- When setup, download, rendition management, transcription, or another external process remains active after the first minute of direct observation, use `$monitor-player-job` to create or update one five-minute heartbeat attached to the current task. Keep the selected workspace, video ID, subtitle choices, processor choices, and upload consent boundary in that task. Never create a standalone scheduled task or a worktree for media monitoring.
+- The heartbeat re-reads `status.json` or the selected media catalog operation and never duplicates a live process. It may continue deterministic already-authorized handoffs, but it must stop for new API consent, a low-quality exception, deletion, provider or language changes, repeated failure, or any other user decision.
+- Delete the heartbeat after verified completion or when the workflow cannot safely continue. If scheduled tasks are unavailable, report that automatic follow-up is unavailable; do not add a polling, cron, daemon, or database fallback.
 - Re-run the same job command after interruption; durable "status.json" and logs are the source of truth.
 - Use `$player-manager` for repository/plugin updates. Updating code must preserve `.local/` and jobs.
 - Preview runtime removal with "scripts/portable/uninstall.sh". Add "--yes" to remove tools and caches while retaining jobs; add "--include-generated --yes" only when the user explicitly wants videos, subtitles, logs, and progress removed.
 - For complete portable removal, stop foreground processes, clean up as authorized, then move the exact extracted repository folder to Trash. No workflow-owned persistent data should exist elsewhere.
 
-At handoff, report the timing, content, and segmentation processors, workspace, homepage, final job state, artifacts, next-use command, and exact removal boundary.
+Do not announce overall completion after download, transcription, or a complete-sentence content revision alone. Overall completion requires playable media plus validated complete-sentence and segmentation artifacts in the subtitle catalog.
+
+At handoff, lead with the plain-language result and where the user can view it. Then report the timing, content, and segmentation processors, workspace, homepage, final job state, artifacts, heartbeat disposition, next-use command, and exact removal boundary without asking the user to interpret those internal fields.

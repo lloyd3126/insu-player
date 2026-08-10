@@ -39,15 +39,15 @@ export const JOB_STATE_LABELS: Record<string, string> = {
 }
 
 export const SUBTITLE_STAGE_LABELS: Record<string, string> = {
-  awaiting_choice: "等待選擇字幕流程",
-  awaiting_model: "等待模型轉錄",
-  model_transcription: "模型詞級轉錄",
-  content_revision: "完整句內容處理",
-  content_complete: "完整句內容完成",
-  target_segmentation: "目標語字幕切分",
-  target_frozen: "目標語切分已固定",
-  source_alignment: "來源時間對齊",
-  validation: "字幕產物驗證",
+  awaiting_choice: "等待確認字幕需求",
+  awaiting_model: "準備辨識語音",
+  model_transcription: "正在辨識語音",
+  content_revision: "正在整理字幕內容",
+  content_complete: "字幕內容已完成",
+  target_segmentation: "正在重新切分字幕",
+  target_frozen: "字幕切分已確定",
+  source_alignment: "正在同步字幕時間",
+  validation: "正在檢查字幕",
   complete: "字幕已完成",
 }
 

@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = REPO_ROOT / "plugins" / "insu-player"
 EXPECTED_SKILLS = {
     "watch-video",
+    "monitor-player-job",
     "video-library",
     "transcribe-media",
     "translate-subtitles",
@@ -47,9 +48,29 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("OpenAI SDK", prompts[0])
         self.assertIn("SQLite", prompts[0])
         self.assertIn("Whisper medium", prompts[0])
+        self.assertIn("完成後停在首頁", prompts[0])
+        self.assertIn("開始使用", prompts[0])
+        self.assertIn("不要直接詢問網址或技術選項", prompts[0])
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("選擇「試用」", readme)
         self.assertIn(f"```text\n{prompts[0]}\n```", readme)
+
+    def test_web_and_prompt_sources_do_not_use_full_width_semicolons(self) -> None:
+        files = [
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "AGENTS.md",
+            REPO_ROOT / "START-HERE.md",
+            PLUGIN_ROOT / ".codex-plugin" / "plugin.json",
+            *sorted((REPO_ROOT / "src" / "client").rglob("*.ts")),
+            *sorted((REPO_ROOT / "src" / "client").rglob("*.tsx")),
+            *sorted((REPO_ROOT / "src" / "client").rglob("*.css")),
+            *sorted((REPO_ROOT / "src" / "shared" / "prompts").glob("*.ts")),
+            *sorted((PLUGIN_ROOT / "skills").rglob("SKILL.md")),
+            *sorted((PLUGIN_ROOT / "skills").rglob("openai.yaml")),
+            *sorted((PLUGIN_ROOT / "skills").rglob("*.md")),
+        ]
+        for source in files:
+            self.assertNotIn("\uff1b", source.read_text(encoding="utf-8"), source)
 
     def test_product_docs_use_the_insu_repository_and_brand(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -62,10 +83,39 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("API SDK 與 API Key 設定狀態", readme)
         self.assertIn("bun-runtime/bin` 加入 `PATH`", agent_guide)
         self.assertIn("不得假設使用者已安裝全域 Bun", agent_guide)
+        self.assertIn("$monitor-player-job", agent_guide)
+        self.assertIn("八個 skill validator", agent_guide)
+        self.assertIn("## 八個產品 skills", readme)
         self.assertIn("## v0.2.0", changelog)
         self.assertIn("api.github.com/repos/lloyd3126/insu-player/releases/latest", manager)
         legacy_repository = "lloyd3126/" + "xe" + "ruca-player"
         self.assertNotIn(legacy_repository, readme + manager)
+
+    def test_long_running_jobs_use_one_current_task_heartbeat(self) -> None:
+        watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        monitor_root = PLUGIN_ROOT / "skills" / "monitor-player-job"
+        monitor_skill = (monitor_root / "SKILL.md").read_text(encoding="utf-8")
+        contract = (monitor_root / "references" / "monitoring-contract.md").read_text(
+            encoding="utf-8"
+        )
+        plugin_agent = (monitor_root / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        bridge_agent = (
+            REPO_ROOT / ".agents" / "skills" / "monitor-player-job" / "agents" / "openai.yaml"
+        ).read_text(encoding="utf-8")
+        manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+
+        self.assertIn("$monitor-player-job", watch_skill)
+        self.assertIn("five-minute heartbeat attached to the current task", watch_skill)
+        self.assertIn("Never create a standalone scheduled task", monitor_skill)
+        self.assertIn("never an isolated worktree", monitor_skill)
+        self.assertIn("do not migrate, coerce, or fall back", monitor_skill)
+        self.assertIn("Do not use `app.db`", contract)
+        self.assertIn("Do not emulate it with `sleep`", contract)
+        self.assertEqual(plugin_agent, bridge_agent)
+        self.assertIn("$monitor-player-job", plugin_agent)
+        self.assertIn("長時間工作排程追蹤與同 task 復原", manifest["interface"]["capabilities"])
 
     def test_plugin_workspaces_stay_isolated_across_projects(self) -> None:
         watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
@@ -100,14 +150,15 @@ class ProductBoundaryTests(unittest.TestCase):
         )
         self.assertIn("## 階段 1：先開啟目前 Workspace 的首頁", workflow)
         self.assertLess(workflow.index("## 階段 1："), workflow.index("## 階段 3：從零盤點環境"))
-        self.assertIn("Codex 內建瀏覽器", manifest["interface"]["defaultPrompt"][0])
-        self.assertIn("引導我加入影音", manifest["interface"]["defaultPrompt"][0])
-        self.assertIn("First open this project", plugin_agent)
+        self.assertIn("先開啟專案首頁", manifest["interface"]["defaultPrompt"][0])
+        self.assertIn("完成後停在首頁", manifest["interface"]["defaultPrompt"][0])
+        self.assertIn("Open this project's", plugin_agent)
         self.assertIn("INSU Player homepage", plugin_agent)
         self.assertEqual(plugin_agent, bridge_agent)
         self.assertIn("First open this project's INSU Player homepage", library_agent)
         self.assertEqual(library_agent, library_bridge_agent)
-        self.assertIn("第一個動作先啟動 INSU Player 首頁", start_here)
+        self.assertIn("完成後停在首頁", start_here)
+        self.assertIn("不要直接詢問網址或技術選項", start_here)
 
     def test_library_selects_and_records_an_available_port(self) -> None:
         watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
@@ -149,7 +200,9 @@ class ProductBoundaryTests(unittest.TestCase):
 
         self.assertIn("Before inspecting or downloading subtitles, ask", watch_skill)
         self.assertIn("Never inspect, download, import, or reference platform automatic captions", translate_skill)
-        self.assertIn("local model, an explicitly authorized OpenAI model, or the current Agent", translate_skill)
+        self.assertIn("Default to the current Agent for text translation", translate_skill)
+        self.assertIn("Do not ask the user for a model ID, provider, processor", translate_skill)
+        self.assertIn("Detect the source language from the original audio by default", watch_skill)
         self.assertIn("--write-subs", download)
         self.assertNotIn("--write-auto-subs", download)
         self.assertIn("automatic captions are intentionally excluded", download)
@@ -162,7 +215,7 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("separately prepared audio track", watch_skill)
         self.assertIn('"timestamp_granularities": ["segment", "word"]', transcriber)
         self.assertIn("--proofread or --translate TARGET_BCP47", portable_add)
-        self.assertIn("subtitle production requires asking the user to choose --provider", portable_add)
+        self.assertIn("the Agent must resolve --provider", portable_add)
         self.assertTrue(reflow.is_file())
         self.assertTrue(segmentation.is_file())
         self.assertTrue(revision_import.is_file())
@@ -214,6 +267,9 @@ class ProductBoundaryTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         usage_component = (
             REPO_ROOT / "src" / "client" / "features" / "home" / "UsageGuideDialog.tsx"
+        ).read_text(encoding="utf-8")
+        usage_content = (
+            REPO_ROOT / "src" / "client" / "features" / "home" / "UsageDialog.tsx"
         ).read_text(encoding="utf-8")
         settings_component = (
             REPO_ROOT / "src" / "client" / "features" / "settings" / "FeatureSettingsDialog.tsx"
@@ -300,6 +356,9 @@ class ProductBoundaryTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         python_server = PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "library_server.py"
         package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
+        prompt_contract = (
+            REPO_ROOT / "src" / "shared" / "prompts" / "insu-prompts.ts"
+        ).read_text(encoding="utf-8")
 
         self.assertTrue(all(not path.exists() for path in legacy_assets))
         self.assertNotIn("legacyLibraryRoot", server_app + server_entry)
@@ -351,12 +410,17 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("開始使用", usage_component)
         self.assertIn("我的提示", usage_component)
         self.assertIn("支援網站", usage_component)
+        self.assertIn("buildAddVideoPrompt", usage_content)
+        self.assertIn("影音網址", usage_content)
+        self.assertIn("複製加入提示", usage_content)
+        self.assertIn("copyDisabled={!result.prompt}", usage_content)
 
         self.assertIn('value="environment"', settings_component)
         self.assertIn('value="local-models"', settings_component)
         self.assertIn('value="cloud-models"', settings_component)
         self.assertIn("PromptActionCard", environment_component)
-        self.assertIn("不要讀取 Key 原值", environment_component)
+        self.assertIn("ENVIRONMENT_PROMPT", environment_component)
+        self.assertIn("不要讀取或回報 Key 原值", prompt_contract)
         self.assertIn("environment-table", environment_component)
         self.assertIn("PromptActionCard", models_component)
         self.assertIn("ApiKeySelect", models_component)
@@ -386,6 +450,7 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertNotIn("DialogContent", subtitle_revision_preview)
         self.assertIn("CaptionComparisonTable", subtitle_revision_preview)
         self.assertIn("JobHistoryCard", detail_about_component)
+        self.assertIn("JobNextActionCard", detail_about_component)
         self.assertIn("VideoRemovalDialog", detail_about_component)
         self.assertIn("ScrollArea", detail_history_component)
         self.assertIn("ResourceRemovalDialog", video_removal_dialog_component)

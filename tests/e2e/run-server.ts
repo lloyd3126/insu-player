@@ -109,7 +109,7 @@ writeFileSync(
 writeFileSync(
   path.join(job, "status.json"),
   `${JSON.stringify({
-    schemaVersion: 4,
+    schemaVersion: 5,
     videoId: "demo-video",
     title: "雙語測試影音",
     sourceUrl: "https://example.test/demo",
@@ -295,7 +295,13 @@ writeFileSync(
       },
     ],
     activeSubtitleTracks: {},
-    transcription: { provider: "local", model: "medium" },
+    transcription: {
+      provider: "local",
+      model: "medium",
+      languageTag: "en",
+      engineLanguage: "en",
+      updatedAt: "2026-08-08T02:30:00.000Z",
+    },
     history: [
       {
         at: "2026-08-08T00:00:00.000Z",

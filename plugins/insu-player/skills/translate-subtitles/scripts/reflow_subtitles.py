@@ -197,6 +197,8 @@ def model_transcript_units(path: Path) -> tuple[list[TimedUnit], str, str, str |
         raise ValueError(f"invalid model transcript: {path}") from error
     if not isinstance(payload, dict):
         raise ValueError("model transcript must be an object")
+    if payload.get("schemaVersion") != 2:
+        raise ValueError("model transcript must use schemaVersion 2")
     provider = payload.get("provider")
     model = payload.get("model")
     if provider not in {"local", "openai"}:
@@ -204,8 +206,12 @@ def model_transcript_units(path: Path) -> tuple[list[TimedUnit], str, str, str |
     if not isinstance(model, str) or not model.strip():
         raise ValueError("model transcript has no model name")
     transcript_language = payload.get("language")
-    if transcript_language is not None:
-        transcript_language = validate_language(transcript_language, "transcript language")
+    transcript_language = validate_language(transcript_language, "transcript language")
+    if transcript_language == "und":
+        raise ValueError("model transcript must contain the detected source language")
+    engine_language = payload.get("engineLanguage")
+    if not isinstance(engine_language, str) or not re.fullmatch(r"[a-z]{2,3}", engine_language):
+        raise ValueError("model transcript must contain engineLanguage")
     raw_units = payload.get("words")
     if not isinstance(raw_units, list):
         raise ValueError("model transcript has no word or token timestamps")
