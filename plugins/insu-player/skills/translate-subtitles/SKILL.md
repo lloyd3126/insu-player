@@ -5,7 +5,7 @@ description: Translate a model-timed source-language transcript into complete, n
 
 # Translate Complete Subtitle Sentences
 
-Create a schema-version 3 `translate` content manifest. This skill owns complete-sentence translation and polishing only. `$segment-subtitles` separately owns display cuts and Source Alignment.
+Create a schema-version 4 `translate` content manifest. This skill owns complete-sentence translation and polishing only. `$segment-subtitles` separately owns display cuts and Source Alignment.
 
 Read [references/language-contract.md](references/language-contract.md) whenever the language pair, writing system, normalization, or selected model capability is uncertain.
 
@@ -15,7 +15,7 @@ Read [references/language-contract.md](references/language-contract.md) whenever
 2. Require distinct source and output BCP 47 language codes.
 3. A creator-provided manual CC track may be used as optional spelling and terminology evidence. Its cue boundaries are never timing authority.
 4. Never inspect, download, import, or reference platform automatic captions.
-5. Verify that the selected local or explicitly authorized OpenAI model supports the requested language pair. Schema support does not prove model support.
+5. Verify that the selected content processor supports the requested language pair. It may be a local model, an explicitly authorized OpenAI model, or the current Agent. Schema support does not prove capability.
 6. Obtain explicit consent before audio or subtitle text leaves the device. Never persist an API key.
 
 ## Prepare Complete Sentences
@@ -35,14 +35,14 @@ python3 scripts/reflow_subtitles.py prepare \
 
 Omit `--reference-artifact` when no manual CC exists. The manifest records complete source sentences, immutable source timed-unit ranges, `draftOutputText`, `outputText`, required terms, timing provenance, and optional text-reference provenance.
 
-Record the content model before writing the translation:
+Record the content processor before writing the translation. For Codex:
 
 ```bash
-python3 scripts/reflow_subtitles.py record-content-model \
-  --manifest MANIFEST --provider local --model MODEL_NAME
+python3 scripts/reflow_subtitles.py record-content-processor \
+  --manifest MANIFEST --provider agent --service codex
 ```
 
-Use `--provider openai --service SERVICE` only after explicit subtitle-text upload authorization.
+For a local or OpenAI model, use `--provider local|openai --model MODEL_NAME`. Use OpenAI only after explicit subtitle-text upload authorization.
 
 ## Translate Then Polish
 
@@ -68,8 +68,8 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   WORKSPACE VIDEO_ID input.final.vtt output.final.vtt \
   --source-language SOURCE_BCP47 \
   --output-language TARGET_BCP47 \
-  --provider local \
-  --model MODEL_NAME \
+  --processor-provider agent \
+  --processor-service codex \
   --artifact-kind translation \
   --revision REVISION \
   --manifest MANIFEST \
@@ -83,4 +83,4 @@ Hand the content manifest, exact model transcript, timing-source artifact ID, an
 
 ## Report
 
-Report source and output BCP 47 codes, transcription and content provider/model, timed-unit kind and count, sentence count, manual CC references, validation result, translation artifact ID/revision, manifest and VTT paths, unresolved terminology, active playback result, and whether segmentation remains pending.
+Report source and output BCP 47 codes, timing processor, content processor, timed-unit kind and count, sentence count, manual CC references, validation result, translation artifact ID/revision, manifest and VTT paths, unresolved terminology, active playback result, and whether segmentation remains pending.

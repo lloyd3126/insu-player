@@ -1,14 +1,20 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { Trash2Icon } from "lucide-react"
-import { createContext, use, useCallback, useMemo } from "react"
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react"
 
 import type { SubtitleManagementView } from "@/app/overlay-context"
-import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
-import { LanguageCodeList } from "@/components/shared/LanguageCodeList"
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+} from "@/components/shared/AsyncState"
 import { PromptActionCard } from "@/components/shared/prompt-cards/PromptActionCard"
-import { ResourceRemovalDialog } from "@/components/shared/removal/ResourceRemovalDialog"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
@@ -18,98 +24,35 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CaptionComparisonTable } from "@/features/job-detail/CaptionComparisonTable"
+import { SubtitleRevisionPreviewDialog } from "@/features/job-detail/SubtitleRevisionPreviewDialog"
+import { SubtitleRevisionTable } from "@/features/job-detail/SubtitleRevisionTable"
 import {
-  useActivateSubtitle,
-  useSubtitleArtifactCaptions,
-  useSubtitleCatalog,
-} from "@/hooks/use-job-detail"
+  SUBTITLE_KIND_COPY,
+  SUBTITLE_VIEWS,
+} from "@/features/job-detail/subtitle-artifact-ui"
+import { useActivateSubtitle, useSubtitleCatalog } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
 import type {
-  SubtitleArtifact,
   SubtitleArtifactKind,
   SubtitleCatalogResponse,
 } from "@shared/contracts/subtitle-catalog"
 
-const SUBTITLE_VIEWS: SubtitleArtifactKind[] = [
-  "source",
-  "proofread",
-  "translation",
-  "segmentation",
-]
-
-const KIND_COPY: Record<
-  SubtitleArtifactKind,
-  { kicker: string; label: string; empty: string }
-> = {
-  source: {
-    kicker: "SOURCE EVIDENCE",
-    label: "原始字幕",
-    empty: "人工 CC 或模型從音訊產生的原始字幕會顯示在這裡。",
-  },
-  proofread: {
-    kicker: "SAME-LANGUAGE REVISION",
-    label: "校正字幕",
-    empty: "不翻譯時，完成同語言校正的字幕會顯示在這裡。",
-  },
-  translation: {
-    kicker: "COMPLETE TRANSLATION",
-    label: "翻譯字幕",
-    empty: "完整句翻譯完成後會顯示在這裡，不需要等待字幕切分。",
-  },
-  segmentation: {
-    kicker: "TARGET-FIRST ALIGNMENT",
-    label: "切分字幕",
-    empty: "完成 target-first 切分與 Source Alignment 後會顯示在這裡。",
-  },
-}
-
 function subtitleAgentPrompt(videoId: string) {
-  return `請管理 INSU Player 中影音 ${videoId} 的字幕。先唯讀檢查目前的字幕產物與狀態，並詢問我要「校正原語字幕」或「翻譯字幕」，若選擇翻譯，再詢問目標 BCP 47 語言碼，以及轉錄與內容處理要使用本機模型或 OpenAI API 模型。人工建立的 CC 字幕可以作為文字參考並立即播放，平台自動字幕一律不要下載、匯入或作為參考。只要要製作校正、翻譯或切分字幕，都必須從原始音訊以模型建立來源語言的 word、token 或 grapheme-group 細粒度時間軸。校正路徑使用 $proofread-subtitles，翻譯路徑使用 $translate-subtitles，兩條路徑完成完整句內容後都必須再使用獨立的 $segment-subtitles，採 target-first 切分並對齊連續的 source timing，驗證通過後匯入 INSU Player。開始任何會上傳資料到 API 的操作前先取得我的明確同意。不要替我刪除字幕，也不要替我切換目前播放的字幕版本，這兩項由我在字幕管理介面操作。`
-}
-
-function revisionLabel(artifact: SubtitleArtifact) {
-  const languagePair = artifact.outputLanguage
-    ? artifact.outputLanguage === artifact.sourceLanguage
-      ? `${artifact.sourceLanguage} · 同語校正`
-      : `${artifact.sourceLanguage} → ${artifact.outputLanguage}`
-    : artifact.sourceLanguage
-  return `r${artifact.revision} · ${languagePair}`
-}
-
-function lifecycleLabel(artifact: SubtitleArtifact) {
-  if (artifact.lifecycleState === "processing") return "處理中"
-  if (artifact.lifecycleState === "failed") return "處理失敗"
-  if (artifact.lifecycleState === "archived") return "已封存"
-  if (artifact.lifecycleState === "draft") return "草稿"
-  return "可使用"
-}
-
-function validationLabel(artifact: SubtitleArtifact) {
-  if (artifact.validationState === "warning") return "有驗證提醒"
-  if (artifact.validationState === "invalid") return "驗證未通過"
-  if (artifact.validationState === "pending") return "等待驗證"
-  return "已驗證"
-}
-
-function artifactProvider(artifact: SubtitleArtifact) {
-  if (artifact.provider && artifact.model) {
-    return `${artifact.provider} · ${artifact.model}`
-  }
-  return artifact.provider ?? artifact.model ?? "尚未記錄"
+  return `請管理 INSU Player 中影音 ${videoId} 的字幕。先唯讀檢查目前的字幕產物與狀態，並詢問我要「校正原語字幕」或「翻譯字幕」。若選擇翻譯，再詢問目標 BCP 47 語言碼。來源語言細粒度時間軸只能從原始音訊以本機模型或 OpenAI API 模型建立。內容校正或翻譯，以及後續字幕切分，則各自詢問要由本機模型、OpenAI API 模型或目前的 Agent 處理。人工建立的 CC 字幕可以作為文字參考並立即播放，平台自動字幕一律不要下載、匯入或作為參考。校正路徑使用 $proofread-subtitles，翻譯路徑使用 $translate-subtitles，兩條路徑完成完整句內容後都必須再使用獨立的 $segment-subtitles，採 target-first 切分並對齊連續的 source timing，驗證通過後匯入 INSU Player。開始任何會上傳資料到 API 的操作前先取得我的明確同意。不要替我刪除字幕，也不要替我切換目前播放的字幕版本，這兩項由我在字幕管理介面操作。`
 }
 
 interface SubtitleManagementState {
   catalog: SubtitleCatalogResponse
   view: SubtitleManagementView
-  selectedArtifactId?: string
+  previewArtifactId?: string
 }
 
 interface SubtitleManagementContextValue {
   state: SubtitleManagementState
   actions: {
     selectView: (view: SubtitleManagementView) => void
-    selectArtifact: (artifactId?: string) => void
+    openPreview: (artifactId: string, trigger: HTMLButtonElement) => void
+    closePreview: () => void
     artifactRemoved: (artifactId: string) => void
   }
   meta: { job: JobDetail }
@@ -131,23 +74,35 @@ function useSubtitleManagement() {
 function SubtitleManagementProvider({
   job,
   view,
-  selectedArtifactId,
+  previewArtifactId,
   onViewChange,
-  onArtifactChange,
+  onPreviewArtifactChange,
   children,
 }: {
   job: JobDetail
   view: SubtitleManagementView
-  selectedArtifactId?: string
+  previewArtifactId?: string
   onViewChange: (view: SubtitleManagementView) => void
-  onArtifactChange: (artifactId?: string) => void
+  onPreviewArtifactChange: (artifactId?: string) => void
   children: React.ReactNode
 }) {
   const queryClient = useQueryClient()
   const catalog = useSubtitleCatalog(job.videoId)
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const openPreview = useCallback(
+    (artifactId: string, trigger: HTMLButtonElement) => {
+      previewTriggerRef.current = trigger
+      onPreviewArtifactChange(artifactId)
+    },
+    [onPreviewArtifactChange],
+  )
+  const closePreview = useCallback(() => {
+    onPreviewArtifactChange(undefined)
+    queueMicrotask(() => previewTriggerRef.current?.focus())
+  }, [onPreviewArtifactChange])
   const artifactRemoved = useCallback(
     (artifactId: string) => {
-      onArtifactChange(undefined)
+      onPreviewArtifactChange(undefined)
       void queryClient.invalidateQueries({ queryKey: ["jobs"] })
       void queryClient.invalidateQueries({ queryKey: ["job", job.videoId] })
       void queryClient.invalidateQueries({
@@ -157,7 +112,7 @@ function SubtitleManagementProvider({
         queryKey: ["job-subtitle-artifact", job.videoId, artifactId],
       })
     },
-    [job.videoId, onArtifactChange, queryClient],
+    [job.videoId, onPreviewArtifactChange, queryClient],
   )
 
   if (catalog.isPending) return <LoadingState label="正在準備字幕版本" />
@@ -167,10 +122,11 @@ function SubtitleManagementProvider({
   return (
     <SubtitleManagementContext
       value={{
-        state: { catalog: catalog.data, view, selectedArtifactId },
+        state: { catalog: catalog.data, view, previewArtifactId },
         actions: {
           selectView: onViewChange,
-          selectArtifact: onArtifactChange,
+          openPreview,
+          closePreview,
           artifactRemoved,
         },
         meta: { job },
@@ -201,38 +157,36 @@ function SubtitlePlaybackSelector() {
       </div>
       <div className="subtitle-playback-selector__controls">
         {state.catalog.playbackLanguages.map((language) => (
-          <label key={language.languageCode}>
-            <span>{language.languageCode}</span>
-            <Select
-              items={language.options.map((option) => ({
-                value: option.id,
-                label: option.label,
-              }))}
-              value={language.activeTrackId}
-              disabled={activation.isPending}
-              onValueChange={(trackId) => {
-                if (trackId && trackId !== language.activeTrackId) {
-                  activation.mutate({
-                    languageCode: language.languageCode,
-                    trackId,
-                  })
-                }
-              }}
-            >
-              <SelectTrigger aria-label={`${language.languageCode} 播放版本`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {language.options.map((option) => (
-                    <SelectItem key={option.id} value={option.id}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </label>
+          <Select
+            key={language.languageCode}
+            items={language.options.map((option) => ({
+              value: option.id,
+              label: option.label,
+            }))}
+            value={language.activeTrackId}
+            disabled={activation.isPending}
+            onValueChange={(trackId) => {
+              if (trackId && trackId !== language.activeTrackId) {
+                activation.mutate({
+                  languageCode: language.languageCode,
+                  trackId,
+                })
+              }
+            }}
+          >
+            <SelectTrigger aria-label={`${language.languageCode} 播放版本`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {language.options.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         ))}
       </div>
       {activation.isError ? (
@@ -244,87 +198,8 @@ function SubtitlePlaybackSelector() {
   )
 }
 
-function SubtitleArtifactToolbar({
-  artifact,
-  artifacts,
-}: {
-  artifact: SubtitleArtifact
-  artifacts: SubtitleArtifact[]
-}) {
-  const { actions, meta } = useSubtitleManagement()
-  const items = artifacts.map((candidate) => ({
-    value: candidate.id,
-    label: revisionLabel(candidate),
-  }))
-  return (
-    <div className="subtitle-artifact-toolbar">
-      <div className="subtitle-artifact-toolbar__revision">
-        <span className="section-index">REVISION</span>
-        <Select
-          items={items}
-          value={artifact.id}
-          onValueChange={(value) => value && actions.selectArtifact(value)}
-        >
-          <SelectTrigger aria-label="字幕版本">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {items.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="subtitle-artifact-toolbar__facts">
-        <LanguageCodeList
-          codes={[...new Set(artifact.tracks.map((track) => track.languageCode))]}
-        />
-        <Badge variant="secondary">{lifecycleLabel(artifact)}</Badge>
-        <Badge variant="outline">{validationLabel(artifact)}</Badge>
-        {artifact.freshnessState !== "current" ? (
-          <Badge variant="outline">
-            {artifact.freshnessState === "stale" ? "等待新版" : "已有新版"}
-          </Badge>
-        ) : null}
-        <span>{artifactProvider(artifact)}</span>
-        {artifact.warningCount > 0 ? (
-          <span>{artifact.warningCount} 個提醒</span>
-        ) : null}
-        {artifact.hardDefectCount > 0 ? (
-          <Badge variant="destructive">
-            {artifact.hardDefectCount} 個必要修正
-          </Badge>
-        ) : null}
-      </div>
-      <ResourceRemovalDialog
-        target={{
-          kind: "subtitle-artifact",
-          videoId: meta.job.videoId,
-          artifactId: artifact.id,
-        }}
-        title={`移除${KIND_COPY[artifact.kind].label}`}
-        description="這會永久移除選定版本及依賴它的下游字幕，且無法復原。"
-        confirmLabel="移除字幕"
-        onRemoved={() => actions.artifactRemoved(artifact.id)}
-      >
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={`移除${KIND_COPY[artifact.kind].label}`}
-        >
-          <Trash2Icon />
-        </Button>
-      </ResourceRemovalDialog>
-    </div>
-  )
-}
-
 function SubtitleArtifactWorkspace({ kind }: { kind: SubtitleArtifactKind }) {
-  const { state, meta } = useSubtitleManagement()
+  const { state, actions, meta } = useSubtitleManagement()
   const artifacts = useMemo(
     () =>
       state.catalog.artifacts
@@ -332,48 +207,36 @@ function SubtitleArtifactWorkspace({ kind }: { kind: SubtitleArtifactKind }) {
         .sort((left, right) => right.revision - left.revision),
     [kind, state.catalog.artifacts],
   )
-  const artifact =
-    artifacts.find((candidate) => candidate.id === state.selectedArtifactId) ??
-    artifacts[0]
-  const comparison = useSubtitleArtifactCaptions(
-    meta.job.videoId,
-    artifact?.id ?? null,
-  )
-  const copy = KIND_COPY[kind]
+  const previewArtifact =
+    artifacts.find((candidate) => candidate.id === state.previewArtifactId) ??
+    null
+  const copy = SUBTITLE_KIND_COPY[kind]
+
+  useEffect(() => {
+    if (state.previewArtifactId && !previewArtifact) {
+      actions.closePreview()
+    }
+  }, [actions, previewArtifact, state.previewArtifactId])
 
   return (
     <div className="subtitle-artifact-workspace">
-      {artifact ? (
-        <>
-          <SubtitleArtifactToolbar artifact={artifact} artifacts={artifacts} />
-          {comparison.isPending ? (
-            <LoadingState label={`正在讀取${copy.label}`} />
-          ) : null}
-          {comparison.isError ? (
-            <ErrorState message={comparison.error.message} />
-          ) : null}
-          {comparison.data ? (
-            <CaptionComparisonTable
-              comparison={comparison.data}
-              kicker={copy.kicker}
-              title={`${copy.label} · r${artifact.revision}`}
-              emptyTitle={`尚無${copy.label}`}
-              emptyDescription={copy.empty}
-            />
-          ) : null}
-        </>
-      ) : (
-        <CaptionComparisonTable
-          comparison={{
-            videoId: meta.job.videoId,
-            baselineTrackId: null,
-            tracks: [],
-            rows: [],
-          }}
-          emptyTitle={`尚無${copy.label}`}
-          emptyDescription={copy.empty}
+      {artifacts.length > 0 ? (
+        <SubtitleRevisionTable
+          videoId={meta.job.videoId}
+          kind={kind}
+          artifacts={artifacts}
+          activeTracks={state.catalog.activeTracks}
+          onPreview={actions.openPreview}
+          onRemoved={actions.artifactRemoved}
         />
+      ) : (
+        <EmptyState title={`尚無${copy.label}`} description={copy.empty} />
       )}
+      <SubtitleRevisionPreviewDialog
+        videoId={meta.job.videoId}
+        artifact={previewArtifact}
+        onClose={actions.closePreview}
+      />
     </div>
   )
 }
@@ -391,7 +254,7 @@ function SubtitleManagementTabs() {
       <TabsList variant="line" aria-label="字幕類型">
         {SUBTITLE_VIEWS.map((kind) => (
           <TabsTrigger key={kind} value={kind}>
-            {KIND_COPY[kind].label}
+            {SUBTITLE_KIND_COPY[kind].label}
           </TabsTrigger>
         ))}
       </TabsList>
@@ -427,23 +290,23 @@ function SubtitleManagementContent() {
 export function SubtitleManagementPanel({
   job,
   view,
-  selectedArtifactId,
+  previewArtifactId,
   onViewChange,
-  onArtifactChange,
+  onPreviewArtifactChange,
 }: {
   job: JobDetail
   view: SubtitleManagementView
-  selectedArtifactId?: string
+  previewArtifactId?: string
   onViewChange: (view: SubtitleManagementView) => void
-  onArtifactChange: (artifactId?: string) => void
+  onPreviewArtifactChange: (artifactId?: string) => void
 }) {
   return (
     <SubtitleManagementProvider
       job={job}
       view={view}
-      selectedArtifactId={selectedArtifactId}
+      previewArtifactId={previewArtifactId}
       onViewChange={onViewChange}
-      onArtifactChange={onArtifactChange}
+      onPreviewArtifactChange={onPreviewArtifactChange}
     >
       <SubtitleManagementContent />
     </SubtitleManagementProvider>

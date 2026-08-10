@@ -1,4 +1,5 @@
 import type { CaptionComparisonResponse } from "@shared/contracts/caption"
+import type { ProcessorIdentity } from "@shared/contracts/processor"
 
 export const SUBTITLE_ARTIFACT_KINDS = [
   "source",
@@ -13,10 +14,16 @@ export const SUBTITLE_ARTIFACT_PROVIDERS = [
   "yt-dlp",
   "local",
   "openai",
+  "agent",
 ] as const
 
 export type SubtitleArtifactProvider =
   (typeof SUBTITLE_ARTIFACT_PROVIDERS)[number]
+
+export interface SubtitleArtifactProcessor
+  extends Omit<ProcessorIdentity, "provider"> {
+  provider: SubtitleArtifactProvider
+}
 
 export const SUBTITLE_SOURCE_TYPES = [
   "manual-cc",
@@ -97,8 +104,7 @@ export interface SubtitleArtifact {
   sourceLanguage: string
   outputLanguage: string | null
   sourceType: SubtitleSourceType | null
-  provider: SubtitleArtifactProvider
-  model: string | null
+  processor: SubtitleArtifactProcessor
   timingUnitKind: SubtitleTimingUnitKind | null
   targetFrozen: boolean
   manifestAvailable: boolean

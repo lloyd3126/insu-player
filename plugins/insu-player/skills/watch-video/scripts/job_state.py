@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
@@ -72,6 +72,9 @@ SUBTITLE_TRACK_ROLES = {
     "input_segmented",
     "output_segmented",
 }
+PROCESSOR_PROVIDERS = {"local", "openai", "agent"}
+ARTIFACT_PROCESSOR_PROVIDERS = PROCESSOR_PROVIDERS | {"yt-dlp"}
+PROCESSOR_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def utc_now() -> str:
@@ -88,6 +91,64 @@ def validate_language(language: str) -> str:
     if not LANGUAGE_PATTERN.fullmatch(language):
         raise ValueError(f"invalid language code: {language!r}")
     return language
+
+
+def processor_identity(
+    provider: str | None,
+    service: str | None,
+    model: str | None,
+    *,
+    label: str,
+    optional: bool = False,
+    timing_only: bool = False,
+    allow_yt_dlp: bool = False,
+) -> dict[str, str] | None:
+    if provider is None and service is None and model is None and optional:
+        return None
+    allowed = {"local", "openai"} if timing_only else PROCESSOR_PROVIDERS
+    if allow_yt_dlp:
+        allowed = ARTIFACT_PROCESSOR_PROVIDERS
+    if provider not in allowed:
+        raise ValueError(f"unsupported {label} provider: {provider}")
+    for value, field in ((service, "service"), (model, "model")):
+        if value is not None and not PROCESSOR_NAME_PATTERN.fullmatch(value):
+            raise ValueError(f"invalid {label} {field}: {value}")
+    if provider in {"local", "openai"} and not model:
+        raise ValueError(f"{label} requires a model for {provider}")
+    if provider == "agent" and not service:
+        raise ValueError(f"{label} requires a service for agent")
+    if provider == "yt-dlp" and model:
+        raise ValueError(f"{label} cannot record a yt-dlp model")
+    identity = {"provider": provider}
+    if service:
+        identity["service"] = service
+    if model:
+        identity["model"] = model
+    return identity
+
+
+def validate_processor_payload(
+    value: object,
+    *,
+    label: str,
+    timing_only: bool = False,
+    allow_yt_dlp: bool = False,
+) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    unknown = set(value) - {"provider", "service", "model"}
+    if unknown:
+        raise ValueError(f"{label} contains unsupported fields: {sorted(unknown)}")
+    resolved = processor_identity(
+        value.get("provider"),
+        value.get("service"),
+        value.get("model"),
+        label=label,
+        timing_only=timing_only,
+        allow_yt_dlp=allow_yt_dlp,
+    )
+    assert resolved is not None
+    return resolved
 
 
 def state_path(job_dir: Path) -> Path:
@@ -141,6 +202,16 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
         raise ValueError(f"job state must use schemaVersion {SCHEMA_VERSION}: {path}")
     if not isinstance(data.get("subtitleArtifacts"), list):
         raise ValueError(f"job state must contain subtitleArtifacts: {path}")
+    for artifact in data["subtitleArtifacts"]:
+        if not isinstance(artifact, dict):
+            raise ValueError(f"job state contains an invalid subtitle artifact: {path}")
+        if {"provider", "model"}.intersection(artifact):
+            raise ValueError(f"subtitle artifact contains removed processor fields: {path}")
+        validate_processor_payload(
+            artifact.get("processor"),
+            label="subtitleArtifact.processor",
+            allow_yt_dlp=True,
+        )
     if not isinstance(data.get("activeSubtitleTracks"), dict):
         raise ValueError(f"job state must contain activeSubtitleTracks: {path}")
     if data.get("videoId") != job_dir.name:
@@ -170,6 +241,30 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
             raise ValueError(f"translate subtitlePipeline must change language: {path}")
         if not isinstance(pipeline.get("manualReferenceArtifactIds"), list):
             raise ValueError(f"subtitlePipeline references must be an array: {path}")
+        forbidden_fields = {
+            "timingProvider",
+            "timingModel",
+            "contentProvider",
+            "contentModel",
+        }
+        if forbidden_fields.intersection(pipeline):
+            raise ValueError(f"subtitlePipeline contains removed processor fields: {path}")
+        if pipeline.get("timingProcessor") is not None:
+            validate_processor_payload(
+                pipeline["timingProcessor"],
+                label="subtitlePipeline.timingProcessor",
+                timing_only=True,
+            )
+        if pipeline.get("contentProcessor") is not None:
+            validate_processor_payload(
+                pipeline["contentProcessor"],
+                label="subtitlePipeline.contentProcessor",
+            )
+        if pipeline.get("segmentationProcessor") is not None:
+            validate_processor_payload(
+                pipeline["segmentationProcessor"],
+                label="subtitlePipeline.segmentationProcessor",
+            )
     history = data.get("history")
     if not isinstance(history, list):
         raise ValueError(f"job state must contain history: {path}")
@@ -328,8 +423,9 @@ def set_subtitle_artifact(
     source_language: str,
     output_language: str | None,
     source_type: str | None,
-    provider: str | None,
-    model: str | None,
+    processor_provider: str | None,
+    processor_service: str | None,
+    processor_model: str | None,
     timing_unit_kind: str | None,
     target_frozen: bool,
     manifest: Path | None,
@@ -353,6 +449,14 @@ def set_subtitle_artifact(
     validate_language(source_language)
     if output_language is not None:
         validate_language(output_language)
+    processor = processor_identity(
+        processor_provider,
+        processor_service,
+        processor_model,
+        label="subtitle artifact processor",
+        allow_yt_dlp=True,
+    )
+    assert processor is not None
     if kind == "source":
         if output_language is not None:
             raise ValueError("source artifacts cannot have an output language")
@@ -363,11 +467,10 @@ def set_subtitle_artifact(
         if manifest is not None:
             raise ValueError("source artifacts cannot have a manifest")
         if source_type == "manual-cc":
-            if provider != "yt-dlp" or model or timing_unit_kind != "cue":
+            if processor["provider"] != "yt-dlp" or timing_unit_kind != "cue":
                 raise ValueError("manual CC must use yt-dlp cue timing")
         elif (
-            provider not in {"local", "openai"}
-            or not model
+            processor["provider"] not in {"local", "openai"}
             or timing_unit_kind not in {"word", "token", "grapheme-group"}
         ):
             raise ValueError("model transcripts require a model and fine-grained timing")
@@ -380,8 +483,8 @@ def set_subtitle_artifact(
             raise ValueError("proofread artifacts must preserve the source language")
         if kind == "translation" and output_language == source_language:
             raise ValueError("translation artifacts must change language")
-        if provider not in {"local", "openai"} or not model:
-            raise ValueError(f"{kind} artifacts require a local or openai content model")
+        if processor["provider"] == "yt-dlp":
+            raise ValueError(f"{kind} artifacts cannot use yt-dlp as a processor")
         if manifest is None:
             raise ValueError(f"{kind} artifacts require a manifest")
     if kind == "segmentation" and not target_frozen:
@@ -552,8 +655,7 @@ def set_subtitle_artifact(
         "sourceLanguage": source_language,
         "outputLanguage": output_language,
         "sourceType": source_type,
-        "provider": provider,
-        "model": model,
+        "processor": processor,
         "timingUnitKind": timing_unit_kind,
         "targetFrozen": target_frozen,
         "manifestPath": manifest_path,
@@ -575,6 +677,7 @@ def set_subtitle_artifact(
                 "manifestPath",
                 "dependencies",
                 "targetFrozen",
+                "processor",
             )
             existing_tracks = [
                 {
@@ -646,10 +749,15 @@ def set_subtitle_pipeline(
     stage: str,
     source_language: str,
     output_language: str,
-    timing_provider: str | None,
-    timing_model: str | None,
-    content_provider: str | None,
-    content_model: str | None,
+    timing_processor_provider: str | None,
+    timing_processor_service: str | None,
+    timing_processor_model: str | None,
+    content_processor_provider: str | None,
+    content_processor_service: str | None,
+    content_processor_model: str | None,
+    segmentation_processor_provider: str | None,
+    segmentation_processor_service: str | None,
+    segmentation_processor_model: str | None,
     manual_reference_artifact_ids: list[str],
 ) -> dict[str, Any]:
     if mode not in SUBTITLE_PIPELINE_MODES:
@@ -662,12 +770,28 @@ def set_subtitle_pipeline(
         raise ValueError("proofread pipeline must preserve the source language")
     if mode == "translate" and source_language == output_language:
         raise ValueError("translate pipeline must change language")
-    for provider in (timing_provider, content_provider):
-        if provider is not None and provider not in {"local", "openai"}:
-            raise ValueError(f"unsupported subtitle pipeline provider: {provider}")
-    for model in (timing_model, content_model):
-        if model is not None and not re.fullmatch(r"[A-Za-z0-9._-]+", model):
-            raise ValueError(f"invalid subtitle pipeline model: {model}")
+    timing_processor = processor_identity(
+        timing_processor_provider,
+        timing_processor_service,
+        timing_processor_model,
+        label="timing processor",
+        optional=True,
+        timing_only=True,
+    )
+    content_processor = processor_identity(
+        content_processor_provider,
+        content_processor_service,
+        content_processor_model,
+        label="content processor",
+        optional=True,
+    )
+    segmentation_processor = processor_identity(
+        segmentation_processor_provider,
+        segmentation_processor_service,
+        segmentation_processor_model,
+        label="segmentation processor",
+        optional=True,
+    )
     if len(set(manual_reference_artifact_ids)) != len(manual_reference_artifact_ids):
         raise ValueError("subtitle pipeline references must be unique")
     if any(
@@ -683,14 +807,12 @@ def set_subtitle_pipeline(
         "manualReferenceArtifactIds": manual_reference_artifact_ids,
         "updatedAt": utc_now(),
     }
-    if timing_provider is not None:
-        pipeline["timingProvider"] = timing_provider
-    if timing_model is not None:
-        pipeline["timingModel"] = timing_model
-    if content_provider is not None:
-        pipeline["contentProvider"] = content_provider
-    if content_model is not None:
-        pipeline["contentModel"] = content_model
+    if timing_processor is not None:
+        pipeline["timingProcessor"] = timing_processor
+    if content_processor is not None:
+        pipeline["contentProcessor"] = content_processor
+    if segmentation_processor is not None:
+        pipeline["segmentationProcessor"] = segmentation_processor
     status = load_status(job_dir, create_default=True)
     status["subtitlePipeline"] = pipeline
     return save_status(job_dir, status)
@@ -743,8 +865,11 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_parser.add_argument("--source-language", required=True)
     artifact_parser.add_argument("--output-language")
     artifact_parser.add_argument("--source-type", choices=sorted(SUBTITLE_SOURCE_TYPES))
-    artifact_parser.add_argument("--provider")
-    artifact_parser.add_argument("--model")
+    artifact_parser.add_argument(
+        "--processor-provider", required=True, choices=sorted(ARTIFACT_PROCESSOR_PROVIDERS)
+    )
+    artifact_parser.add_argument("--processor-service")
+    artifact_parser.add_argument("--processor-model")
     artifact_parser.add_argument("--timing-unit-kind")
     artifact_parser.add_argument("--target-frozen", action="store_true")
     artifact_parser.add_argument("--manifest", type=Path)
@@ -774,10 +899,15 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--stage", required=True, choices=sorted(SUBTITLE_PIPELINE_STAGES))
     pipeline_parser.add_argument("--source-language", required=True)
     pipeline_parser.add_argument("--output-language", required=True)
-    pipeline_parser.add_argument("--timing-provider", choices=("local", "openai"))
-    pipeline_parser.add_argument("--timing-model")
-    pipeline_parser.add_argument("--content-provider", choices=("local", "openai"))
-    pipeline_parser.add_argument("--content-model")
+    pipeline_parser.add_argument("--timing-processor-provider", choices=("local", "openai"))
+    pipeline_parser.add_argument("--timing-processor-service")
+    pipeline_parser.add_argument("--timing-processor-model")
+    pipeline_parser.add_argument("--content-processor-provider", choices=sorted(PROCESSOR_PROVIDERS))
+    pipeline_parser.add_argument("--content-processor-service")
+    pipeline_parser.add_argument("--content-processor-model")
+    pipeline_parser.add_argument("--segmentation-processor-provider", choices=sorted(PROCESSOR_PROVIDERS))
+    pipeline_parser.add_argument("--segmentation-processor-service")
+    pipeline_parser.add_argument("--segmentation-processor-model")
     pipeline_parser.add_argument("--manual-reference-artifact", action="append", default=[])
 
     show_parser = subparsers.add_parser("show", help="print a job record")
@@ -826,8 +956,9 @@ def main() -> int:
             source_language=args.source_language,
             output_language=args.output_language,
             source_type=args.source_type,
-            provider=args.provider,
-            model=args.model,
+            processor_provider=args.processor_provider,
+            processor_service=args.processor_service,
+            processor_model=args.processor_model,
             timing_unit_kind=args.timing_unit_kind,
             target_frozen=args.target_frozen,
             manifest=args.manifest,
@@ -845,10 +976,15 @@ def main() -> int:
             stage=args.stage,
             source_language=args.source_language,
             output_language=args.output_language,
-            timing_provider=args.timing_provider,
-            timing_model=args.timing_model,
-            content_provider=args.content_provider,
-            content_model=args.content_model,
+            timing_processor_provider=args.timing_processor_provider,
+            timing_processor_service=args.timing_processor_service,
+            timing_processor_model=args.timing_processor_model,
+            content_processor_provider=args.content_processor_provider,
+            content_processor_service=args.content_processor_service,
+            content_processor_model=args.content_processor_model,
+            segmentation_processor_provider=args.segmentation_processor_provider,
+            segmentation_processor_service=args.segmentation_processor_service,
+            segmentation_processor_model=args.segmentation_processor_model,
             manual_reference_artifact_ids=args.manual_reference_artifact,
         )
     elif args.command == "show":

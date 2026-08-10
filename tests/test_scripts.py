@@ -409,7 +409,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         (job_dir / "status.json").write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 3,
                     "videoId": "test-video",
                     "state": "queued",
                     "stage": "queued",
@@ -435,7 +435,43 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schemaVersion 3", result.stdout)
+        self.assertIn("schemaVersion 4", result.stdout)
+
+    def test_job_state_rejects_flat_subtitle_artifact_processor_fields(self) -> None:
+        job_dir = self.workspace / "jobs" / "test-video"
+        job_dir.mkdir(parents=True)
+        (job_dir / "status.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 4,
+                    "videoId": "test-video",
+                    "state": "queued",
+                    "stage": "queued",
+                    "progress": 0,
+                    "subtitleArtifacts": [
+                        {"id": "legacy-source", "provider": "local", "model": "medium"}
+                    ],
+                    "activeSubtitleTracks": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "show",
+                "--job-dir",
+                str(job_dir),
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("removed processor fields", result.stdout)
 
     def test_progress_runner_handles_commands_without_percentage_output(self) -> None:
         job_dir = self.workspace / "jobs" / "no-progress"
@@ -498,9 +534,9 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             str(translated),
             "--source-type",
             "model-transcript",
-            "--provider",
+            "--processor-provider",
             "local",
-            "--model",
+            "--processor-model",
             "medium",
             "--timing-unit-kind",
             "grapheme-group",
@@ -537,9 +573,9 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             str(source),
             "--source-type",
             "model-transcript",
-            "--provider",
+            "--processor-provider",
             "local",
-            "--model",
+            "--processor-model",
             "medium",
         )
         target = Path(self.temporary.name) / "fr.vtt"
@@ -549,7 +585,16 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         )
         manifest = job_dir / "subtitle-work" / "content-manifest.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
-        manifest.write_text('{"schemaVersion":3}\n', encoding="utf-8")
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 4,
+                    "timingProcessor": {"provider": "local", "model": "medium"},
+                    "contentProcessor": {"provider": "agent", "service": "codex"},
+                }
+            ) + "\n",
+            encoding="utf-8",
+        )
 
         self.run_script(
             "import-subtitle-revision.sh",
@@ -561,8 +606,10 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "en",
             "--output-language",
             "fr",
-            "--provider",
-            "local",
+            "--processor-provider",
+            "agent",
+            "--processor-service",
+            "codex",
             "--artifact-kind",
             "translation",
             "--revision",
@@ -571,8 +618,6 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "test-video-source-model-transcript-en-r1",
             "--text-reference-artifact",
             "test-video-source-manual-cc-en-r1",
-            "--model",
-            "medium",
             "--manifest",
             str(manifest),
         )
@@ -587,6 +632,10 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         self.assertEqual(artifact["sourceLanguage"], "en")
         self.assertEqual(artifact["outputLanguage"], "fr")
         self.assertEqual(
+            artifact["processor"],
+            {"provider": "agent", "service": "codex"},
+        )
+        self.assertEqual(
             artifact["dependencies"],
             [
                 {"relation": "timing-source", "artifactId": "test-video-source-model-transcript-en-r1"},
@@ -599,7 +648,13 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         )
         self.assertEqual(
             (job_dir / artifact["manifestPath"]).read_text(encoding="utf-8"),
-            '{"schemaVersion":3}\n',
+            json.dumps(
+                {
+                    "schemaVersion": 4,
+                    "timingProcessor": {"provider": "local", "model": "medium"},
+                    "contentProcessor": {"provider": "agent", "service": "codex"},
+                }
+            ) + "\n",
         )
         self.assertEqual(
             [track["role"] for track in artifact["tracks"]],

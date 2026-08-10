@@ -5,7 +5,7 @@ description: Split a completed proofread or translated subtitle revision into ou
 
 # Segment and Align Subtitles
 
-Consume a completed schema-version 3 content manifest from `$proofread-subtitles` or `$translate-subtitles`. This skill is independent from content correction and translation.
+Consume a completed schema-version 4 content manifest from `$proofread-subtitles` or `$translate-subtitles`. This skill is independent from content correction and translation.
 
 ## Read the Applicable Contract
 
@@ -32,6 +32,8 @@ Require all of the following:
 
 Manual CC may be inherited as text-reference provenance through the content artifact. Never use platform cue timing for precise alignment, and never accept platform automatic captions.
 
+Choose and record a segmentation processor independently from the content processor. Segmentation may use a local model, an explicitly authorized OpenAI model, or the current Agent; source timing remains restricted to local or OpenAI audio transcription.
+
 ## Prepare Output-First Pieces
 
 ```bash
@@ -39,6 +41,11 @@ python3 scripts/segment_subtitles.py prepare \
   --content-manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/CONTENT.json \
   --source-transcript WORKSPACE/jobs/VIDEO_ID/whisper/PROVIDER/transcript.json \
   --output WORKSPACE/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json
+
+python3 scripts/segment_subtitles.py record-segmentation-processor \
+  --plan WORKSPACE/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json \
+  --provider agent \
+  --service codex
 ```
 
 For translated content, this is the target-first rule: decide the natural target-language pieces before source alignment. For same-language proofreading, apply the identical rule to the finalized output language.
@@ -77,15 +84,15 @@ python3 scripts/segment_subtitles.py validate --plan PLAN
 
 python3 scripts/segment_subtitles.py render \
   --plan PLAN \
-  --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.segmented.vtt \
+  --input-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.segmented.vtt \
   --output WORKSPACE/jobs/VIDEO_ID/subtitle-work/output.segmented.vtt
 
 plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   WORKSPACE VIDEO_ID input.segmented.vtt output.segmented.vtt \
   --source-language SOURCE_BCP47 \
   --output-language OUTPUT_BCP47 \
-  --provider local \
-  --model MODEL_NAME \
+  --processor-provider agent \
+  --processor-service codex \
   --artifact-kind segmentation \
   --revision REVISION \
   --manifest PLAN \
@@ -97,4 +104,4 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
 
 Only a ready, validated segmentation revision with no hard defects can outrank its content parent for playback. A failed, invalid, or processing revision must never replace a valid proofread or translation fallback.
 
-Preserve the model transcript, content manifest, content artifact, and every frozen segmentation revision. Report languages, content mode, model/provider, timing and content parent IDs, artifact ID/revision, piece count, width profile, warnings, hard defects, alignment coverage, rendered paths, and active playback result.
+Preserve the model transcript, content manifest, content artifact, and every frozen segmentation revision. The import processor must exactly match `segmentationProcessor` in the plan. Report languages, content mode, timing/content/segmentation processors, timing and content parent IDs, artifact ID/revision, piece count, width profile, warnings, hard defects, alignment coverage, rendered paths, and active playback result.

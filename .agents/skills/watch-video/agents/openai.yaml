@@ -1,4 +1,4 @@
 interface:
   display_name: "INSU Player"
-  short_description: "將授權影片下載、轉錄、翻譯並在 Codex 影片庫觀看"
-  default_prompt: "Use $watch-video. First open this project's INSU Player homepage in the Codex in-app browser. Before acquiring subtitles ask whether translation is wanted and which target language to use; if yes, ask for a local or OpenAI model and do not acquire platform captions. Then add the authorized video while keeping the page open."
+  short_description: "下載、轉錄、翻譯並切分影音字幕，管理本機 INSU Player 播放庫"
+  default_prompt: "Use $watch-video. First open this project’s INSU Player homepage, then ask separately for subtitle mode, BCP 47 languages, timing processor, content processor, and segmentation processor before adding the authorized video."

@@ -814,8 +814,6 @@
   grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
   gap: 0.75rem;
 }
-.subtitle-playback-selector__controls label { display: grid; min-width: 0; gap: 0.35rem; }
-.subtitle-playback-selector__controls label > span { color: var(--quiet); font: 0.62rem ui-monospace, monospace; }
 .subtitle-playback-selector__controls [data-slot="select-trigger"] { width: 100%; }
 .subtitle-playback-selector > .form-error { grid-column: 1 / -1; margin: 0; }
 .subtitle-management-tabs {
@@ -842,18 +840,53 @@
   padding-top: 1rem;
 }
 .subtitle-artifact-workspace { display: flex; height: 100%; min-height: 0; flex-direction: column; gap: 1rem; overflow: hidden; }
-.subtitle-artifact-toolbar {
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 1rem;
-  padding: 0.85rem;
+.subtitle-revision-table-frame {
+  min-height: 12rem;
+  flex: 1 1 auto;
+  overflow: auto;
   border: 1px solid var(--line);
+  scrollbar-gutter: stable;
 }
-.subtitle-artifact-toolbar__revision { display: grid; min-width: 0; gap: 0.4rem; }
-.subtitle-artifact-toolbar__revision [data-slot="select-trigger"] { width: 100%; }
-.subtitle-artifact-toolbar__facts { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.45rem; color: var(--quiet); font-size: 0.68rem; }
+.subtitle-revision-table { min-width: 56.5rem; table-layout: fixed; }
+.subtitle-revision-table thead { position: sticky; z-index: 2; top: 0; background: var(--background); }
+.subtitle-revision-table th:nth-child(1),
+.subtitle-revision-table td:nth-child(1) { width: 4.5rem; }
+.subtitle-revision-table th:nth-child(2),
+.subtitle-revision-table td:nth-child(2) { width: 6rem; }
+.subtitle-revision-table th:nth-child(3),
+.subtitle-revision-table td:nth-child(3) { width: 10rem; }
+.subtitle-revision-table th:nth-child(4),
+.subtitle-revision-table td:nth-child(4) { width: 7.5rem; }
+.subtitle-revision-table th:nth-child(5),
+.subtitle-revision-table td:nth-child(5) { width: 9rem; }
+.subtitle-revision-table th:nth-child(6),
+.subtitle-revision-table td:nth-child(6) { width: 6rem; }
+.subtitle-revision-table th:nth-child(7),
+.subtitle-revision-table td:nth-child(7) { width: 8rem; }
+.subtitle-revision-table th:nth-child(8),
+.subtitle-revision-table td:nth-child(8) { width: 5.5rem; }
+.subtitle-revision-table td { height: 3.6rem; }
+.subtitle-revision-table td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
+.subtitle-revision-table__actions {
+  position: sticky;
+  right: 0;
+  background: var(--background);
+  box-shadow: -1px 0 var(--line);
+  text-align: right;
+}
+.subtitle-revision-table tbody tr:hover .subtitle-revision-table__actions { background: var(--muted); }
+.subtitle-revision-actions { display: flex; justify-content: flex-end; gap: 0.4rem; }
+.subtitle-revision-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; color: var(--muted-foreground); font-size: 0.68rem; white-space: normal; }
+.subtitle-revision-preview {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 1rem;
+  overflow: hidden;
+}
+.subtitle-revision-preview__facts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; color: var(--muted-foreground); font-size: 0.7rem; }
+.subtitle-revision-preview__body { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; }
 .job-activity-content { display: grid; gap: 1rem; }
 .job-activity-content > .prompt-action-card { margin-top: 0; }
 .job-detail-card { min-width: 0; border-color: var(--line); }
@@ -1019,7 +1052,6 @@
   .job-fact:nth-last-child(-n + 4) { border-bottom: 1px solid var(--line); }
   .job-fact:nth-last-child(-n + 2) { border-bottom: 0; }
   .video-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .subtitle-artifact-toolbar { grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr) auto; }
 }
 
 @media (max-width: 600px) {
@@ -1050,8 +1082,6 @@
   .job-fact:last-child { border-bottom: 0; }
   .video-grid { grid-template-columns: 1fr; padding: 1rem; }
   .subtitle-playback-selector { grid-template-columns: 1fr; }
-  .subtitle-artifact-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
-  .subtitle-artifact-toolbar__revision { grid-column: 1 / -1; }
   .player-footer { align-items: flex-start; flex-direction: column; }
   .player-footer__actions { width: 100%; flex-wrap: wrap; }
 }

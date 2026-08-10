@@ -29,4 +29,4 @@ Warnings remain visible in the plan and UI. Do not regenerate a natural translat
 
 ## Linguistic review
 
-The selected local or authorized API language model must review semantic boundaries, dangling syntax, bound phrases, named entities, shortening equivalence, and language reordering. Deterministic validation must still enforce schema, frozen integrity, ranges, widths, required terms, anchors, and timing.
+The selected local model, authorized OpenAI model, or Agent must review semantic boundaries, dangling syntax, bound phrases, named entities, shortening equivalence, and language reordering. Deterministic validation must still enforce schema, frozen integrity, ranges, widths, required terms, anchors, and timing.

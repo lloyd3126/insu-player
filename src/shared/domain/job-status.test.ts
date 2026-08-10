@@ -52,15 +52,15 @@ describe("job status presentation", () => {
         stage: "target_segmentation",
         sourceLanguage: "en",
         outputLanguage: "zh-TW",
-        timingProvider: "local",
-        timingModel: "medium",
+        timingProcessor: { provider: "local", model: "medium" },
+        segmentationProcessor: { provider: "agent", service: "codex" },
         manualReferenceArtifactIds: [],
       },
     })
     expect(phaseForJob(summary)).toBe("目標語字幕切分")
     expect(subtitlePipelineLabel(summary)).toEqual({
       label: "目標語字幕切分",
-      detail: "本機 · medium",
+      detail: "Agent · codex",
     })
   })
 })

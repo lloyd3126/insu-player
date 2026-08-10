@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
-CONTENT_SCHEMA_VERSION = 3
+SCHEMA_VERSION = 3
+CONTENT_SCHEMA_VERSION = 4
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 UNIT_ID_PATTERN = re.compile(r"^U[0-9]{6,}$")
 SEGMENT_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
@@ -112,6 +112,37 @@ def require_text(value: object, label: str) -> str:
     if FORBIDDEN_MARKER_PATTERN.search(value):
         raise PlanError(f"{label} contains an internal cue marker")
     return value.strip()
+
+
+def processor_identity(
+    value: object,
+    label: str,
+    *,
+    timing_only: bool = False,
+) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise PlanError(f"{label} must be an object")
+    unknown = set(value) - {"provider", "service", "model", "updatedAt"}
+    if unknown:
+        raise PlanError(f"{label} contains unsupported fields: {sorted(unknown)}")
+    provider = value.get("provider")
+    allowed = {"local", "openai"} if timing_only else {"local", "openai", "agent"}
+    if provider not in allowed:
+        raise PlanError(f"{label}.provider is unsupported")
+    service = value.get("service")
+    model = value.get("model")
+    if provider in {"local", "openai"}:
+        require_text(model, f"{label}.model")
+    if provider == "agent":
+        require_text(service, f"{label}.service")
+    for field_value, field_name in ((service, "service"), (model, "model")):
+        if field_value is not None and not isinstance(field_value, str):
+            raise PlanError(f"{label}.{field_name} must be text")
+    return {
+        key: str(value[key])
+        for key in ("provider", "service", "model", "updatedAt")
+        if value.get(key) is not None
+    }
 
 
 def timed_units(transcript: dict[str, Any]) -> list[dict[str, Any]]:
@@ -231,7 +262,7 @@ def normalize_required_terms(raw_terms: object, label: str) -> list[str]:
 def prepare(args: argparse.Namespace) -> int:
     content = load_json(args.content_manifest, "content manifest")
     if content.get("schemaVersion") != CONTENT_SCHEMA_VERSION:
-        raise PlanError("segment-subtitles requires a schemaVersion 3 content manifest")
+        raise PlanError("segment-subtitles requires a schemaVersion 4 content manifest")
     mode = content.get("mode")
     if mode not in {"proofread", "translate"}:
         raise PlanError("content manifest mode must be proofread or translate")
@@ -241,10 +272,17 @@ def prepare(args: argparse.Namespace) -> int:
         raise PlanError("proofread content must preserve the source language")
     if mode == "translate" and source_language == output_language:
         raise PlanError("translated content requires a different output language")
-    language_model = content.get("contentModel")
-    if not isinstance(language_model, dict) or language_model.get("provider") not in {"local", "openai"}:
-        raise PlanError("contentModel must record a local or openai language model")
-    require_text(language_model.get("model"), "contentModel.model")
+    if "contentModel" in content or "transcriptionModel" in content:
+        raise PlanError("content manifest contains removed model fields")
+    timing_processor = processor_identity(
+        content.get("timingProcessor"),
+        "timingProcessor",
+        timing_only=True,
+    )
+    content_processor = processor_identity(
+        content.get("contentProcessor"),
+        "contentProcessor",
+    )
     transcript = load_json(args.source_transcript, "source transcript")
     units = timed_units(transcript)
     unit_positions = {str(unit["id"]): index for index, unit in enumerate(units)}
@@ -310,7 +348,9 @@ def prepare(args: argparse.Namespace) -> int:
         "outputLanguage": output_language,
         "sourceTranscript": str(args.source_transcript),
         "contentManifest": str(args.content_manifest),
-        "languageModel": language_model,
+        "timingProcessor": timing_processor,
+        "contentProcessor": content_processor,
+        "segmentationProcessor": None,
         "targetRevision": 1,
         "targetFrozen": False,
         "targetFingerprint": None,
@@ -329,6 +369,18 @@ def prepare(args: argparse.Namespace) -> int:
 def validate_target_structure(plan: dict[str, Any]) -> None:
     if plan.get("schemaVersion") != SCHEMA_VERSION:
         raise PlanError("unsupported segmentation plan")
+    if "languageModel" in plan:
+        raise PlanError("segmentation plan contains removed languageModel")
+    processor_identity(
+        plan.get("timingProcessor"),
+        "timingProcessor",
+        timing_only=True,
+    )
+    processor_identity(plan.get("contentProcessor"), "contentProcessor")
+    processor_identity(
+        plan.get("segmentationProcessor"),
+        "segmentationProcessor",
+    )
     validate_language(plan.get("sourceLanguage"), "sourceLanguage")
     validate_language(plan.get("outputLanguage"), "outputLanguage")
     raw_units = plan.get("contentUnits")
@@ -377,6 +429,36 @@ def freeze_target(args: argparse.Namespace) -> int:
     plan["targetFrozenAt"] = utc_now()
     atomic_write_json(args.plan, plan)
     print(f"Frozen target revision {plan.get('targetRevision')} with fingerprint {fingerprint}.")
+    return 0
+
+
+def record_segmentation_processor(args: argparse.Namespace) -> int:
+    plan = load_json(args.plan, "segmentation plan")
+    if plan.get("schemaVersion") != SCHEMA_VERSION:
+        raise PlanError(
+            f"segmentation processor requires a schemaVersion {SCHEMA_VERSION} plan"
+        )
+    metadata: dict[str, str] = {
+        "provider": args.provider,
+        "updatedAt": utc_now(),
+    }
+    if args.service is not None:
+        metadata["service"] = require_text(
+            args.service,
+            "segmentation processor service",
+        )
+    if args.model is not None:
+        metadata["model"] = require_text(
+            args.model,
+            "segmentation processor model",
+        )
+    plan["segmentationProcessor"] = processor_identity(
+        metadata,
+        "segmentationProcessor",
+    )
+    atomic_write_json(args.plan, plan)
+    identity = metadata.get("model") or metadata.get("service") or args.provider
+    print(f"Recorded {args.provider} segmentation processor {identity}: {args.plan}")
     return 0
 
 
@@ -596,6 +678,15 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--fit-units", type=int)
     prepare_parser.add_argument("--hard-units", type=int)
     prepare_parser.set_defaults(handler=prepare)
+
+    processor_parser = subparsers.add_parser("record-segmentation-processor")
+    processor_parser.add_argument("--plan", required=True, type=Path)
+    processor_parser.add_argument(
+        "--provider", required=True, choices=("local", "openai", "agent")
+    )
+    processor_parser.add_argument("--service")
+    processor_parser.add_argument("--model")
+    processor_parser.set_defaults(handler=record_segmentation_processor)
 
     freeze_parser = subparsers.add_parser("freeze-target")
     freeze_parser.add_argument("--plan", required=True, type=Path)

@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: import-subtitle-revision.sh <workspace> <video-id> <input-vtt> <output-vtt> --source-language BCP47 --output-language BCP47 --provider local|openai --model NAME --artifact-kind proofread|translation|segmentation --revision N --manifest JSON --timing-source-artifact ID [--text-reference-artifact ID ...] [--content-parent-artifact ID] [--warning-count N] [--hard-defect-count N]\n'
+  printf 'usage: import-subtitle-revision.sh <workspace> <video-id> <input-vtt> <output-vtt> --source-language BCP47 --output-language BCP47 --processor-provider local|openai|agent [--processor-service NAME] [--processor-model NAME] --artifact-kind proofread|translation|segmentation --revision N --manifest JSON --timing-source-artifact ID [--text-reference-artifact ID ...] [--content-parent-artifact ID] [--warning-count N] [--hard-defect-count N]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -13,7 +13,7 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then usage; exit 0; fi
 [ "$#" -ge 4 ] || { usage >&2; exit 1; }
 
 workspace_input="$1"; video_id="$2"; input_track="$3"; output_track="$4"; shift 4
-source_language=""; output_language=""; provider_name=""; model_name=""
+source_language=""; output_language=""; processor_provider=""; processor_service=""; processor_model=""
 artifact_kind=""; artifact_revision=""; artifact_manifest=""; timing_source_artifact=""
 content_parent_artifact=""; warning_count=0; hard_defect_count=0
 text_reference_artifacts=()
@@ -21,8 +21,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --source-language) [ "$#" -ge 2 ] || caption_die "--source-language requires a value"; source_language="$2"; shift 2 ;;
     --output-language) [ "$#" -ge 2 ] || caption_die "--output-language requires a value"; output_language="$2"; shift 2 ;;
-    --provider) [ "$#" -ge 2 ] || caption_die "--provider requires a value"; provider_name="$2"; shift 2 ;;
-    --model) [ "$#" -ge 2 ] || caption_die "--model requires a value"; model_name="$2"; shift 2 ;;
+    --processor-provider) [ "$#" -ge 2 ] || caption_die "--processor-provider requires a value"; processor_provider="$2"; shift 2 ;;
+    --processor-service) [ "$#" -ge 2 ] || caption_die "--processor-service requires a value"; processor_service="$2"; shift 2 ;;
+    --processor-model) [ "$#" -ge 2 ] || caption_die "--processor-model requires a value"; processor_model="$2"; shift 2 ;;
     --artifact-kind) [ "$#" -ge 2 ] || caption_die "--artifact-kind requires a value"; artifact_kind="$2"; shift 2 ;;
     --revision) [ "$#" -ge 2 ] || caption_die "--revision requires a value"; artifact_revision="$2"; shift 2 ;;
     --manifest) [ "$#" -ge 2 ] || caption_die "--manifest requires a value"; artifact_manifest="$2"; shift 2 ;;
@@ -45,8 +46,14 @@ if [ "$artifact_kind" = "proofread" ]; then
 elif [ "$artifact_kind" = "translation" ]; then
   [ "$source_language" != "$output_language" ] || caption_die "translation must use a different output language"
 fi
-case "$provider_name" in local|openai) ;; *) caption_die "--provider must be local or openai" ;; esac
-case "$model_name" in ''|*[!A-Za-z0-9._-]*) caption_die "--model is required and must be a valid model name" ;; esac
+case "$processor_provider" in local|openai|agent) ;; *) caption_die "--processor-provider must be local, openai, or agent" ;; esac
+case "$processor_service" in *[!A-Za-z0-9._-]*) caption_die "--processor-service must be a valid name" ;; esac
+case "$processor_model" in *[!A-Za-z0-9._-]*) caption_die "--processor-model must be a valid name" ;; esac
+if [ "$processor_provider" = "agent" ]; then
+  [ -n "$processor_service" ] || caption_die "agent processing requires --processor-service"
+else
+  [ -n "$processor_model" ] || caption_die "local and openai processing require --processor-model"
+fi
 case "$artifact_revision" in ''|*[!0-9]*) caption_die "--revision must be a positive integer" ;; esac
 [ "$artifact_revision" -ge 1 ] || caption_die "--revision must be a positive integer"
 [ -n "$artifact_manifest" ] || caption_die "--manifest is required"
@@ -67,6 +74,30 @@ caption_validate_vtt "$input_track"
 caption_validate_vtt "$output_track"
 caption_require_file "$artifact_manifest"
 case "$artifact_manifest" in *.json) ;; *) caption_die "--manifest must be a JSON file" ;; esac
+
+manifest_processor_value() {
+  "$CAPTION_PYTHON" -c 'import json,sys; payload=json.load(open(sys.argv[1], encoding="utf-8")); value=payload.get(sys.argv[2]); value=value.get(sys.argv[3]) if isinstance(value, dict) else None; print(value if isinstance(value, str) else "")' "$artifact_manifest" "$1" "$2"
+}
+
+timing_processor_provider=$(manifest_processor_value timingProcessor provider)
+timing_processor_service=$(manifest_processor_value timingProcessor service)
+timing_processor_model=$(manifest_processor_value timingProcessor model)
+if [ "$artifact_kind" = "segmentation" ]; then
+  [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("schemaVersion", ""))' "$artifact_manifest")" = "3" ] || caption_die "segmentation manifest must use schemaVersion 3"
+  content_processor_provider=$(manifest_processor_value contentProcessor provider)
+  content_processor_service=$(manifest_processor_value contentProcessor service)
+  content_processor_model=$(manifest_processor_value contentProcessor model)
+  recorded_processor_key=segmentationProcessor
+else
+  [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("schemaVersion", ""))' "$artifact_manifest")" = "4" ] || caption_die "content manifest must use schemaVersion 4"
+  content_processor_provider="$processor_provider"
+  content_processor_service="$processor_service"
+  content_processor_model="$processor_model"
+  recorded_processor_key=contentProcessor
+fi
+[ "$(manifest_processor_value "$recorded_processor_key" provider)" = "$processor_provider" ] || caption_die "manifest processor provider does not match the import request"
+[ "$(manifest_processor_value "$recorded_processor_key" service)" = "$processor_service" ] || caption_die "manifest processor service does not match the import request"
+[ "$(manifest_processor_value "$recorded_processor_key" model)" = "$processor_model" ] || caption_die "manifest processor model does not match the import request"
 
 reflow_script="$SCRIPT_DIR/../../translate-subtitles/scripts/reflow_subtitles.py"
 caption_require_file "$reflow_script"
@@ -101,13 +132,14 @@ artifact_args=(
   --freshness-state current
   --source-language "$source_language"
   --output-language "$output_language"
-  --provider "$provider_name"
-  --model "$model_name"
+  --processor-provider "$processor_provider"
   --manifest "$artifact_manifest_archive"
   --dependency timing-source "$timing_source_artifact"
   --warning-count "$warning_count"
   --hard-defect-count "$hard_defect_count"
 )
+if [ -n "$processor_service" ]; then artifact_args+=(--processor-service "$processor_service"); fi
+if [ -n "$processor_model" ]; then artifact_args+=(--processor-model "$processor_model"); fi
 if [ "$artifact_kind" = "segmentation" ]; then
   artifact_args+=(--target-frozen --dependency content-parent "$content_parent_artifact")
   artifact_args+=(--track "$source_language" input_segmented "$artifact_input")
@@ -135,9 +167,18 @@ pipeline_args=(
   --stage "$pipeline_stage"
   --source-language "$source_language"
   --output-language "$output_language"
-  --content-provider "$provider_name"
-  --content-model "$model_name"
 )
+if [ -n "$timing_processor_provider" ]; then pipeline_args+=(--timing-processor-provider "$timing_processor_provider"); fi
+if [ -n "$timing_processor_service" ]; then pipeline_args+=(--timing-processor-service "$timing_processor_service"); fi
+if [ -n "$timing_processor_model" ]; then pipeline_args+=(--timing-processor-model "$timing_processor_model"); fi
+if [ -n "$content_processor_provider" ]; then pipeline_args+=(--content-processor-provider "$content_processor_provider"); fi
+if [ -n "$content_processor_service" ]; then pipeline_args+=(--content-processor-service "$content_processor_service"); fi
+if [ -n "$content_processor_model" ]; then pipeline_args+=(--content-processor-model "$content_processor_model"); fi
+if [ "$artifact_kind" = "segmentation" ]; then
+  pipeline_args+=(--segmentation-processor-provider "$processor_provider")
+  if [ -n "$processor_service" ]; then pipeline_args+=(--segmentation-processor-service "$processor_service"); fi
+  if [ -n "$processor_model" ]; then pipeline_args+=(--segmentation-processor-model "$processor_model"); fi
+fi
 for reference_artifact in "${text_reference_artifacts[@]}"; do
   pipeline_args+=(--manual-reference-artifact "$reference_artifact")
 done

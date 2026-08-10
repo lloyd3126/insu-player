@@ -72,7 +72,7 @@ function JobDetailTabs({
           <SubtitleManagementPanel
             job={job}
             view={destination.subtitleView}
-            selectedArtifactId={destination.artifactId}
+            previewArtifactId={destination.artifactId}
             onViewChange={(subtitleView) =>
               onDestinationChange({
                 type: "detail",
@@ -81,7 +81,7 @@ function JobDetailTabs({
                 subtitleView,
               })
             }
-            onArtifactChange={(artifactId) =>
+            onPreviewArtifactChange={(artifactId) =>
               onDestinationChange({
                 type: "detail",
                 videoId: job.videoId,

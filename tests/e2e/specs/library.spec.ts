@@ -624,7 +624,9 @@ test.describe("library and details @critical", () => {
     ).toBeVisible()
   })
 
-  test("separates media facts subtitles segmentation and processing records", async ({ page }) => {
+  test("separates media facts subtitles segmentation and processing records", async ({
+    page,
+  }) => {
     let subtitleCatalogRequests = 0
     let subtitleArtifactRequests = 0
     let logRequests = 0
@@ -664,8 +666,12 @@ test.describe("library and details @critical", () => {
     await expect(detail.getByText("容量", { exact: true })).toBeVisible()
     await expect(detail.getByText("更新時間", { exact: true })).toBeVisible()
     const aboutPanel = detail.getByRole("tabpanel", { name: "關於影音" })
-    await expect(aboutPanel.getByText("狀態歷程", { exact: true })).toHaveCount(0)
-    await expect(aboutPanel.getByText("最新紀錄優先", { exact: true })).toHaveCount(0)
+    await expect(aboutPanel.getByText("狀態歷程", { exact: true })).toHaveCount(
+      0,
+    )
+    await expect(
+      aboutPanel.getByText("最新紀錄優先", { exact: true }),
+    ).toHaveCount(0)
     const historyTable = aboutPanel.getByRole("table")
     await expect(historyTable.getByRole("columnheader")).toHaveText([
       "時間",
@@ -680,11 +686,15 @@ test.describe("library and details @critical", () => {
       '[data-slot="scroll-area-viewport"]',
     )
     await expect(historyViewport).toBeVisible()
-    expect(await aboutPanel.evaluate((element) => getComputedStyle(element).overflowY)).toBe(
-      "hidden",
-    )
     expect(
-      await historyViewport.evaluate((element) => getComputedStyle(element).overflowY),
+      await aboutPanel.evaluate(
+        (element) => getComputedStyle(element).overflowY,
+      ),
+    ).toBe("hidden")
+    expect(
+      await historyViewport.evaluate(
+        (element) => getComputedStyle(element).overflowY,
+      ),
     ).toMatch(/auto|scroll/)
     const removalTrigger = aboutPanel.getByRole("button", { name: "移除影音" })
     await expect(removalTrigger).toBeVisible()
@@ -707,12 +717,18 @@ test.describe("library and details @critical", () => {
         (element) => getComputedStyle(element).backgroundColor,
       ),
     ).toContain("0.95")
-    await expect(removalDialog.getByRole("button", { name: "複製提示" })).toHaveCount(0)
-    await expect(removalDialog.getByRole("button", { name: "移除影音" })).toBeEnabled()
+    await expect(
+      removalDialog.getByRole("button", { name: "複製提示" }),
+    ).toHaveCount(0)
+    await expect(
+      removalDialog.getByRole("button", { name: "移除影音" }),
+    ).toBeEnabled()
     await removalDialog.getByRole("button", { name: "取消" }).click()
     await expect(removalDialog).toBeHidden()
     await expect(removalTrigger).toBeFocused()
-    await expect(detail.getByText("Workflow log", { exact: true })).toHaveCount(0)
+    await expect(detail.getByText("Workflow log", { exact: true })).toHaveCount(
+      0,
+    )
     expect(subtitleCatalogRequests).toBe(0)
     expect(subtitleArtifactRequests).toBe(0)
     expect(logRequests).toBe(0)
@@ -731,18 +747,55 @@ test.describe("library and details @critical", () => {
     const sourcePanel = subtitlePanel.getByRole("tabpanel", {
       name: "原始字幕",
     })
-    await expect(sourcePanel.getByText("原始字幕 · r1", { exact: true })).toBeVisible()
-    await expect(subtitlePanel.getByRole("heading", {
-      name: "製作與更新字幕",
-    })).toBeVisible()
-    await expect(subtitlePanel.getByRole("region", {
-      name: "播放字幕版本",
-    })).toBeVisible()
-    await expect(sourcePanel.getByRole("combobox", {
-      name: "字幕版本",
-    })).toContainText("r1 · en")
-    await expect(sourcePanel.getByText("local · medium", { exact: true })).toBeVisible()
-    const sourceComparison = sourcePanel.getByRole("table")
+    await expect(
+      subtitlePanel.getByRole("heading", {
+        name: "製作與更新字幕",
+      }),
+    ).toBeVisible()
+    await expect(
+      subtitlePanel.getByRole("region", {
+        name: "播放字幕版本",
+      }),
+    ).toBeVisible()
+    const sourceRevisions = sourcePanel.getByRole("table", {
+      name: "原始字幕版本",
+    })
+    await expect(sourceRevisions.getByRole("columnheader")).toHaveText([
+      "版本",
+      "語言",
+      "處理者",
+      "狀態",
+      "驗證",
+      "播放",
+      "完成時間",
+      "操作",
+    ])
+    await expect(sourceRevisions.getByText("r1", { exact: true })).toBeVisible()
+    await expect(
+      sourceRevisions.getByText("本機 · medium", { exact: true }),
+    ).toBeVisible()
+    await expect.poll(() => subtitleCatalogRequests).toBe(1)
+    expect(subtitleArtifactRequests).toBe(0)
+    const sourcePreviewTrigger = sourceRevisions.getByRole("button", {
+      name: "預覽原始字幕 r1",
+    })
+    const sourceActions = sourceRevisions.getByRole("button")
+    await expect(sourceActions).toHaveCount(2)
+    await expect(sourceActions.nth(0)).toHaveAccessibleName("預覽原始字幕 r1")
+    await expect(sourceActions.nth(1)).toHaveAccessibleName("移除原始字幕 r1")
+    await sourcePreviewTrigger.click()
+    await expect(page).toHaveURL(
+      /artifact=demo-video-source-model-transcript-en-r1/,
+    )
+    const sourcePreview = page.getByRole("dialog", {
+      name: "原始字幕 · r1",
+    })
+    await expect(sourcePreview).toBeVisible()
+    const subtitlePreviewOverlay = page.locator(
+      '[data-slot="dialog-overlay"][data-emphasis="strong"]',
+    )
+    await expect(subtitlePreviewOverlay).toBeVisible()
+    const sourceComparison = sourcePreview.getByRole("table")
     await expect(
       sourceComparison.getByRole("columnheader", { name: "en" }),
     ).toBeVisible()
@@ -754,25 +807,38 @@ test.describe("library and details @critical", () => {
     )
     await expect(longEnglishCue).toBeVisible()
     expect(
-      await longEnglishCue.evaluate((element) =>
-        getComputedStyle(element).whiteSpace,
+      await longEnglishCue.evaluate(
+        (element) => getComputedStyle(element).whiteSpace,
       ),
     ).toBe("normal")
-    await expect.poll(() => subtitleCatalogRequests).toBe(1)
     await expect.poll(() => subtitleArtifactRequests).toBe(1)
+    await sourcePreview.getByRole("button", { name: "關閉" }).click()
+    await expect(sourcePreview).toBeHidden()
+    await expect(page).not.toHaveURL(/artifact=/)
+    await expect(sourcePreviewTrigger).toBeFocused()
     expect(logRequests).toBe(0)
 
     await subtitlePanel.getByRole("tab", { name: "校正字幕" }).click()
     const proofreadPanel = subtitlePanel.getByRole("tabpanel", {
       name: "校正字幕",
     })
+    expect(subtitleArtifactRequests).toBe(1)
+    await proofreadPanel
+      .getByRole("button", {
+        name: "預覽校正字幕 r1",
+      })
+      .click()
+    const proofreadPreview = page.getByRole("dialog", {
+      name: "校正字幕 · r1",
+    })
     await expect(
-      proofreadPanel.getByRole("columnheader", { name: "en · 輸入字幕" }),
+      proofreadPreview.getByRole("columnheader", { name: "en · 輸入字幕" }),
     ).toBeVisible()
     await expect(
-      proofreadPanel.getByRole("columnheader", { name: "en · 輸出字幕" }),
+      proofreadPreview.getByRole("columnheader", { name: "en · 輸出字幕" }),
     ).toBeVisible()
     await expect.poll(() => subtitleArtifactRequests).toBe(2)
+    await proofreadPreview.getByRole("button", { name: "關閉" }).click()
 
     await detail.getByRole("tab", { name: "影音摘要" }).click()
     await expect(detail.getByText("影音摘要尚未設定")).toBeVisible()
@@ -783,7 +849,19 @@ test.describe("library and details @critical", () => {
     const translatedPanel = subtitlePanel.getByRole("tabpanel", {
       name: "翻譯字幕",
     })
-    const translatedComparison = translatedPanel.getByRole("table")
+    await expect(
+      translatedPanel.getByText("Agent · codex", { exact: true }),
+    ).toBeVisible()
+    expect(subtitleArtifactRequests).toBe(2)
+    await translatedPanel
+      .getByRole("button", {
+        name: "預覽翻譯字幕 r1",
+      })
+      .click()
+    const translatedPreview = page.getByRole("dialog", {
+      name: "翻譯字幕 · r1",
+    })
+    const translatedComparison = translatedPreview.getByRole("table")
     await expect(
       translatedComparison.getByRole("columnheader", { name: "en" }),
     ).toBeVisible()
@@ -794,24 +872,42 @@ test.describe("library and details @critical", () => {
       translatedComparison.getByText(/過去一個月我一直在嘗試 Vibe Coding/),
     ).toBeVisible()
     await expect.poll(() => subtitleArtifactRequests).toBe(3)
+    await translatedPreview.getByRole("button", { name: "關閉" }).click()
 
     await subtitlePanel.getByRole("tab", { name: "切分字幕" }).click()
     const segmentedPanel = subtitlePanel.getByRole("tabpanel", {
       name: "切分字幕",
     })
-    const segmentedComparison = segmentedPanel.getByRole("table")
+    await expect(
+      segmentedPanel.getByText("Agent · codex", { exact: true }),
+    ).toBeVisible()
+    expect(subtitleArtifactRequests).toBe(3)
+    await expect(
+      segmentedPanel.getByText("有驗證提醒", { exact: true }),
+    ).toBeVisible()
+    await expect(
+      segmentedPanel.getByText("1 個提醒", { exact: true }),
+    ).toBeVisible()
+    await expect(
+      segmentedPanel.getByRole("button", { name: "移除切分字幕 r1" }),
+    ).toBeVisible()
+    await segmentedPanel
+      .getByRole("button", {
+        name: "預覽切分字幕 r1",
+      })
+      .click()
+    const segmentedPreview = page.getByRole("dialog", {
+      name: "切分字幕 · r1",
+    })
+    const segmentedComparison = segmentedPreview.getByRole("table")
     await expect(
       segmentedComparison.getByRole("columnheader", { name: "en" }),
     ).toBeVisible()
     await expect(
       segmentedComparison.getByRole("columnheader", { name: "zh-TW" }),
     ).toBeVisible()
-    await expect(segmentedPanel.getByText("有驗證提醒", { exact: true })).toBeVisible()
-    await expect(segmentedPanel.getByText("1 個提醒", { exact: true })).toBeVisible()
-    await expect(
-      segmentedPanel.getByRole("button", { name: "移除切分字幕" }),
-    ).toBeVisible()
     await expect.poll(() => subtitleArtifactRequests).toBe(4)
+    await segmentedPreview.getByRole("button", { name: "關閉" }).click()
 
     await detail.getByRole("tab", { name: "影音筆記" }).click()
     await expect(detail.getByText("影音筆記尚未設定")).toBeVisible()
@@ -820,15 +916,25 @@ test.describe("library and details @critical", () => {
     const activityPanel = detail.getByRole("tabpanel", {
       name: "執行紀錄",
     })
-    await expect(activityPanel.getByText("狀態歷程", { exact: true })).toHaveCount(0)
+    await expect(
+      activityPanel.getByText("狀態歷程", { exact: true }),
+    ).toHaveCount(0)
     await expect(activityPanel.locator(".job-facts--activity")).toHaveCount(0)
     await expect(
       activityPanel.getByRole("heading", { name: "請 Agent 檢查紀錄" }),
     ).toBeVisible()
-    await expect(activityPanel.getByRole("button", { name: "複製提示" })).toBeVisible()
-    await expect(activityPanel.getByText("Workflow log", { exact: true })).toHaveCount(0)
-    await expect(activityPanel.getByText("最近 180 行", { exact: true })).toHaveCount(0)
-    await expect(activityPanel.getByText("download complete", { exact: false })).toBeVisible()
+    await expect(
+      activityPanel.getByRole("button", { name: "複製提示" }),
+    ).toBeVisible()
+    await expect(
+      activityPanel.getByText("Workflow log", { exact: true }),
+    ).toHaveCount(0)
+    await expect(
+      activityPanel.getByText("最近 180 行", { exact: true }),
+    ).toHaveCount(0)
+    await expect(
+      activityPanel.getByText("download complete", { exact: false }),
+    ).toBeVisible()
     await expect.poll(() => logRequests).toBe(1)
     const [panelBox, logBox] = await Promise.all([
       activityPanel.boundingBox(),
@@ -838,7 +944,20 @@ test.describe("library and details @critical", () => {
 
     await detail.getByRole("tab", { name: "字幕管理" }).click()
     await subtitlePanel.getByRole("tab", { name: "翻譯字幕" }).click()
+    await subtitlePanel
+      .getByRole("tabpanel", {
+        name: "翻譯字幕",
+      })
+      .getByRole("button", {
+        name: "預覽翻譯字幕 r1",
+      })
+      .click()
     await page.reload()
+    const reloadedPreview = page.getByRole("dialog", {
+      name: "翻譯字幕 · r1",
+    })
+    await expect(reloadedPreview).toBeVisible()
+    await reloadedPreview.getByRole("button", { name: "關閉" }).click()
     const reloadedDetail = page.getByRole("dialog", { name: "雙語測試影音" })
     await expect(
       reloadedDetail.getByRole("tab", { name: "字幕管理" }),
@@ -868,8 +987,18 @@ test.describe("library and details @critical", () => {
             videoId: "demo-video",
             baselineTrackId: "source-en",
             tracks: [
-              { id: "source-en", code: "en", label: "English", cueCount: rows.length },
-              { id: "target-zh-TW", code: "zh-TW", label: "繁體中文", cueCount: rows.length },
+              {
+                id: "source-en",
+                code: "en",
+                label: "English",
+                cueCount: rows.length,
+              },
+              {
+                id: "target-zh-TW",
+                code: "zh-TW",
+                label: "繁體中文",
+                cueCount: rows.length,
+              },
             ],
             rows,
           }),
@@ -888,10 +1017,21 @@ test.describe("library and details @critical", () => {
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await detail.getByRole("tab", { name: "字幕管理" }).click()
 
-    const table = detail.getByRole("table")
-    const viewport = detail.locator(".caption-table-frame")
+    const sourceRevisions = detail.getByRole("table", {
+      name: "原始字幕版本",
+    })
+    await sourceRevisions
+      .getByRole("button", {
+        name: "預覽原始字幕 r1",
+      })
+      .click()
+    const preview = page.getByRole("dialog", { name: "原始字幕 · r1" })
+    const table = preview.getByRole("table")
+    const viewport = preview.locator(".caption-table-frame")
     await expect(table).toHaveAttribute("aria-rowcount", "241")
-    await expect(table.getByText("English sentence 1", { exact: true })).toBeVisible()
+    await expect(
+      table.getByText("English sentence 1", { exact: true }),
+    ).toBeVisible()
     expect(await table.getByRole("row").count()).toBeLessThan(50)
     await viewport.evaluate((element) => {
       element.scrollTop = element.scrollHeight
@@ -918,7 +1058,7 @@ test.describe("library and details @critical", () => {
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await detail.getByRole("tab", { name: "字幕管理" }).click()
     const selector = detail.getByRole("combobox", { name: "en 播放版本" })
-    await expect(selector).toContainText("校正字幕 · r1")
+    await expect(selector).toContainText("en · 校正字幕 · r1")
 
     const selectSource = page.waitForRequest(
       (candidate) =>
@@ -927,12 +1067,12 @@ test.describe("library and details @critical", () => {
           "/api/jobs/demo-video/subtitles/active",
     )
     await selector.click()
-    await page.getByRole("option", { name: "模型轉錄 · r1" }).click()
+    await page.getByRole("option", { name: "en · 模型轉錄 · r1" }).click()
     expect((await selectSource).postDataJSON()).toEqual({
       languageCode: "en",
       trackId: "demo-video-source-model-transcript-en-r1-source_raw",
     })
-    await expect(selector).toContainText("模型轉錄 · r1")
+    await expect(selector).toContainText("en · 模型轉錄 · r1")
 
     const restoreProofread = page.waitForRequest(
       (candidate) =>
@@ -941,12 +1081,12 @@ test.describe("library and details @critical", () => {
           "/api/jobs/demo-video/subtitles/active",
     )
     await selector.click()
-    await page.getByRole("option", { name: "校正字幕 · r1" }).click()
+    await page.getByRole("option", { name: "en · 校正字幕 · r1" }).click()
     expect((await restoreProofread).postDataJSON()).toEqual({
       languageCode: "en",
       trackId: "demo-video-proofread-en-en-r1-output_sentence",
     })
-    await expect(selector).toContainText("校正字幕 · r1")
+    await expect(selector).toContainText("en · 校正字幕 · r1")
   })
 
   test("persists paused and closing playback against the active video", async ({

@@ -25,7 +25,7 @@
 - 固定首頁是唯一觀看入口；播放器在同源 iframe modal 內開啟。
 - `status.json`、job history 與 log 是中斷復原的事實來源。
 - 來源字幕只接受創作者人工 CC 或由模型從原始音訊產生的轉錄；平台自動字幕一律不得下載、匯入或作為參考。人工 CC 可立即播放，也可作為文字與術語參考，但不能作為細粒度 timing。
-- 取得字幕前先確認要同語言校正或翻譯，並確認來源 BCP 47 語言；翻譯時再確認輸出語言。兩條路徑都要讓使用者選擇本機或 OpenAI 模型，並從音訊建立詞、Token 或 grapheme-group 時間。`proofread-subtitles` 負責同語言完整句校正，`translate-subtitles` 負責跨語言完整句初譯與潤色，`segment-subtitles` 再獨立以 output-first／target-first 固定切分並對齊連續來源時間。
+- 取得字幕前先確認要同語言校正或翻譯，並確認來源 BCP 47 語言；翻譯時再確認輸出語言。來源細粒度 timing 只能由本機或 OpenAI 模型從音訊建立詞、Token 或 grapheme-group 時間；內容校正／翻譯與後續切分則分別讓使用者選擇本機模型、OpenAI 模型或目前的 Agent。`proofread-subtitles` 負責同語言完整句校正，`translate-subtitles` 負責跨語言完整句初譯與潤色，`segment-subtitles` 再獨立以 output-first／target-first 固定切分並對齊連續來源時間。三個階段必須各自記錄 processor，不得互相 fallback。
 - 字幕管理介面只允許使用者直接切換目前播放版本與刪除字幕；製作、校正、翻譯、切分及重試都由固定提示交給 Agent 與對應 skill 執行。
 - 程式修改後執行全部測試、七個 skill validator、plugin validator 與 release 建置測試。
 

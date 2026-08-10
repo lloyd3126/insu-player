@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SEGMENT_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 SENTENCE_END_PATTERN = re.compile(r"[.!?。！？؟։।॥](?:[\"'”’\)\]\}]+)?$")
@@ -148,6 +148,37 @@ def validate_content(value: object, label: str) -> str:
     if FORBIDDEN_MARKER_PATTERN.search(value):
         raise ValueError(f"{label} contains an internal cue marker")
     return value.strip()
+
+
+def processor_identity(
+    value: object,
+    label: str,
+    *,
+    timing_only: bool = False,
+) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be recorded before rendering")
+    unknown = set(value) - {"provider", "service", "model", "updatedAt"}
+    if unknown:
+        raise ValueError(f"{label} contains unsupported fields: {sorted(unknown)}")
+    provider = value.get("provider")
+    allowed = {"local", "openai"} if timing_only else {"local", "openai", "agent"}
+    if provider not in allowed:
+        raise ValueError(f"{label}.provider is unsupported")
+    service = value.get("service")
+    model = value.get("model")
+    if provider in {"local", "openai"}:
+        validate_content(model, f"{label}.model")
+    if provider == "agent":
+        validate_content(service, f"{label}.service")
+    for field_value, field_name in ((service, "service"), (model, "model")):
+        if field_value is not None and not isinstance(field_value, str):
+            raise ValueError(f"{label}.{field_name} must be text")
+    return {
+        key: str(value[key])
+        for key in ("provider", "service", "model", "updatedAt")
+        if value.get(key) is not None
+    }
 
 
 def token_is_sentence_end(token: str) -> bool:
@@ -299,12 +330,14 @@ def manifest_view(payload: object) -> ManifestView:
             punctuation_policy = str(raw_policy)
         source_key = "sourceText"
         output_key = "outputText"
-        content_model = payload.get("contentModel")
-        if not isinstance(content_model, dict):
-            raise ValueError("contentModel must be recorded before rendering")
-        if content_model.get("provider") not in {"local", "openai"}:
-            raise ValueError("contentModel.provider must be local or openai")
-        validate_content(content_model.get("model"), "contentModel.model")
+        if "contentModel" in payload or "transcriptionModel" in payload:
+            raise ValueError("subtitle revision manifest contains removed model fields")
+        processor_identity(
+            payload.get("timingProcessor"),
+            "timingProcessor",
+            timing_only=True,
+        )
+        processor_identity(payload.get("contentProcessor"), "contentProcessor")
     else:
         raise ValueError(f"subtitle revision manifest must use schemaVersion {SCHEMA_VERSION}")
 
@@ -407,8 +440,8 @@ def prepare(args: argparse.Namespace) -> int:
         "sourceTranscript": str(args.source_transcript),
         "timingSourceArtifactId": args.timing_source_artifact,
         "referenceArtifactIds": args.reference_artifact,
-        "transcriptionModel": {"provider": provider, "model": model},
-        "contentModel": None,
+        "timingProcessor": {"provider": provider, "model": model},
+        "contentProcessor": None,
         "outputProfile": {"punctuationPolicy": args.punctuation_policy},
         "rules": {
             "contentUnit": "complete source sentence",
@@ -427,21 +460,23 @@ def prepare(args: argparse.Namespace) -> int:
     return 0
 
 
-def record_content_model(args: argparse.Namespace) -> int:
+def record_content_processor(args: argparse.Namespace) -> int:
     payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
-        raise ValueError(f"content model metadata requires a schemaVersion {SCHEMA_VERSION} manifest")
-    model = validate_content(args.model, "content model")
+        raise ValueError(f"content processor metadata requires a schemaVersion {SCHEMA_VERSION} manifest")
     metadata: dict[str, str] = {
         "provider": args.provider,
-        "model": model,
         "updatedAt": utc_now(),
     }
-    if args.service:
-        metadata["service"] = validate_content(args.service, "translation service")
-    payload["contentModel"] = metadata
+    if args.service is not None:
+        metadata["service"] = validate_content(args.service, "content processor service")
+    if args.model is not None:
+        metadata["model"] = validate_content(args.model, "content processor model")
+    metadata = processor_identity(metadata, "contentProcessor")
+    payload["contentProcessor"] = metadata
     atomic_write_text(args.manifest, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    print(f"Recorded {args.provider} content model {model}: {args.manifest}")
+    identity = metadata.get("model") or metadata.get("service") or args.provider
+    print(f"Recorded {args.provider} content processor {identity}: {args.manifest}")
     return 0
 
 
@@ -489,12 +524,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prepare_parser.set_defaults(handler=prepare)
 
-    model_parser = subparsers.add_parser("record-content-model")
-    model_parser.add_argument("--manifest", required=True, type=Path)
-    model_parser.add_argument("--provider", required=True, choices=("local", "openai"))
-    model_parser.add_argument("--service")
-    model_parser.add_argument("--model", required=True)
-    model_parser.set_defaults(handler=record_content_model)
+    processor_parser = subparsers.add_parser("record-content-processor")
+    processor_parser.add_argument("--manifest", required=True, type=Path)
+    processor_parser.add_argument(
+        "--provider", required=True, choices=("local", "openai", "agent")
+    )
+    processor_parser.add_argument("--service")
+    processor_parser.add_argument("--model")
+    processor_parser.set_defaults(handler=record_content_processor)
 
     render_parser = subparsers.add_parser("render")
     render_parser.add_argument("--manifest", required=True, type=Path)

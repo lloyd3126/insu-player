@@ -54,10 +54,11 @@ import {
   TranscriptionSummary,
 } from "@shared/contracts/job"
 import type { SubtitleCatalogResponse } from "@shared/contracts/subtitle-catalog"
+import type { ProcessorIdentity } from "@shared/contracts/processor"
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]+$/
 const LANGUAGE_PATTERN = /^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/
-const STATUS_SCHEMA_VERSION = 3
+const STATUS_SCHEMA_VERSION = 4
 const JOB_STATE_SET = new Set<string>(JOB_STATES)
 const SUBTITLE_PIPELINE_STAGE_SET = new Set<string>(SUBTITLE_PIPELINE_STAGES)
 const ACTIVE_STATES = new Set([
@@ -105,6 +106,22 @@ function processIsAlive(pid: unknown) {
 
 function finiteNumber(value: unknown, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function validProcessorIdentity(value: unknown, timingOnly = false) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  const provider = candidate.provider
+  const model =
+    typeof candidate.model === "string" && candidate.model.trim()
+      ? candidate.model.trim()
+      : null
+  const service =
+    typeof candidate.service === "string" && candidate.service.trim()
+      ? candidate.service.trim()
+      : null
+  if (provider === "local" || provider === "openai") return Boolean(model)
+  return !timingOnly && provider === "agent" && Boolean(service)
 }
 
 export class JobRepository {
@@ -289,6 +306,7 @@ export class JobRepository {
       throw new Error("status.json progress must be between 0 and 100")
     }
     if (status.subtitlePipeline !== null && status.subtitlePipeline !== undefined) {
+      const pipeline = status.subtitlePipeline as Record<string, unknown>
       if (
         typeof status.subtitlePipeline !== "object" ||
         !["proofread", "translate"].includes(
@@ -298,9 +316,20 @@ export class JobRepository {
           String((status.subtitlePipeline as Record<string, unknown>).stage),
         ) ||
         !Array.isArray(
-          (status.subtitlePipeline as Record<string, unknown>)
-            .manualReferenceArtifactIds,
-        )
+          pipeline.manualReferenceArtifactIds,
+        ) ||
+        [
+          "timingProvider",
+          "timingModel",
+          "contentProvider",
+          "contentModel",
+        ].some((key) => key in pipeline) ||
+        (pipeline.timingProcessor !== undefined &&
+          !validProcessorIdentity(pipeline.timingProcessor, true)) ||
+        (pipeline.contentProcessor !== undefined &&
+          !validProcessorIdentity(pipeline.contentProcessor)) ||
+        (pipeline.segmentationProcessor !== undefined &&
+          !validProcessorIdentity(pipeline.segmentationProcessor))
       ) {
         throw new Error("status.json contains an invalid subtitlePipeline")
       }
@@ -798,8 +827,9 @@ export class JobRepository {
               sourceLanguage: artifact.sourceLanguage,
               outputLanguage: artifact.outputLanguage,
               sourceType: artifact.sourceType,
-              provider: artifact.provider,
-              model: artifact.model,
+              processorProvider: artifact.processor.provider,
+              processorService: artifact.processor.service ?? null,
+              processorModel: artifact.processor.model ?? null,
               timingUnitKind: artifact.timingUnitKind,
               targetFrozen: artifact.targetFrozen,
               manifestPath: artifact.manifestPath
@@ -871,9 +901,30 @@ export class JobRepository {
         .where(eq(subtitlePipelines.videoId, summary.videoId))
         .run()
       if (summary.subtitlePipeline) {
+        const pipeline = summary.subtitlePipeline
         transaction
           .insert(subtitlePipelines)
-          .values({ videoId: summary.videoId, ...summary.subtitlePipeline })
+          .values({
+            videoId: summary.videoId,
+            mode: pipeline.mode,
+            stage: pipeline.stage,
+            sourceLanguage: pipeline.sourceLanguage,
+            outputLanguage: pipeline.outputLanguage,
+            timingProcessorProvider: pipeline.timingProcessor?.provider ?? null,
+            timingProcessorService: pipeline.timingProcessor?.service ?? null,
+            timingProcessorModel: pipeline.timingProcessor?.model ?? null,
+            contentProcessorProvider: pipeline.contentProcessor?.provider ?? null,
+            contentProcessorService: pipeline.contentProcessor?.service ?? null,
+            contentProcessorModel: pipeline.contentProcessor?.model ?? null,
+            segmentationProcessorProvider:
+              pipeline.segmentationProcessor?.provider ?? null,
+            segmentationProcessorService:
+              pipeline.segmentationProcessor?.service ?? null,
+            segmentationProcessorModel:
+              pipeline.segmentationProcessor?.model ?? null,
+            manualReferenceArtifactIds: pipeline.manualReferenceArtifactIds,
+            updatedAt: pipeline.updatedAt,
+          })
           .run()
         const pipelineStage = summary.subtitlePipeline.stage ?? summary.stage
         const runKind = /segment|alignment|frozen|validation/.test(pipelineStage)
@@ -883,6 +934,12 @@ export class JobRepository {
               ? "translation"
               : "proofread"
             : "source"
+        const processor: ProcessorIdentity | undefined =
+          runKind === "segmentation"
+            ? pipeline.segmentationProcessor
+            : runKind === "source"
+              ? pipeline.timingProcessor
+              : pipeline.contentProcessor
         transaction
           .insert(subtitleRuns)
           .values({
@@ -896,14 +953,9 @@ export class JobRepository {
                   ? "processing"
                   : "ready",
             stage: pipelineStage,
-            provider:
-              summary.subtitlePipeline.contentProvider ??
-              summary.subtitlePipeline.timingProvider ??
-              null,
-            model:
-              summary.subtitlePipeline.contentModel ??
-              summary.subtitlePipeline.timingModel ??
-              null,
+            processorProvider: processor?.provider ?? null,
+            processorService: processor?.service ?? null,
+            processorModel: processor?.model ?? null,
             startedAt: summary.createdAt,
             completedAt: summary.completedAt,
             error: summary.lastError,

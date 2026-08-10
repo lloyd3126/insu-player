@@ -77,7 +77,12 @@ for (const artifactId of [sourceId, proofreadId, translationId, segmentationId])
       path.join(artifactRoot, "output.vtt"),
       artifactId === proofreadId ? english : chinese,
     )
-    writeFileSync(path.join(artifactRoot, "manifest.json"), '{"schemaVersion":3}\n')
+    writeFileSync(
+      path.join(artifactRoot, "manifest.json"),
+      artifactId === segmentationId
+        ? '{"schemaVersion":3}\n'
+        : '{"schemaVersion":4}\n',
+    )
   }
 }
 const digest = (contents: string) => createHash("sha256").update(contents).digest("hex")
@@ -95,7 +100,8 @@ const artifactDigest = (
   }
   return hasher.digest("hex")
 }
-const artifactManifest = '{"schemaVersion":3}\n'
+const contentArtifactManifest = '{"schemaVersion":4}\n'
+const segmentationArtifactManifest = '{"schemaVersion":3}\n'
 writeFileSync(
   path.join(job, "logs", "workflow.log"),
   "download complete\ntranscription complete\nsubtitle reflow complete\n",
@@ -103,7 +109,7 @@ writeFileSync(
 writeFileSync(
   path.join(job, "status.json"),
   `${JSON.stringify({
-    schemaVersion: 3,
+    schemaVersion: 4,
     videoId: "demo-video",
     title: "雙語測試影音",
     sourceUrl: "https://example.test/demo",
@@ -123,10 +129,9 @@ writeFileSync(
       stage: "complete",
       sourceLanguage: "en",
       outputLanguage: "zh-TW",
-      timingProvider: "local",
-      timingModel: "medium",
-      contentProvider: "local",
-      contentModel: "medium",
+      timingProcessor: { provider: "local", model: "medium" },
+      contentProcessor: { provider: "agent", service: "codex" },
+      segmentationProcessor: { provider: "agent", service: "codex" },
       manualReferenceArtifactIds: [],
     },
     subtitleArtifacts: [
@@ -140,8 +145,7 @@ writeFileSync(
         sourceLanguage: "en",
         outputLanguage: null,
         sourceType: "model-transcript",
-        provider: "local",
-        model: "medium",
+        processor: { provider: "local", model: "medium" },
         timingUnitKind: "word",
         targetFrozen: false,
         manifestPath: null,
@@ -172,14 +176,13 @@ writeFileSync(
         sourceLanguage: "en",
         outputLanguage: "en",
         sourceType: null,
-        provider: "local",
-        model: "medium",
+        processor: { provider: "agent", service: "codex" },
         timingUnitKind: "word",
         targetFrozen: false,
         manifestPath: `subtitle-work/artifacts/${proofreadId}/manifest.json`,
         checksum: artifactDigest(
           [["en", digest(english)], ["en", digest(english)]],
-          artifactManifest,
+          contentArtifactManifest,
         ),
         warningCount: 0,
         hardDefectCount: 0,
@@ -215,13 +218,12 @@ writeFileSync(
         sourceLanguage: "en",
         outputLanguage: "zh-TW",
         sourceType: null,
-        provider: "local",
-        model: "medium",
+        processor: { provider: "agent", service: "codex" },
         targetFrozen: false,
         manifestPath: `subtitle-work/artifacts/${translationId}/manifest.json`,
         checksum: artifactDigest(
           [["en", digest(english)], ["zh-TW", digest(chinese)]],
-          artifactManifest,
+          contentArtifactManifest,
         ),
         warningCount: 0,
         hardDefectCount: 0,
@@ -257,13 +259,12 @@ writeFileSync(
         sourceLanguage: "en",
         outputLanguage: "zh-TW",
         sourceType: null,
-        provider: "local",
-        model: "medium",
+        processor: { provider: "agent", service: "codex" },
         targetFrozen: true,
         manifestPath: `subtitle-work/artifacts/${segmentationId}/manifest.json`,
         checksum: artifactDigest(
           [["en", digest(english)], ["zh-TW", digest(chinese)]],
-          artifactManifest,
+          segmentationArtifactManifest,
         ),
         warningCount: 1,
         hardDefectCount: 0,

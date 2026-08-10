@@ -54,7 +54,12 @@ function artifact(
   const manifestPath =
     kind === "source" ? null : `subtitle-work/artifacts/${id}/manifest.json`
   if (manifestPath) {
-    writeFileSync(path.join(directory, manifestPath), '{"schemaVersion":3}\n')
+    writeFileSync(
+      path.join(directory, manifestPath),
+      kind === "segmentation"
+        ? '{"schemaVersion":3}\n'
+        : '{"schemaVersion":4}\n',
+    )
   }
   const artifactHasher = createHash("sha256")
   for (const artifactTrack of tracks) {
@@ -79,8 +84,7 @@ function artifact(
     sourceLanguage: tracks[0]?.languageCode,
     outputLanguage: source ? null : tracks[1]?.languageCode,
     sourceType: source ? "model-transcript" : null,
-    provider: "local",
-    model: "medium",
+    processor: { provider: "local", model: "medium" },
     timingUnitKind: source ? "word" : null,
     targetFrozen: kind === "segmentation",
     manifestPath,
@@ -146,6 +150,13 @@ describe("subtitle catalog resolver", () => {
         expect.objectContaining({ languageCode: "ar", artifactKind: "source" }),
       ]),
     )
+    expect(
+      catalog.playbackLanguages.flatMap((language) =>
+        language.options.map((option) => option.label),
+      ),
+    ).toEqual(
+      expect.arrayContaining(["ar · 模型轉錄 · r1", "fr · 切分字幕 · r1"]),
+    )
   })
 
   test("keeps a same-language proofread input and output as separate tracks", () => {
@@ -187,8 +198,7 @@ describe("subtitle catalog resolver", () => {
       artifact(directory, "source", modelId, 1, [modelTrack]),
       artifact(directory, "source", manualId, 1, [manualTrack], {
         sourceType: "manual-cc",
-        provider: "yt-dlp",
-        model: null,
+        processor: { provider: "yt-dlp" },
         timingUnitKind: "cue",
       }),
     ]
@@ -270,5 +280,34 @@ describe("subtitle catalog resolver", () => {
         explicitActiveTracks: {},
       }),
     ).toThrow("checksum mismatch")
+  })
+
+  test("accepts Agent content and segmentation processors with an explicit service", () => {
+    const directory = workspace()
+    const sourceId = "source-r1"
+    const proofreadId = "proofread-r1"
+    const catalog = resolveSubtitleCatalog({
+      videoId: "demo",
+      jobDirectory: directory,
+      rawArtifacts: [
+        artifact(directory, "source", sourceId, 1, [
+          track(directory, sourceId, "en", "source_raw", "source"),
+        ]),
+        artifact(directory, "proofread", proofreadId, 1, [
+          track(directory, proofreadId, "en", "input_sentence", "source"),
+          track(directory, proofreadId, "en", "output_sentence", "Source"),
+        ], {
+          outputLanguage: "en",
+          processor: { provider: "agent", service: "codex" },
+          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+        }),
+      ],
+      explicitActiveTracks: {},
+    })
+    expect(catalog.artifacts[1]?.processor).toEqual({
+      provider: "agent",
+      service: "codex",
+      model: null,
+    })
   })
 })

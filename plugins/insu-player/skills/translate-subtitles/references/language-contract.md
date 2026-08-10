@@ -2,7 +2,7 @@
 
 ## Language capability
 
-Accept any structurally valid BCP 47 source/target pair. Before execution, verify that the selected transcription model supports the spoken source language with usable timed units and that the selected local or API language model supports translation into the requested target language. Report unsupported or uncertain coverage instead of substituting English or Traditional Chinese.
+Accept any structurally valid BCP 47 source/target pair. Before execution, verify that the selected local or OpenAI transcription model supports the spoken source language with usable timed units and that the selected local model, authorized OpenAI model, or Agent supports translation into the requested target language. Report unsupported or uncertain coverage instead of substituting English or Traditional Chinese.
 
 Use `und` only while source language is genuinely unresolved. Resolve it before final translation. Preserve region and script subtags such as `pt-BR`, `zh-Hant`, `sr-Latn`, and `sr-Cyrl` when they affect wording or writing.
 

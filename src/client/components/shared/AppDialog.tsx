@@ -45,6 +45,9 @@ interface AppDialogProps
   description: string
   children: React.ReactNode
   className?: string
+  overlayEmphasis?: React.ComponentProps<
+    typeof DialogContent
+  >["overlayEmphasis"]
 }
 
 export function AppDialog({
@@ -58,10 +61,12 @@ export function AppDialog({
   height,
   layout,
   className,
+  overlayEmphasis,
 }: AppDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        overlayEmphasis={overlayEmphasis}
         className={cn(contentVariants({ size, height }), className)}
       >
         <DialogHeader className="app-dialog__header">

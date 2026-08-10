@@ -65,13 +65,13 @@ class SubtitleSegmentationTests(unittest.TestCase):
         )
         self.run_script(
             REFLOW,
-            "record-content-model",
+            "record-content-processor",
             "--manifest",
             manifest,
             "--provider",
-            "local",
-            "--model",
-            "llama-3.2",
+            "agent",
+            "--service",
+            "codex",
         )
         payload = json.loads(manifest.read_text(encoding="utf-8"))
         payload["segments"][0]["outputText"] = (
@@ -94,6 +94,16 @@ class SubtitleSegmentationTests(unittest.TestCase):
             "--output",
             plan,
         )
+        self.run_script(
+            SEGMENT,
+            "record-segmentation-processor",
+            "--plan",
+            plan,
+            "--provider",
+            "agent",
+            "--service",
+            "codex",
+        )
         return plan
 
     def align_single_piece(self, plan: Path):
@@ -109,6 +119,9 @@ class SubtitleSegmentationTests(unittest.TestCase):
         plan = self.plan()
         payload = json.loads(plan.read_text(encoding="utf-8"))
         self.assertEqual(payload["contentMode"], "translate")
+        self.assertEqual(payload["schemaVersion"], 3)
+        self.assertEqual(payload["contentProcessor"]["provider"], "agent")
+        self.assertEqual(payload["segmentationProcessor"]["service"], "codex")
         self.assertFalse(payload["targetFrozen"])
         self.align_single_piece(plan)
         self.run_script(SEGMENT, "freeze-target", "--plan", plan)

@@ -40,7 +40,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 ## 找不到目標語言字幕
 
-先確認使用者是否在字幕取得前選擇翻譯與目標 BCP 47 語言。翻譯模式不得檢查或下載任何平台字幕，必須由使用者明確選擇本機或 OpenAI 模型，再從原始音訊產生來源 timed units。若 `transcript.json` 沒有 words/tokens，使用相同 provider 重新轉錄並檢查 timing granularity；不要把 Whisper 的英語 translation task 當成任意目標語言翻譯。
+先確認使用者是否在字幕取得前選擇翻譯與目標 BCP 47 語言。翻譯模式不得檢查或下載任何平台字幕，來源 timed units 必須由使用者明確選擇的本機或 OpenAI timing 模型從原始音訊產生；內容與切分 processor 可另外選本機、OpenAI 或 Agent。若 `transcript.json` 沒有 words/tokens，使用相同 timing provider 重新轉錄並檢查 timing granularity；不要把 Whisper 的英語 translation task 當成任意目標語言翻譯。
 
 ## VTT 已下載但播放器顯示 0 cues
 

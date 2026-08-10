@@ -140,7 +140,7 @@ function seedJob() {
   writeFileSync(path.join(sourceRoot, "source.vtt"), english)
   writeFileSync(path.join(translationRoot, "input.vtt"), english)
   writeFileSync(path.join(translationRoot, "output.vtt"), chinese)
-  writeFileSync(path.join(translationRoot, "manifest.json"), '{"schemaVersion":3}\n')
+  writeFileSync(path.join(translationRoot, "manifest.json"), '{"schemaVersion":4}\n')
   const digest = (contents: string) => createHash("sha256").update(contents).digest("hex")
   const artifactDigest = (
     tracks: Array<Record<string, unknown>>,
@@ -162,7 +162,7 @@ function seedJob() {
     tracks: Array<Record<string, unknown>>,
     overrides: Record<string, unknown> = {},
   ) => {
-    const manifestContents = kind === "source" ? undefined : '{"schemaVersion":3}\n'
+    const manifestContents = kind === "source" ? undefined : '{"schemaVersion":4}\n'
     return {
       id,
       kind,
@@ -173,8 +173,7 @@ function seedJob() {
       sourceLanguage: "en",
       outputLanguage: null,
       sourceType: kind === "source" ? "model-transcript" : null,
-      provider: "local",
-      model: "medium",
+      processor: { provider: "local", model: "medium" },
       timingUnitKind: "word",
       targetFrozen: false,
       manifestPath: null,
@@ -192,7 +191,7 @@ function seedJob() {
   writeFileSync(
     path.join(job, "status.json"),
     `${JSON.stringify({
-      schemaVersion: 3,
+      schemaVersion: 4,
       videoId: "demo-video",
       title: "雙語測試影音",
       sourceUrl: "https://example.test/video",
@@ -220,6 +219,7 @@ function seedJob() {
           },
         ], {
           outputLanguage: "zh-TW",
+          processor: { provider: "agent", service: "codex" },
           dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
           manifestPath: `subtitle-work/artifacts/${translationId}/manifest.json`,
         }),
@@ -230,10 +230,8 @@ function seedJob() {
         stage: "content_complete",
         sourceLanguage: "en",
         outputLanguage: "zh-TW",
-        timingProvider: "local",
-        timingModel: "medium",
-        contentProvider: "local",
-        contentModel: "medium",
+        timingProcessor: { provider: "local", model: "medium" },
+        contentProcessor: { provider: "agent", service: "codex" },
         manualReferenceArtifactIds: [],
       },
       history: [

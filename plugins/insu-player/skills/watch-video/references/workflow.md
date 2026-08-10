@@ -154,7 +154,7 @@ Server 僅綁定 `127.0.0.1`，並且只暴露 allowlist 路由：首頁資產�
 1. URL 與是否只處理單支影片；腳本固定 `--no-playlist`。
 2. 使用者已接受首頁集中顯示的使用規範；來源平台條款與所在地規範仍可能適用。
 3. 在任何字幕檢查或下載前，先問要「同語言校正」或「翻譯」，並確認來源 BCP 47 語言；翻譯時再確認輸出 BCP 47 語言。
-4. 兩條路徑都要求使用者明確選擇本機或 OpenAI API provider；本機需下載大型依賴與模型，API 會上傳音訊並可能產生費用。
+4. 分別確認 timing、內容與切分 processor。Timing 只能選本機或 OpenAI API 模型；內容與切分各自可選本機模型、OpenAI API 模型或目前的 Agent。本機需下載大型依賴與模型；OpenAI 會上傳音訊或文字並可能產生費用，每一次 API 上傳都要先取得明確同意。
 5. workspace 是否可能包含敏感內容。
 
 字幕來源只接受創作者人工 CC 與模型轉錄。人工 CC 可在兩條路徑中下載、立即播放，並作為拼字與術語參考；平台自動字幕一律不得下載、匯入或參考。無論有沒有人工 CC，只要要校正、翻譯或切分，都必須由選定模型從原始音訊建立來源語言的 word、token 或 grapheme-group timing。
@@ -302,12 +302,12 @@ API 音訊會先轉為低位元率分段，單檔低於 25 MB，再把 segment �
 
 ## 階段 7：完整句內容與獨立字幕切分
 
-`transcribe.sh` 以模型 timed units 建立 schema-version 3 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、timing source 與人工 CC text references。來源可以是任意已確認模型支援的 BCP 47 語言；timed units 可以是 word、token 或 grapheme-group。
+`transcribe.sh` 以模型 timed units 建立 schema-version 4 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言；timed units 可以是 word、token 或 grapheme-group。
 
 - `mode=proofread`：使用 `$proofread-subtitles`，來源與輸出語言相同，完成同語校正與潤色。
 - `mode=translate`：使用 `$translate-subtitles`，先對完整句初譯，再完成自然目標語潤色。
 
-兩者都把初稿寫入 `draftOutputText`、定稿寫入 `outputText`，保存 source timed-unit ranges、raw punctuation、專有名詞、數字、邏輯關係、required terms 與模型 metadata。不要在這一步依 cue 或字數切分。
+兩者都把初稿寫入 `draftOutputText`、定稿寫入 `outputText`，保存 source timed-unit ranges、raw punctuation、專有名詞、數字、邏輯關係、required terms 與 processor metadata。不要在這一步依 cue 或字數切分。
 
 完整句 pair 驗證後，用統一 importer 寫成 immutable `proofread` 或 `translation` artifact；它立即可供播放，不需要等待切分：
 
@@ -316,7 +316,7 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   .local/insu-player VIDEO_ID INPUT.final.vtt OUTPUT.final.vtt \
   --source-language SOURCE_BCP47 \
   --output-language OUTPUT_BCP47 \
-  --provider local --model MODEL_NAME \
+  --processor-provider agent --processor-service codex \
   --artifact-kind proofread_or_translation \
   --revision 1 \
   --manifest .local/insu-player/jobs/VIDEO_ID/subtitle-work/content-manifest.json \
@@ -331,6 +331,10 @@ python3 plugins/insu-player/skills/segment-subtitles/scripts/segment_subtitles.p
   --content-manifest .local/insu-player/jobs/VIDEO_ID/subtitle-work/content-manifest.json \
   --source-transcript .local/insu-player/jobs/VIDEO_ID/whisper/PROVIDER/transcript.json \
   --output .local/insu-player/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json
+
+python3 plugins/insu-player/skills/segment-subtitles/scripts/segment_subtitles.py record-segmentation-processor \
+  --plan .local/insu-player/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json \
+  --provider agent --service codex
 ```
 
 先依 finalized output language 決定 pieces，翻譯模式即採 target-first；凍結 target revision 後才能填入連續 source spans。不得使用 risky／blocked boundary，也不得為了 timing 改寫 frozen output。
@@ -463,7 +467,7 @@ plugins/insu-player/skills/watch-video/scripts/uninstall.sh \
 
 日常：
 
-> 沿用既有 `.local/insu-player`，把這支影音加入本機影音庫。先問我是否需要翻譯及目標語言，再問我要用本機或 OpenAI 模型；翻譯模式不取得任何平台字幕，改由選定模型產生來源 timed units、完整自然譯文與 target-first 切分，完成 Source Alignment 和驗證後輸出同步雙語字幕。首頁保持啟動，完成後告訴我狀態。
+> 沿用既有 `.local/insu-player`，把這支影音加入本機影音庫。先問我是否需要翻譯及目標語言，再分別詢問 timing、內容與切分要使用本機模型、OpenAI 模型或目前的 Agent；timing 不接受 Agent。翻譯模式不取得任何平台字幕，完成來源 timed units、完整自然譯文與 target-first 切分，完成 Source Alignment 和驗證後輸出同步雙語字幕。首頁保持啟動，完成後告訴我狀態。
 
 續跑：
 

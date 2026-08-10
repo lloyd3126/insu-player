@@ -5,7 +5,7 @@ description: Correct a timed transcript in its original BCP 47 language without 
 
 # Proofread Complete Subtitle Sentences
 
-Produce a schema-version 3 subtitle revision whose `mode` is `proofread` and whose source and output language codes are identical. Keep same-language correction separate from translation and display segmentation.
+Produce a schema-version 4 subtitle revision whose `mode` is `proofread` and whose source and output language codes are identical. Keep same-language correction separate from translation and display segmentation.
 
 Read [references/proofreading-contract.md](references/proofreading-contract.md) before every correction task.
 
@@ -14,7 +14,7 @@ Read [references/proofreading-contract.md](references/proofreading-contract.md) 
 1. Require the normalized model transcript with ordered word, token, or grapheme-group timing.
 2. Treat a creator-provided manual CC track as optional text, spelling, and terminology evidence. Never use its cue boundaries as word timing.
 3. Reject platform automatic captions as evidence.
-4. Confirm the source BCP 47 language and verify that the selected local or explicitly authorized API language model supports it.
+4. Confirm the source BCP 47 language. Timing must come from a supported local or explicitly authorized OpenAI transcription model; content correction may use a local model, an explicitly authorized OpenAI model, or the current Agent.
 5. Obtain consent before subtitle text leaves the device. Do not infer consent from an API key.
 
 ## Prepare the Same-Language Revision
@@ -29,14 +29,14 @@ python3 scripts/proofread_subtitles.py prepare \
   --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.sentence.vtt
 ```
 
-Record the selected correction model before editing output text:
+Record the selected content processor before editing output text. For Codex:
 
 ```bash
-python3 scripts/proofread_subtitles.py record-content-model \
-  --manifest MANIFEST --provider local --model MODEL_NAME
+python3 scripts/proofread_subtitles.py record-content-processor \
+  --manifest MANIFEST --provider agent --service codex
 ```
 
-Use `--provider openai --service SERVICE` only after explicit subtitle-text upload authorization.
+For a local or OpenAI model, use `--provider local|openai --model MODEL_NAME`. Use OpenAI only after explicit subtitle-text upload authorization.
 
 ## Correct Then Review
 
@@ -62,8 +62,8 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   WORKSPACE VIDEO_ID INPUT.vtt OUTPUT.vtt \
   --source-language SOURCE_BCP47 \
   --output-language SOURCE_BCP47 \
-  --provider local \
-  --model MODEL_NAME \
+  --processor-provider agent \
+  --processor-service codex \
   --artifact-kind proofread \
   --revision REVISION \
   --manifest MANIFEST \
@@ -71,6 +71,6 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   --text-reference-artifact MANUAL_CC_ARTIFACT_ID
 ```
 
-Omit the optional text reference when no manual CC exists.
+Omit the optional text reference when no manual CC exists. The import processor must exactly match `contentProcessor` in the manifest.
 
 Do not create a `translation` artifact, change the language code, or segment subtitles from this skill.

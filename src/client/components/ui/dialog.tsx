@@ -1,9 +1,25 @@
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
+import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
+
+const dialogOverlayVariants = cva(
+  "fixed inset-0 isolate z-50 supports-backdrop-filter:backdrop-blur-xs",
+  {
+    variants: {
+      emphasis: {
+        default: "bg-black/80",
+        strong: "bg-black/95",
+      },
+    },
+    defaultVariants: {
+      emphasis: "default",
+    },
+  },
+)
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -23,15 +39,15 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
 
 function DialogOverlay({
   className,
+  emphasis,
   ...props
-}: DialogPrimitive.Backdrop.Props) {
+}: DialogPrimitive.Backdrop.Props &
+  VariantProps<typeof dialogOverlayVariants>) {
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
-      className={cn(
-        "fixed inset-0 isolate z-50 bg-black/80 supports-backdrop-filter:backdrop-blur-xs",
-        className
-      )}
+      data-emphasis={emphasis ?? "default"}
+      className={cn(dialogOverlayVariants({ emphasis }), className)}
       {...props}
     />
   )
@@ -41,13 +57,18 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  overlayEmphasis,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  overlayEmphasis?: VariantProps<typeof dialogOverlayVariants>["emphasis"]
 }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay
+        emphasis={overlayEmphasis}
+        forceRender={overlayEmphasis === "strong"}
+      />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(

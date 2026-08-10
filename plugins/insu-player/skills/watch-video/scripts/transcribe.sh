@@ -116,7 +116,7 @@ if [ -n "$language_code" ]; then transcribe_args+=(--language "$language_code");
 if [ "$provider_name" = "openai" ]; then transcribe_args+=(--consent-to-upload); fi
 
 caption_job_state transcription --job-dir "$job_dir" --provider "$provider_name" --model "$model_name" >/dev/null
-caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$content_mode" --stage model_transcription --source-language "$language_code" --output-language "$output_language" --timing-provider "$provider_name" --timing-model "$model_name" >/dev/null
+caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$content_mode" --stage model_transcription --source-language "$language_code" --output-language "$output_language" --timing-processor-provider "$provider_name" --timing-processor-model "$model_name" >/dev/null
 caption_note "Transcribing with provider=$provider_name model=$model_name device=$device_name..."
 transcribe_command=("$CAPTION_PYTHON" "${transcribe_args[@]}")
 if [ "$provider_name" = "openai" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -142,7 +142,7 @@ caption_require_file "$transcript_json"
 caption_require_file "$reflow_script"
 mkdir -p "$subtitle_work_dir"
 
-"$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$language_code" "$vtt_file" --source-type model-transcript --provider "$provider_name" --model "$model_name" --timing-unit-kind word
+"$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$language_code" "$vtt_file" --source-type model-transcript --processor-provider "$provider_name" --processor-model "$model_name" --timing-unit-kind word
 timing_source_artifact="$video_id-source-model-transcript-$language_code-r1"
 manual_reference_artifacts=()
 while IFS= read -r reference_artifact; do
@@ -169,7 +169,7 @@ case "$output_language" in zh|zh-*) prepare_args+=(--punctuation-policy remove-c
 caption_validate_vtt "$source_sentence_vtt"
 caption_job_state asset --job-dir "$job_dir" --name wordTranscript --path "$transcript_json" >/dev/null
 caption_job_state asset --job-dir "$job_dir" --name contentPlan --path "$subtitle_manifest" >/dev/null
-pipeline_args=(--job-dir "$job_dir" --mode "$content_mode" --stage content_revision --source-language "$language_code" --output-language "$output_language" --timing-provider "$provider_name" --timing-model "$model_name")
+pipeline_args=(--job-dir "$job_dir" --mode "$content_mode" --stage content_revision --source-language "$language_code" --output-language "$output_language" --timing-processor-provider "$provider_name" --timing-processor-model "$model_name")
 for reference_artifact in "${manual_reference_artifacts[@]}"; do
   pipeline_args+=(--manual-reference-artifact "$reference_artifact")
 done

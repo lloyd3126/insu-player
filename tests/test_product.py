@@ -102,7 +102,8 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertLess(workflow.index("## 階段 1："), workflow.index("## 階段 3：從零盤點環境"))
         self.assertIn("Codex 內建瀏覽器", manifest["interface"]["defaultPrompt"][0])
         self.assertIn("引導我加入影音", manifest["interface"]["defaultPrompt"][0])
-        self.assertIn("First open this project's INSU Player homepage", plugin_agent)
+        self.assertIn("First open this project", plugin_agent)
+        self.assertIn("INSU Player homepage", plugin_agent)
         self.assertEqual(plugin_agent, bridge_agent)
         self.assertIn("First open this project's INSU Player homepage", library_agent)
         self.assertEqual(library_agent, library_bridge_agent)
@@ -136,10 +137,19 @@ class ProductBoundaryTests(unittest.TestCase):
         reflow = PLUGIN_ROOT / "skills" / "translate-subtitles" / "scripts" / "reflow_subtitles.py"
         segmentation = PLUGIN_ROOT / "skills" / "segment-subtitles" / "scripts" / "segment_subtitles.py"
         revision_import = PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "import-subtitle-revision.sh"
+        processor_contract = (
+            REPO_ROOT / "src" / "shared" / "contracts" / "processor.ts"
+        ).read_text(encoding="utf-8")
+        job_contract = (
+            REPO_ROOT / "src" / "shared" / "contracts" / "job.ts"
+        ).read_text(encoding="utf-8")
+        artifact_contract = (
+            REPO_ROOT / "src" / "shared" / "contracts" / "subtitle-catalog.ts"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("Before inspecting or downloading subtitles, ask", watch_skill)
         self.assertIn("Never inspect, download, import, or reference platform automatic captions", translate_skill)
-        self.assertIn("local or explicitly authorized OpenAI", translate_skill)
+        self.assertIn("local model, an explicitly authorized OpenAI model, or the current Agent", translate_skill)
         self.assertIn("--write-subs", download)
         self.assertNotIn("--write-auto-subs", download)
         self.assertIn("automatic captions are intentionally excluded", download)
@@ -160,6 +170,14 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("separately owns display cuts and Source Alignment", translate_skill)
         self.assertIn("freeze-target", segment_skill)
         self.assertIn("Source Alignment", segment_skill)
+        self.assertIn('"agent"', processor_contract)
+        self.assertIn('TIMING_PROCESSOR_PROVIDERS = ["local", "openai"]', processor_contract)
+        self.assertIn("timingProcessor?: TimingProcessorIdentity", job_contract)
+        self.assertIn("contentProcessor?: ProcessorIdentity", job_contract)
+        self.assertIn("segmentationProcessor?: ProcessorIdentity", job_contract)
+        self.assertIn("processor: SubtitleArtifactProcessor", artifact_contract)
+        self.assertNotIn("timingProvider?:", job_contract)
+        self.assertNotIn("contentProvider?:", job_contract)
 
     def test_static_page_titles_and_headings_do_not_use_punctuation(self) -> None:
         assets = [
@@ -214,6 +232,20 @@ class ProductBoundaryTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         detail_subtitle_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "SubtitleArtifactPanel.tsx"
+        ).read_text(encoding="utf-8")
+        subtitle_artifact_ui = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "subtitle-artifact-ui.ts"
+        ).read_text(encoding="utf-8")
+        subtitle_revision_table = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "SubtitleRevisionTable.tsx"
+        ).read_text(encoding="utf-8")
+        subtitle_revision_preview = (
+            REPO_ROOT
+            / "src"
+            / "client"
+            / "features"
+            / "job-detail"
+            / "SubtitleRevisionPreviewDialog.tsx"
         ).read_text(encoding="utf-8")
         detail_activity_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobActivityPanel.tsx"
@@ -340,12 +372,19 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertNotIn('value="source-subtitle"', detail_component)
         self.assertNotIn('value="translated-subtitle"', detail_component)
         self.assertIn("SubtitleManagementPanel", detail_component)
-        self.assertIn('"source",', detail_subtitle_component)
-        self.assertIn('"proofread",', detail_subtitle_component)
-        self.assertIn('"translation",', detail_subtitle_component)
-        self.assertIn('"segmentation",', detail_subtitle_component)
+        self.assertIn('"source",', subtitle_artifact_ui)
+        self.assertIn('"proofread",', subtitle_artifact_ui)
+        self.assertIn('"translation",', subtitle_artifact_ui)
+        self.assertIn('"segmentation",', subtitle_artifact_ui)
         self.assertIn("SubtitleManagementProvider", detail_subtitle_component)
         self.assertIn('aria-label="字幕類型"', detail_subtitle_component)
+        self.assertIn("SubtitleRevisionTable", detail_subtitle_component)
+        self.assertIn("SubtitleRevisionPreviewDialog", detail_subtitle_component)
+        self.assertIn("EyeIcon", subtitle_revision_table)
+        self.assertIn("ResourceRemovalDialog", subtitle_revision_table)
+        self.assertIn("AppDialog", subtitle_revision_preview)
+        self.assertNotIn("DialogContent", subtitle_revision_preview)
+        self.assertIn("CaptionComparisonTable", subtitle_revision_preview)
         self.assertIn("JobHistoryCard", detail_about_component)
         self.assertIn("VideoRemovalDialog", detail_about_component)
         self.assertIn("ScrollArea", detail_history_component)
@@ -373,7 +412,8 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("No removal prompt or Agent handoff", removal_protocol)
         self.assertIn("ResourceRemovalDialog", removal_protocol)
         self.assertIn("useSubtitleCatalog", detail_subtitle_component)
-        self.assertIn("useSubtitleArtifactCaptions", detail_subtitle_component)
+        self.assertNotIn("useSubtitleArtifactCaptions", detail_subtitle_component)
+        self.assertIn("useSubtitleArtifactCaptions", subtitle_revision_preview)
         self.assertIn("useJobLog", detail_activity_component)
         self.assertNotIn("狀態歷程", detail_activity_component)
         self.assertNotIn("CardHeader", detail_activity_component)

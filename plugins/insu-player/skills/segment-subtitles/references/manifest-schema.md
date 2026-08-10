@@ -1,16 +1,18 @@
 # Segmentation plan contract
 
-`segmentation-plan.json` is a derived immutable-revision artifact. Its model transcript and completed schema-version 3 content manifest remain independent inputs.
+`segmentation-plan.json` is a schema-version 3 derived immutable-revision artifact. Its model transcript and completed schema-version 4 content manifest remain independent inputs.
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "contentMode": "translate",
   "sourceLanguage": "en",
   "outputLanguage": "zh-TW",
   "sourceTranscript": "transcript.json",
   "contentManifest": "translate-en-zh-TW.json",
-  "languageModel": {"provider": "local", "model": "model-name"},
+  "timingProcessor": {"provider": "local", "model": "medium"},
+  "contentProcessor": {"provider": "agent", "service": "codex"},
+  "segmentationProcessor": {"provider": "agent", "service": "codex"},
   "targetRevision": 1,
   "targetFrozen": true,
   "targetFingerprint": "sha256",
@@ -57,6 +59,8 @@
 ```
 
 Use BCP 47 language codes. `contentMode` is `proofread` or `translate`. `timedUnits.kind` is `word`, `token`, or `grapheme-group`; do not infer whitespace-delimited words for every writing system.
+
+`timingProcessor` accepts only `local` or `openai` and requires `model`. `contentProcessor` and `segmentationProcessor` independently accept `local`, `openai`, or `agent`; local/OpenAI require `model`, while Agent requires `service` and may omit an unavailable underlying model name. Record Codex as `{"provider":"agent","service":"codex"}`. Never infer or copy one processor to fill another role.
 
 Before `targetFrozen`, edit output pieces and linguistic evidence only. After freezing, preserve `outputFullText`, piece IDs, text, count, and order. Populate only `sourceSpan`, anchors, and boundary evidence.
 

@@ -184,7 +184,7 @@ fi
 manual_source=$(find_track "\\.$source_language([-.][A-Za-z0-9_-]+)?\\.vtt$" vtt)
 if [ -n "$manual_source" ]; then
   caption_validate_vtt "$manual_source"
-  "$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$source_language" "$manual_source" --source-type manual-cc --provider yt-dlp
+  "$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$source_language" "$manual_source" --source-type manual-cc --processor-provider yt-dlp
   source_caption_ready=1
 fi
 

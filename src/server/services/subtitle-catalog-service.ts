@@ -14,6 +14,7 @@ import {
   type SubtitleArtifact,
   type SubtitleArtifactDependency,
   type SubtitleArtifactKind,
+  type SubtitleArtifactProcessor,
   type SubtitleArtifactTrack,
   type SubtitleCatalogResponse,
   type SubtitleFreshnessState,
@@ -112,6 +113,25 @@ function requiredLanguage(value: unknown, label: string) {
     throw new Error(`${label} must be a BCP 47 language code`)
   }
   return language
+}
+
+function resolvedProcessor(
+  value: unknown,
+  label: string,
+): SubtitleArtifactProcessor {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`)
+  }
+  const candidate = value as Record<string, unknown>
+  return {
+    provider: requiredEnum(
+      candidate.provider,
+      SUBTITLE_ARTIFACT_PROVIDERS,
+      `${label}.provider`,
+    ),
+    service: stringValue(candidate.service),
+    model: stringValue(candidate.model),
+  }
 }
 
 function checksum(contents: string) {
@@ -266,11 +286,7 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       SUBTITLE_ARTIFACT_KINDS,
       `${id}.kind`,
     )
-    const provider = requiredEnum(
-      candidate.provider,
-      SUBTITLE_ARTIFACT_PROVIDERS,
-      `${id}.provider`,
-    )
+    const processor = resolvedProcessor(candidate.processor, `${id}.processor`)
     const lifecycleState = requiredEnum<SubtitleLifecycleState>(
       candidate.lifecycleState,
       ["draft", "processing", "ready", "failed", "archived"],
@@ -304,7 +320,6 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
     if (kind !== "source" && stringValue(candidate.sourceType)) {
       throw new Error(`${id}.sourceType is only allowed on source artifacts`)
     }
-    const model = stringValue(candidate.model)
     const timingUnitKind =
       candidate.timingUnitKind === null || candidate.timingUnitKind === undefined
         ? null
@@ -314,18 +329,32 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
             `${id}.timingUnitKind`,
           )
     if (kind === "source" && sourceType === "manual-cc") {
-      if (provider !== "yt-dlp" || model || timingUnitKind !== "cue") {
+      if (
+        processor.provider !== "yt-dlp" ||
+        processor.model ||
+        timingUnitKind !== "cue"
+      ) {
         throw new Error(`${id} manual CC must use yt-dlp cue timing`)
       }
     } else if (kind === "source") {
-      if (provider === "yt-dlp" || !model) {
+      if (
+        !["local", "openai"].includes(processor.provider) ||
+        !processor.model
+      ) {
         throw new Error(`${id} model transcripts require a local or openai model`)
       }
       if (!timingUnitKind || timingUnitKind === "cue") {
         throw new Error(`${id} model transcripts require fine-grained timing`)
       }
-    } else if (provider === "yt-dlp" || !model) {
-      throw new Error(`${id} subtitle revisions require a content model`)
+    } else if (processor.provider === "yt-dlp") {
+      throw new Error(`${id} subtitle revisions cannot use yt-dlp as a processor`)
+    } else if (
+      ["local", "openai"].includes(processor.provider) &&
+      !processor.model
+    ) {
+      throw new Error(`${id} local and openai processors require a model`)
+    } else if (processor.provider === "agent" && !processor.service) {
+      throw new Error(`${id} agent processors require a service`)
     }
     if (!Array.isArray(candidate.tracks)) {
       throw new Error(`${id}.tracks must be an array`)
@@ -409,8 +438,7 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       sourceLanguage,
       outputLanguage,
       sourceType,
-      provider,
-      model,
+      processor,
       timingUnitKind,
       targetFrozen,
       manifestPath,
@@ -604,9 +632,11 @@ function publicTrack(track: ResolvedSubtitleArtifactTrack): SubtitleArtifactTrac
 }
 
 function playbackLabel(candidate: SubtitleCandidate) {
-  const { artifact } = candidate
+  const { artifact, track } = candidate
   if (artifact.kind === "source") {
-    return `${artifact.sourceType === "manual-cc" ? "人工 CC" : "模型轉錄"} · r${artifact.revision}`
+    const sourceLabel =
+      artifact.sourceType === "manual-cc" ? "人工 CC" : "模型轉錄"
+    return `${track.languageCode} · ${sourceLabel} · r${artifact.revision}`
   }
   const label =
     artifact.kind === "proofread"
@@ -614,7 +644,7 @@ function playbackLabel(candidate: SubtitleCandidate) {
       : artifact.kind === "translation"
         ? "翻譯字幕"
         : "切分字幕"
-  return `${label} · r${artifact.revision}`
+  return `${track.languageCode} · ${label} · r${artifact.revision}`
 }
 
 function buildPlaybackLanguages(
@@ -671,8 +701,7 @@ export function publicSubtitleCatalog(
       sourceLanguage: artifact.sourceLanguage,
       outputLanguage: artifact.outputLanguage,
       sourceType: artifact.sourceType,
-      provider: artifact.provider,
-      model: artifact.model,
+      processor: artifact.processor,
       timingUnitKind: artifact.timingUnitKind,
       targetFrozen: artifact.targetFrozen,
       manifestAvailable: artifact.manifestAvailable,

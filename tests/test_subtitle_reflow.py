@@ -89,13 +89,13 @@ class SubtitleRevisionTests(unittest.TestCase):
     def finish_content(self, manifest: Path, outputs: list[str]):
         self.run_script(
             REFLOW,
-            "record-content-model",
+            "record-content-processor",
             "--manifest",
             str(manifest),
             "--provider",
-            "local",
-            "--model",
-            "llama-3.2",
+            "agent",
+            "--service",
+            "codex",
         )
         payload = json.loads(manifest.read_text(encoding="utf-8"))
         for segment, output in zip(payload["segments"], outputs, strict=True):
@@ -107,12 +107,14 @@ class SubtitleRevisionTests(unittest.TestCase):
     def test_translation_manifest_records_model_timing_and_manual_reference(self):
         manifest, input_vtt = self.prepare()
         payload = json.loads(manifest.read_text(encoding="utf-8"))
-        self.assertEqual(payload["schemaVersion"], 3)
+        self.assertEqual(payload["schemaVersion"], 4)
         self.assertEqual(payload["mode"], "translate")
         self.assertEqual(payload["sourceLanguage"], "en")
         self.assertEqual(payload["outputLanguage"], "zh-TW")
         self.assertEqual(payload["timingSourceArtifactId"], "source-model-en-r1")
         self.assertEqual(payload["referenceArtifactIds"], ["source-manual-en-r1"])
+        self.assertEqual(payload["timingProcessor"], {"provider": "local", "model": "medium"})
+        self.assertIsNone(payload["contentProcessor"])
         self.assertEqual(len(payload["segments"]), 2)
         self.assertTrue(input_vtt.read_text(encoding="utf-8").startswith("WEBVTT"))
 
@@ -171,9 +173,9 @@ class SubtitleRevisionTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("different source and output languages", result.stdout)
 
-    def test_render_rejects_schema_two_without_compatibility(self):
+    def test_render_rejects_schema_three_without_compatibility(self):
         manifest = self.root / "old.json"
-        manifest.write_text('{"schemaVersion": 2}', encoding="utf-8")
+        manifest.write_text('{"schemaVersion": 3}', encoding="utf-8")
         result = self.run_script(
             REFLOW,
             "render",
@@ -186,7 +188,14 @@ class SubtitleRevisionTests(unittest.TestCase):
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schemaVersion 3", result.stdout)
+        self.assertIn("schemaVersion 4", result.stdout)
+
+    def test_agent_content_processor_does_not_require_a_model(self):
+        manifest, _ = self.prepare()
+        payload = self.finish_content(manifest, ["哈囉 世界", "下一個 句子"])
+        self.assertEqual(payload["contentProcessor"]["provider"], "agent")
+        self.assertEqual(payload["contentProcessor"]["service"], "codex")
+        self.assertNotIn("model", payload["contentProcessor"])
 
 
 if __name__ == "__main__":

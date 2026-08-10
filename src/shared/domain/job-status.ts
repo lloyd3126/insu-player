@@ -115,16 +115,23 @@ export function subtitlePipelineLabel(job: JobSummary) {
       pipeline.stage ??
       "尚未開始"
     let detail = ""
-    const providerValue = pipeline.contentProvider ?? pipeline.timingProvider
-    const model = pipeline.contentModel ?? pipeline.timingModel
-    if (providerValue) {
+    const processor =
+      ["target_segmentation", "target_frozen", "source_alignment", "validation", "complete"].includes(
+        pipeline.stage,
+      )
+        ? pipeline.segmentationProcessor
+        : ["content_revision", "content_complete"].includes(pipeline.stage)
+          ? pipeline.contentProcessor
+          : pipeline.timingProcessor
+    if (processor) {
       const provider =
-        providerValue === "local"
+        processor.provider === "local"
           ? "本機"
-          : providerValue === "openai"
+          : processor.provider === "openai"
             ? "OpenAI API"
-            : providerValue
-      detail = model ? `${provider} · ${model}` : provider
+            : "Agent"
+      const identity = processor.model ?? processor.service
+      detail = identity ? `${provider} · ${identity}` : provider
     }
     return { label, detail }
   }

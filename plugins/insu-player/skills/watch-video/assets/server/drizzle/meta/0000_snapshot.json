@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "83f9f86b-9837-4be4-be10-e0a09c716262",
+  "id": "819b750e-82f5-4930-a0ac-7fc00b757dd3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "active_subtitle_tracks": {
@@ -1019,15 +1019,22 @@
           "notNull": false,
           "autoincrement": false
         },
-        "provider": {
-          "name": "provider",
+        "processor_provider": {
+          "name": "processor_provider",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "model": {
-          "name": "model",
+        "processor_service": {
+          "name": "processor_service",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "processor_model": {
+          "name": "processor_model",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1172,29 +1179,64 @@
           "notNull": true,
           "autoincrement": false
         },
-        "timing_provider": {
-          "name": "timing_provider",
+        "timing_processor_provider": {
+          "name": "timing_processor_provider",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "timing_model": {
-          "name": "timing_model",
+        "timing_processor_service": {
+          "name": "timing_processor_service",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "content_provider": {
-          "name": "content_provider",
+        "timing_processor_model": {
+          "name": "timing_processor_model",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "content_model": {
-          "name": "content_model",
+        "content_processor_provider": {
+          "name": "content_processor_provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "content_processor_service": {
+          "name": "content_processor_service",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "content_processor_model": {
+          "name": "content_processor_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "segmentation_processor_provider": {
+          "name": "segmentation_processor_provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "segmentation_processor_service": {
+          "name": "segmentation_processor_service",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "segmentation_processor_model": {
+          "name": "segmentation_processor_model",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1280,15 +1322,22 @@
           "notNull": false,
           "autoincrement": false
         },
-        "provider": {
-          "name": "provider",
+        "processor_provider": {
+          "name": "processor_provider",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "model": {
-          "name": "model",
+        "processor_service": {
+          "name": "processor_service",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "processor_model": {
+          "name": "processor_model",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

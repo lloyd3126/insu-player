@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: import-caption.sh <workspace> <video-id> <language> <vtt-file> --source-type manual-cc|model-transcript --provider yt-dlp|local|openai [--model NAME] [--timing-unit-kind cue|word|token|grapheme-group] [--revision N]\n'
+  printf 'usage: import-caption.sh <workspace> <video-id> <language> <vtt-file> --source-type manual-cc|model-transcript --processor-provider yt-dlp|local|openai [--processor-service NAME] [--processor-model NAME] [--timing-unit-kind cue|word|token|grapheme-group] [--revision N]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -13,12 +13,13 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then usage; exit 0; fi
 [ "$#" -ge 6 ] || { usage >&2; exit 1; }
 
 workspace_input="$1"; video_id="$2"; language_code="$3"; source_file="$4"; shift 4
-source_type=""; provider_name=""; model_name=""; timing_unit_kind=""; artifact_revision=1
+source_type=""; processor_provider=""; processor_service=""; processor_model=""; timing_unit_kind=""; artifact_revision=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --source-type) [ "$#" -ge 2 ] || caption_die "--source-type requires a value"; source_type="$2"; shift 2 ;;
-    --provider) [ "$#" -ge 2 ] || caption_die "--provider requires a value"; provider_name="$2"; shift 2 ;;
-    --model) [ "$#" -ge 2 ] || caption_die "--model requires a value"; model_name="$2"; shift 2 ;;
+    --processor-provider) [ "$#" -ge 2 ] || caption_die "--processor-provider requires a value"; processor_provider="$2"; shift 2 ;;
+    --processor-service) [ "$#" -ge 2 ] || caption_die "--processor-service requires a value"; processor_service="$2"; shift 2 ;;
+    --processor-model) [ "$#" -ge 2 ] || caption_die "--processor-model requires a value"; processor_model="$2"; shift 2 ;;
     --timing-unit-kind) [ "$#" -ge 2 ] || caption_die "--timing-unit-kind requires a value"; timing_unit_kind="$2"; shift 2 ;;
     --revision) [ "$#" -ge 2 ] || caption_die "--revision requires a value"; artifact_revision="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -30,19 +31,20 @@ caption_validate_video_id "$video_id"
 caption_validate_language "$language_code"
 case "$source_type" in manual-cc|model-transcript) ;; *) caption_die "--source-type must be manual-cc or model-transcript" ;; esac
 if [ "$source_type" = "manual-cc" ]; then
-  [ "$provider_name" = "yt-dlp" ] || caption_die "manual CC requires --provider yt-dlp"
-  [ -z "$model_name" ] || caption_die "manual CC cannot record a model"
+  [ "$processor_provider" = "yt-dlp" ] || caption_die "manual CC requires --processor-provider yt-dlp"
+  [ -z "$processor_model" ] || caption_die "manual CC cannot record a model"
   timing_unit_kind="${timing_unit_kind:-cue}"
   [ "$timing_unit_kind" = "cue" ] || caption_die "manual CC must use cue timing"
 else
-  case "$provider_name" in local|openai) ;; *) caption_die "model transcripts require --provider local or openai" ;; esac
-  [ -n "$model_name" ] || caption_die "model transcripts require --model"
+  case "$processor_provider" in local|openai) ;; *) caption_die "model transcripts require --processor-provider local or openai" ;; esac
+  [ -n "$processor_model" ] || caption_die "model transcripts require --processor-model"
   timing_unit_kind="${timing_unit_kind:-word}"
   case "$timing_unit_kind" in word|token|grapheme-group) ;; *) caption_die "model transcripts require word, token, or grapheme-group timing" ;; esac
 fi
 case "$artifact_revision" in ''|*[!0-9]*) caption_die "--revision must be a positive integer" ;; esac
 [ "$artifact_revision" -ge 1 ] || caption_die "--revision must be a positive integer"
-case "$model_name" in *[!A-Za-z0-9._-]*) caption_die "invalid model name" ;; esac
+case "$processor_service" in *[!A-Za-z0-9._-]*) caption_die "invalid processor service" ;; esac
+case "$processor_model" in *[!A-Za-z0-9._-]*) caption_die "invalid processor model" ;; esac
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
@@ -76,11 +78,12 @@ artifact_args=(
   --freshness-state current
   --source-language "$language_code"
   --source-type "$source_type"
-  --provider "$provider_name"
+  --processor-provider "$processor_provider"
   --timing-unit-kind "$timing_unit_kind"
   --track "$language_code" source_raw "$destination"
 )
-if [ -n "$model_name" ]; then artifact_args+=(--model "$model_name"); fi
+if [ -n "$processor_service" ]; then artifact_args+=(--processor-service "$processor_service"); fi
+if [ -n "$processor_model" ]; then artifact_args+=(--processor-model "$processor_model"); fi
 caption_job_state subtitle-artifact "${artifact_args[@]}" >/dev/null
 
 caption_note "Source subtitle artifact imported: $artifact_id"

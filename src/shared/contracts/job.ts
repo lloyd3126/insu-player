@@ -1,3 +1,8 @@
+import type {
+  ProcessorIdentity,
+  TimingProcessorIdentity,
+} from "@shared/contracts/processor"
+
 export const JOB_STATES = [
   "queued",
   "checking",
@@ -47,10 +52,9 @@ export interface SubtitlePipeline {
   stage: SubtitlePipelineStage
   sourceLanguage: string
   outputLanguage: string
-  timingProvider?: "local" | "openai"
-  timingModel?: string
-  contentProvider?: "local" | "openai"
-  contentModel?: string
+  timingProcessor?: TimingProcessorIdentity
+  contentProcessor?: ProcessorIdentity
+  segmentationProcessor?: ProcessorIdentity
   manualReferenceArtifactIds: string[]
   updatedAt?: string
 }
