@@ -827,6 +827,12 @@ test.describe("library and details @critical", () => {
     const proofreadPanel = subtitlePanel.getByRole("tabpanel", {
       name: "校正字幕",
     })
+    await expect(
+      proofreadPanel.getByRole("heading", { name: "新增校正字幕" }),
+    ).toBeVisible()
+    await expect(
+      proofreadPanel.getByRole("button", { name: "複製提示" }),
+    ).toBeEnabled()
     expect(subtitleArtifactRequests).toBe(1)
     await proofreadPanel
       .getByRole("button", {
@@ -854,6 +860,12 @@ test.describe("library and details @critical", () => {
     const translatedPanel = subtitlePanel.getByRole("tabpanel", {
       name: "翻譯字幕",
     })
+    await expect(
+      translatedPanel.getByRole("heading", { name: "新增翻譯字幕" }),
+    ).toBeVisible()
+    await expect(translatedPanel).toContainText(
+      "沿用 en · 校正字幕 r1 的文字與既有音訊時間軸",
+    )
     await expect(
       translatedPanel.getByText("Agent · codex", { exact: true }),
     ).toBeVisible()
@@ -883,6 +895,12 @@ test.describe("library and details @critical", () => {
     const segmentedPanel = subtitlePanel.getByRole("tabpanel", {
       name: "切分字幕",
     })
+    await expect(
+      segmentedPanel.getByRole("heading", { name: "新增切分字幕" }),
+    ).toBeVisible()
+    await expect(segmentedPanel).toContainText(
+      "沿用 zh-TW · 翻譯字幕 r1 與既有音訊時間軸",
+    )
     await expect(
       segmentedPanel.getByText("Agent · codex", { exact: true }),
     ).toBeVisible()

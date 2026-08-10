@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
@@ -61,7 +61,12 @@ SUBTITLE_PIPELINE_STAGES = {
 SUBTITLE_PIPELINE_MODES = {"proofread", "translate"}
 SUBTITLE_ARTIFACT_KINDS = {"source", "proofread", "translation", "segmentation"}
 SUBTITLE_SOURCE_TYPES = {"manual-cc", "model-transcript"}
-SUBTITLE_DEPENDENCY_RELATIONS = {"timing-source", "text-reference", "content-parent"}
+SUBTITLE_DEPENDENCY_RELATIONS = {
+    "timing-source",
+    "content-source",
+    "text-reference",
+    "content-parent",
+}
 SUBTITLE_LIFECYCLE_STATES = {"draft", "processing", "ready", "failed", "archived"}
 SUBTITLE_VALIDATION_STATES = {"pending", "valid", "warning", "invalid"}
 SUBTITLE_FRESHNESS_STATES = {"current", "stale", "superseded"}
@@ -629,6 +634,7 @@ def set_subtitle_artifact(
         resolved_dependencies[dependency["relation"]].append(parent)
     if kind != "source":
         timing_sources = resolved_dependencies["timing-source"]
+        content_sources = resolved_dependencies["content-source"]
         references = resolved_dependencies["text-reference"]
         content_parents = resolved_dependencies["content-parent"]
         if (
@@ -645,10 +651,36 @@ def set_subtitle_artifact(
             for reference in references
         ):
             raise ValueError("text references must be same-language manual CC")
-        if kind in {"proofread", "translation"} and content_parents:
-            raise ValueError("content revisions cannot have a content parent")
+        if kind in {"proofread", "translation"}:
+            if content_parents or len(content_sources) != 1:
+                raise ValueError(
+                    "content revisions require one content source and no content parent"
+                )
+            content_source = content_sources[0]
+            if kind == "proofread":
+                if content_source.get("id") != timing_sources[0].get("id"):
+                    raise ValueError(
+                        "proofread content source must be its model transcript"
+                    )
+            elif content_source.get("kind") == "source":
+                if content_source.get("id") != timing_sources[0].get("id"):
+                    raise ValueError(
+                        "direct translation content source must be its model transcript"
+                    )
+            elif (
+                content_source.get("kind") != "proofread"
+                or content_source.get("sourceLanguage") != source_language
+                or content_source.get("outputLanguage") != source_language
+            ):
+                raise ValueError(
+                    "translation content source must be a matching proofread artifact"
+                )
+            if content_source.get("kind") == "proofread" and references:
+                raise ValueError(
+                    "translation inherits text references from its proofread content source"
+                )
         if kind == "segmentation":
-            if references or len(content_parents) != 1:
+            if content_sources or references or len(content_parents) != 1:
                 raise ValueError("segmentation requires one content parent")
             content_parent = content_parents[0]
             if (

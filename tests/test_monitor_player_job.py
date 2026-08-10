@@ -224,7 +224,7 @@ class MonitorPlayerJobTests(unittest.TestCase):
         status = self.write_status(state="ready", stage="complete", progress=100)
         status["schemaVersion"] = 3
         self.status_path.write_text(json.dumps(status), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "schemaVersion 5"):
+        with self.assertRaisesRegex(ValueError, "schemaVersion 6"):
             self.snapshot()
 
         outside = Path(self.temporary.name) / "outside"

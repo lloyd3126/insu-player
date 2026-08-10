@@ -54,6 +54,7 @@ export type SubtitleTrackRole = (typeof SUBTITLE_TRACK_ROLES)[number]
 
 export const SUBTITLE_DEPENDENCY_RELATIONS = [
   "timing-source",
+  "content-source",
   "text-reference",
   "content-parent",
 ] as const

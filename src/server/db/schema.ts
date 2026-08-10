@@ -201,7 +201,7 @@ export const subtitleArtifactDependencies = sqliteTable(
   },
   (table) => [
     primaryKey({
-      columns: [table.artifactId, table.dependsOnArtifactId],
+      columns: [table.artifactId, table.dependsOnArtifactId, table.relation],
     }),
     index("subtitle_dependencies_parent_idx").on(table.dependsOnArtifactId),
   ],

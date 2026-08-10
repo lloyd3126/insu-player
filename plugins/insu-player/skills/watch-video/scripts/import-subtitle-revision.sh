@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: import-subtitle-revision.sh <workspace> <video-id> <input-vtt> <output-vtt> --source-language BCP47 --output-language BCP47 --processor-provider local|openai|agent [--processor-service NAME] [--processor-model NAME] --artifact-kind proofread|translation|segmentation --revision N --manifest JSON --timing-source-artifact ID [--text-reference-artifact ID ...] [--content-parent-artifact ID] [--warning-count N] [--hard-defect-count N]\n'
+  printf 'usage: import-subtitle-revision.sh <workspace> <video-id> <input-vtt> <output-vtt> --source-language BCP47 --output-language BCP47 --processor-provider local|openai|agent [--processor-service NAME] [--processor-model NAME] --artifact-kind proofread|translation|segmentation --revision N --manifest JSON --timing-source-artifact ID [--content-source-artifact ID] [--text-reference-artifact ID ...] [--content-parent-artifact ID] [--warning-count N] [--hard-defect-count N]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -14,7 +14,7 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then usage; exit 0; fi
 
 workspace_input="$1"; video_id="$2"; input_track="$3"; output_track="$4"; shift 4
 source_language=""; output_language=""; processor_provider=""; processor_service=""; processor_model=""
-artifact_kind=""; artifact_revision=""; artifact_manifest=""; timing_source_artifact=""
+artifact_kind=""; artifact_revision=""; artifact_manifest=""; timing_source_artifact=""; content_source_artifact=""
 content_parent_artifact=""; warning_count=0; hard_defect_count=0
 text_reference_artifacts=()
 while [ "$#" -gt 0 ]; do
@@ -28,6 +28,7 @@ while [ "$#" -gt 0 ]; do
     --revision) [ "$#" -ge 2 ] || caption_die "--revision requires a value"; artifact_revision="$2"; shift 2 ;;
     --manifest) [ "$#" -ge 2 ] || caption_die "--manifest requires a value"; artifact_manifest="$2"; shift 2 ;;
     --timing-source-artifact) [ "$#" -ge 2 ] || caption_die "--timing-source-artifact requires a value"; timing_source_artifact="$2"; shift 2 ;;
+    --content-source-artifact) [ "$#" -ge 2 ] || caption_die "--content-source-artifact requires a value"; content_source_artifact="$2"; shift 2 ;;
     --text-reference-artifact) [ "$#" -ge 2 ] || caption_die "--text-reference-artifact requires a value"; text_reference_artifacts+=("$2"); shift 2 ;;
     --content-parent-artifact) [ "$#" -ge 2 ] || caption_die "--content-parent-artifact requires a value"; content_parent_artifact="$2"; shift 2 ;;
     --warning-count) [ "$#" -ge 2 ] || caption_die "--warning-count requires a value"; warning_count="$2"; shift 2 ;;
@@ -62,9 +63,11 @@ case "$warning_count" in ''|*[!0-9]*) caption_die "--warning-count must be a non
 case "$hard_defect_count" in ''|*[!0-9]*) caption_die "--hard-defect-count must be a non-negative integer" ;; esac
 if [ "$artifact_kind" = "segmentation" ]; then
   [ -n "$content_parent_artifact" ] || caption_die "segmentation requires --content-parent-artifact"
+  [ -z "$content_source_artifact" ] || caption_die "segmentation inherits content through its parent"
   [ "${#text_reference_artifacts[@]}" -eq 0 ] || caption_die "segmentation inherits references through its content parent"
 else
   [ -z "$content_parent_artifact" ] || caption_die "only segmentation accepts --content-parent-artifact"
+  content_source_artifact="${content_source_artifact:-$timing_source_artifact}"
 fi
 
 caption_set_paths "$workspace_input"
@@ -83,13 +86,23 @@ timing_processor_provider=$(manifest_processor_value timingProcessor provider)
 timing_processor_service=$(manifest_processor_value timingProcessor service)
 timing_processor_model=$(manifest_processor_value timingProcessor model)
 if [ "$artifact_kind" = "segmentation" ]; then
-  [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("schemaVersion", ""))' "$artifact_manifest")" = "3" ] || caption_die "segmentation manifest must use schemaVersion 3"
+  [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("schemaVersion", ""))' "$artifact_manifest")" = "4" ] || caption_die "segmentation manifest must use schemaVersion 4"
   content_processor_provider=$(manifest_processor_value contentProcessor provider)
   content_processor_service=$(manifest_processor_value contentProcessor service)
   content_processor_model=$(manifest_processor_value contentProcessor model)
   recorded_processor_key=segmentationProcessor
 else
-  [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("schemaVersion", ""))' "$artifact_manifest")" = "4" ] || caption_die "content manifest must use schemaVersion 4"
+  [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("schemaVersion", ""))' "$artifact_manifest")" = "5" ] || caption_die "content manifest must use schemaVersion 5"
+  [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("sourceContentArtifactId", ""))' "$artifact_manifest")" = "$content_source_artifact" ] || caption_die "content manifest source artifact does not match the import request"
+  source_content_kind=$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("sourceContentKind", ""))' "$artifact_manifest")
+  case "$source_content_kind" in model-transcript|proofread) ;; *) caption_die "content manifest has an invalid source kind" ;; esac
+  if [ "$source_content_kind" = "proofread" ]; then
+    [ "${#text_reference_artifacts[@]}" -eq 0 ] || caption_die "translation inherits text references from proofreading"
+  else
+    requested_references=$(IFS=,; printf '%s' "${text_reference_artifacts[*]-}")
+    manifest_references=$("$CAPTION_PYTHON" -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")).get("referenceArtifactIds"); print(",".join(value) if isinstance(value, list) and all(isinstance(item, str) for item in value) else "__invalid__")' "$artifact_manifest")
+    [ "$manifest_references" = "$requested_references" ] || caption_die "content manifest text references do not match the import request"
+  fi
   content_processor_provider="$processor_provider"
   content_processor_service="$processor_service"
   content_processor_model="$processor_model"
@@ -101,6 +114,13 @@ fi
 
 reflow_script="$SCRIPT_DIR/../../translate-subtitles/scripts/reflow_subtitles.py"
 caption_require_file "$reflow_script"
+if [ "$artifact_kind" = "segmentation" ]; then
+  segmentation_script="$SCRIPT_DIR/../../segment-subtitles/scripts/segment_subtitles.py"
+  caption_require_file "$segmentation_script"
+  "$CAPTION_PYTHON" "$segmentation_script" validate --plan "$artifact_manifest" >/dev/null
+else
+  "$CAPTION_PYTHON" "$reflow_script" validate-manifest --manifest "$artifact_manifest" >/dev/null
+fi
 "$CAPTION_PYTHON" "$reflow_script" validate-pair --input "$input_track" --output "$output_track" >/dev/null
 
 job_dir="$CAPTION_JOBS/$video_id"
@@ -145,9 +165,12 @@ if [ "$artifact_kind" = "segmentation" ]; then
   artifact_args+=(--track "$source_language" input_segmented "$artifact_input")
   artifact_args+=(--track "$output_language" output_segmented "$artifact_output")
 else
-  for reference_artifact in "${text_reference_artifacts[@]}"; do
-    artifact_args+=(--dependency text-reference "$reference_artifact")
-  done
+  artifact_args+=(--dependency content-source "$content_source_artifact")
+  if [ "${#text_reference_artifacts[@]}" -gt 0 ]; then
+    for reference_artifact in "${text_reference_artifacts[@]}"; do
+      artifact_args+=(--dependency text-reference "$reference_artifact")
+    done
+  fi
   artifact_args+=(--track "$source_language" input_sentence "$artifact_input")
   artifact_args+=(--track "$output_language" output_sentence "$artifact_output")
 fi
@@ -179,9 +202,11 @@ if [ "$artifact_kind" = "segmentation" ]; then
   if [ -n "$processor_service" ]; then pipeline_args+=(--segmentation-processor-service "$processor_service"); fi
   if [ -n "$processor_model" ]; then pipeline_args+=(--segmentation-processor-model "$processor_model"); fi
 fi
-for reference_artifact in "${text_reference_artifacts[@]}"; do
-  pipeline_args+=(--manual-reference-artifact "$reference_artifact")
-done
+if [ "${#text_reference_artifacts[@]}" -gt 0 ]; then
+  for reference_artifact in "${text_reference_artifacts[@]}"; do
+    pipeline_args+=(--manual-reference-artifact "$reference_artifact")
+  done
+fi
 caption_job_state subtitle-pipeline "${pipeline_args[@]}" >/dev/null
 
 if [ "$artifact_kind" = "segmentation" ]; then

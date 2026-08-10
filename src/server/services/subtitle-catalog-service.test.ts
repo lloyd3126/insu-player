@@ -57,8 +57,8 @@ function artifact(
     writeFileSync(
       path.join(directory, manifestPath),
       kind === "segmentation"
-        ? '{"schemaVersion":3}\n'
-        : '{"schemaVersion":4}\n',
+        ? '{"schemaVersion":4}\n'
+        : '{"schemaVersion":5}\n',
     )
   }
   const artifactHasher = createHash("sha256")
@@ -126,7 +126,10 @@ describe("subtitle catalog resolver", () => {
         ], {
           sourceLanguage: "ar",
           outputLanguage: "fr",
-          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
         }),
         artifact(directory, "segmentation", segmentationId, 1, [
           track(directory, segmentationId, "ar", "input_segmented", "مرحبا بالعالم"),
@@ -175,7 +178,10 @@ describe("subtitle catalog resolver", () => {
           track(directory, proofreadId, "en", "output_sentence", "Corrected words"),
         ], {
           outputLanguage: "en",
-          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
         }),
       ],
       explicitActiveTracks: {},
@@ -186,6 +192,48 @@ describe("subtitle catalog resolver", () => {
       id: `${proofreadId}-output_sentence`,
       artifactKind: "proofread",
     })
+  })
+
+  test("accepts proofreading as translation content while retaining model timing", () => {
+    const directory = workspace()
+    const sourceId = "source-en-r1"
+    const proofreadId = "proofread-en-r1"
+    const translationId = "translation-de-r1"
+    const catalog = resolveSubtitleCatalog({
+      videoId: "demo",
+      jobDirectory: directory,
+      rawArtifacts: [
+        artifact(directory, "source", sourceId, 1, [
+          track(directory, sourceId, "en", "source_raw", "raw words"),
+        ]),
+        artifact(directory, "proofread", proofreadId, 1, [
+          track(directory, proofreadId, "en", "input_sentence", "raw words"),
+          track(directory, proofreadId, "en", "output_sentence", "Corrected words"),
+        ], {
+          outputLanguage: "en",
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
+        }),
+        artifact(directory, "translation", translationId, 1, [
+          track(directory, translationId, "en", "input_sentence", "Corrected words"),
+          track(directory, translationId, "de", "output_sentence", "Korrigierte Wörter"),
+        ], {
+          sourceLanguage: "en",
+          outputLanguage: "de",
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: proofreadId, relation: "content-source" },
+          ],
+        }),
+      ],
+      explicitActiveTracks: {},
+    })
+
+    expect(
+      catalog.activeTracks.find((track) => track.languageCode === "de"),
+    ).toMatchObject({ artifactKind: "translation", revision: 1 })
   })
 
   test("prefers manual CC to model raw captions but lets explicit choice win", () => {
@@ -243,7 +291,10 @@ describe("subtitle catalog resolver", () => {
         ], {
           sourceLanguage: "en",
           outputLanguage: "de",
-          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
         }),
         artifact(directory, "translation", newId, 2, [
           track(directory, newId, "en", "input_sentence", "source"),
@@ -253,7 +304,10 @@ describe("subtitle catalog resolver", () => {
           outputLanguage: "de",
           validationState: "invalid",
           hardDefectCount: 1,
-          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
         }),
       ],
       explicitActiveTracks: {},
@@ -299,7 +353,10 @@ describe("subtitle catalog resolver", () => {
         ], {
           outputLanguage: "en",
           processor: { provider: "agent", service: "codex" },
-          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
         }),
       ],
       explicitActiveTracks: {},

@@ -21,6 +21,14 @@ export interface SubtitlePromptContext {
   segmentationProcessor?: ProcessorIdentity
 }
 
+export interface SubtitleCreationPromptContext {
+  videoId: string
+  sourceLanguage: string
+  sourceArtifactId: string
+  timingArtifactId: string
+  sourceKind: "model-transcript" | "proofread" | "translation"
+}
+
 const HOMEPAGE_FIRST =
   "第一個可見動作先啟動或沿用目前專案 workspace 的 INSU Player 首頁，並用 Codex 內建瀏覽器開啟實際 localhost 網址。保持首頁開啟後再檢查、安裝或處理影音。"
 
@@ -62,6 +70,27 @@ const COMPLETION_CONTRACT =
 
 function safeToken(value: string | null | undefined) {
   return value && /^[A-Za-z0-9._-]{1,80}$/.test(value) ? value : undefined
+}
+
+function safeArtifactId(value: string) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(value)) {
+    throw new Error("invalid subtitle artifact ID for prompt context")
+  }
+  return value
+}
+
+function subtitleCreationContext(context: SubtitleCreationPromptContext) {
+  const videoId = safeToken(context.videoId)
+  const sourceLanguage = safeToken(context.sourceLanguage)
+  if (!videoId || !sourceLanguage) {
+    throw new Error("invalid subtitle creation prompt context")
+  }
+  return [
+    `影音 ID：${videoId}`,
+    `來源語言：${sourceLanguage}`,
+    `文字來源產物：${safeArtifactId(context.sourceArtifactId)}`,
+    `時間軸來源產物：${safeArtifactId(context.timingArtifactId)}`,
+  ].join("\n")
 }
 
 export function normalizeVideoUrl(value: string) {
@@ -224,6 +253,49 @@ export function buildSubtitleManagementPrompt(context: SubtitlePromptContext) {
     "先判斷目前缺少的是原始轉錄、完整句校正或翻譯、字幕切分、時間同步或驗證。只接續缺少的精確階段，不得重做已通過驗證的階段。",
     ...subtitleContinuationWorkflow(context),
     "不要替我刪除字幕，也不要替我切換目前播放版本。這兩項由我在字幕管理介面操作。",
+  ].join("\n\n")
+}
+
+export function buildCreateProofreadSubtitlePrompt(
+  context: SubtitleCreationPromptContext,
+) {
+  return [
+    "請為目前專案 INSU Player 中指定影音新增一個原語校正字幕版本。先唯讀檢查 current-schema 字幕 catalog 與指定來源，不要讀取其他 workspace。",
+    subtitleCreationContext(context),
+    "使用指定的模型轉錄文字與既有細粒度時間軸，不要重新下載影音，也不要重跑語音辨識。使用 $proofread-subtitles 完成完整句校正並驗證，保留原意、專有名詞、數字與說話者語氣。",
+    "完整句校正通過後先匯入可播放的新校正字幕，再使用獨立的 $segment-subtitles 完成同語言切分、連續時間對齊與驗證。切分失敗時保留已通過驗證的完整句校正字幕。",
+    "沿用目前可用的本機或 Agent 能力。只有實際準備使用 API 時，才用白話說明上傳內容、服務、可能費用與本機替代方案，並取得我本次明確同意。",
+    "不要刪除任何字幕，也不要切換目前播放版本。完成後告訴我到「影音中心 → 詳細資訊 → 字幕管理」查看新增版本。",
+  ].join("\n\n")
+}
+
+export function buildCreateTranslationSubtitlePrompt(
+  context: SubtitleCreationPromptContext,
+) {
+  const sourceInstruction =
+    context.sourceKind === "proofread"
+      ? "把指定校正字幕的完整句輸出當成唯一翻譯文字來源，原始模型轉錄只提供既有細粒度時間軸。不要退回未校正文字重新翻譯。"
+      : "把指定模型轉錄的完整句文字當成翻譯內容來源，並沿用同一產物的既有細粒度時間軸。"
+  return [
+    "請為目前專案 INSU Player 中指定影音新增一種翻譯字幕。先唯讀檢查 current-schema 字幕 catalog 與指定來源，不要讀取其他 workspace。",
+    subtitleCreationContext(context),
+    "先只問我想翻譯成哪一種語言，接受台灣繁中、日文或英文這類一般名稱。不要要求我回答語言碼、模型、provider、processor、timing、artifact 或其他技術參數。你要依語言名稱與實際模型能力自行解析並保存正確語言碼。",
+    sourceInstruction,
+    "不要重新下載影音，也不要重跑語音辨識。使用 $translate-subtitles 完成自然的完整句翻譯與驗證，先匯入可播放的新翻譯字幕，再使用獨立的 $segment-subtitles 做 target-first 切分、連續 Source Alignment 與驗證。切分失敗時保留已通過驗證的完整句翻譯字幕。",
+    "預設由目前 Agent 讀取字幕文字完成翻譯與切分。只有實際準備使用 API 時，才用白話說明會上傳字幕文字、使用的服務、可能費用與本機替代方案，並取得我本次明確同意。",
+    "不要刪除任何既有字幕，也不要切換目前播放版本。完成後告訴我到「影音中心 → 詳細資訊 → 字幕管理」查看新增語言。",
+  ].join("\n\n")
+}
+
+export function buildCreateSegmentedSubtitlePrompt(
+  context: SubtitleCreationPromptContext,
+) {
+  return [
+    "請為目前專案 INSU Player 中指定的完整句字幕新增一個切分版本。先唯讀檢查 current-schema 字幕 catalog、指定內容版本及其原始音訊時間軸，不要讀取其他 workspace。",
+    subtitleCreationContext(context),
+    "不要重新下載影音、重跑語音辨識、重新校正或重新翻譯。使用獨立的 $segment-subtitles，先固定完整句輸出，再採 output-first 或 target-first 切分，對齊連續的來源時間範圍並完成驗證。不得為了方便對齊而改寫已完成的字幕內容。",
+    "只有實際準備使用 API 時，才先用白話說明上傳內容、服務、可能費用與本機替代方案，並取得我本次明確同意。",
+    "不要刪除任何字幕，也不要切換目前播放版本。驗證失敗時保留原本可播放的完整句字幕。完成後告訴我到「影音中心 → 詳細資訊 → 字幕管理 → 切分字幕」查看。",
   ].join("\n\n")
 }
 

@@ -1,15 +1,17 @@
 # Segmentation plan contract
 
-`segmentation-plan.json` is a schema-version 3 derived immutable-revision artifact. Its model transcript and completed schema-version 4 content manifest remain independent inputs.
+`segmentation-plan.json` is a schema-version 4 derived immutable-revision artifact. Its model transcript and completed schema-version 5 content manifest remain independent inputs.
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "contentMode": "translate",
   "sourceLanguage": "en",
   "outputLanguage": "zh-TW",
   "sourceTranscript": "transcript.json",
   "contentManifest": "translate-en-zh-TW.json",
+  "sourceContentArtifactId": "video-proofread-en-en-r1",
+  "sourceContentKind": "proofread",
   "timingProcessor": {"provider": "local", "model": "medium"},
   "contentProcessor": {"provider": "agent", "service": "codex"},
   "segmentationProcessor": {"provider": "agent", "service": "codex"},
@@ -59,6 +61,8 @@
 ```
 
 Use BCP 47 language codes. `contentMode` is `proofread` or `translate`. `timedUnits.kind` is `word`, `token`, or `grapheme-group`; do not infer whitespace-delimited words for every writing system.
+
+`sourceContentKind` is `model-transcript` or `proofread`. Proofreading always uses its model transcript as both content and timing source. Translation may use either the model transcript directly or a validated proofread artifact as its content source. `timingProcessor` and timed units always remain tied to the original model transcript.
 
 `timingProcessor` accepts only `local` or `openai` and requires `model`. `contentProcessor` and `segmentationProcessor` independently accept `local`, `openai`, or `agent`; local/OpenAI require `model`, while Agent requires `service` and may omit an unavailable underlying model name. Record Codex as `{"provider":"agent","service":"codex"}`. Never infer or copy one processor to fill another role.
 

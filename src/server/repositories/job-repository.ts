@@ -31,6 +31,7 @@ import {
   readJsonFile,
   safeContainedFile,
 } from "@server/lib/files"
+import { STATUS_SCHEMA_VERSION } from "@server/runtime-contract"
 import {
   activeMediaPath,
   mediaCatalogPath,
@@ -59,7 +60,6 @@ import type { ProcessorIdentity } from "@shared/contracts/processor"
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]+$/
 const LANGUAGE_PATTERN = /^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/
 const JOB_STAGE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
-const STATUS_SCHEMA_VERSION = 5
 const JOB_STATE_SET = new Set<string>(JOB_STATES)
 const SUBTITLE_PIPELINE_STAGE_SET = new Set<string>(SUBTITLE_PIPELINE_STAGES)
 const ACTIVE_STATES = new Set([

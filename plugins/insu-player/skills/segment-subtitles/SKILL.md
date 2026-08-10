@@ -5,7 +5,7 @@ description: Split a completed proofread or translated subtitle revision into ou
 
 # Segment and Align Subtitles
 
-Consume a completed schema-version 4 content manifest from `$proofread-subtitles` or `$translate-subtitles`. This skill is independent from content correction and translation.
+Consume a completed schema-version 5 content manifest from `$proofread-subtitles` or `$translate-subtitles` and produce a schema-version 4 segmentation plan. This skill is independent from content correction and translation.
 
 ## Read the Applicable Contract
 
@@ -31,6 +31,8 @@ Require all of the following:
 - ordered word-, token-, or grapheme-group timing;
 - the completed proofread or translation artifact ID;
 - glossary and required terms when supplied.
+
+Also preserve the content manifest's distinct `sourceContentArtifactId` and `sourceContentKind`. A translation may use a proofread artifact for words while continuing to use the original model transcript for timing. Segmentation must not collapse these roles or reinterpret the uncorrected transcript as translation content.
 
 Manual CC may be inherited as text-reference provenance through the content artifact. Never use platform cue timing for precise alignment, and never accept platform automatic captions.
 

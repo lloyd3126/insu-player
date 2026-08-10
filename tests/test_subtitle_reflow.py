@@ -109,11 +109,13 @@ class SubtitleRevisionTests(unittest.TestCase):
     def test_translation_manifest_records_model_timing_and_manual_reference(self):
         manifest, input_vtt = self.prepare()
         payload = json.loads(manifest.read_text(encoding="utf-8"))
-        self.assertEqual(payload["schemaVersion"], 4)
+        self.assertEqual(payload["schemaVersion"], 5)
         self.assertEqual(payload["mode"], "translate")
         self.assertEqual(payload["sourceLanguage"], "en")
         self.assertEqual(payload["outputLanguage"], "zh-TW")
         self.assertEqual(payload["timingSourceArtifactId"], "source-model-en-r1")
+        self.assertEqual(payload["sourceContentArtifactId"], "source-model-en-r1")
+        self.assertEqual(payload["sourceContentKind"], "model-transcript")
         self.assertEqual(payload["referenceArtifactIds"], ["source-manual-en-r1"])
         self.assertEqual(payload["timingProcessor"], {"provider": "local", "model": "medium"})
         self.assertIsNone(payload["contentProcessor"])
@@ -175,9 +177,9 @@ class SubtitleRevisionTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("different source and output languages", result.stdout)
 
-    def test_render_rejects_schema_three_without_compatibility(self):
+    def test_render_rejects_schema_four_without_compatibility(self):
         manifest = self.root / "old.json"
-        manifest.write_text('{"schemaVersion": 3}', encoding="utf-8")
+        manifest.write_text('{"schemaVersion": 4}', encoding="utf-8")
         result = self.run_script(
             REFLOW,
             "render",
@@ -190,7 +192,41 @@ class SubtitleRevisionTests(unittest.TestCase):
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schemaVersion 4", result.stdout)
+        self.assertIn("schemaVersion 5", result.stdout)
+
+    def test_translation_can_use_validated_proofread_text_with_original_timing(self):
+        proofread, _ = self.prepare("proofread", "en", PROOFREAD)
+        self.finish_content(proofread, ["Hello, world.", "Next sentence!"])
+        translation = self.root / "translation-from-proofread.json"
+        self.run_script(
+            REFLOW,
+            "prepare",
+            "--source-transcript",
+            str(self.transcript),
+            "--manifest",
+            str(translation),
+            "--mode",
+            "translate",
+            "--source-language",
+            "en",
+            "--output-language",
+            "ja",
+            "--timing-source-artifact",
+            "source-model-en-r1",
+            "--source-content-artifact",
+            "proofread-en-r1",
+            "--source-content-manifest",
+            str(proofread),
+        )
+        payload = json.loads(translation.read_text(encoding="utf-8"))
+        self.assertEqual(payload["sourceContentArtifactId"], "proofread-en-r1")
+        self.assertEqual(payload["sourceContentKind"], "proofread")
+        self.assertEqual(payload["referenceArtifactIds"], ["source-manual-en-r1"])
+        self.assertEqual(
+            [segment["sourceText"] for segment in payload["segments"]],
+            ["Hello, world.", "Next sentence!"],
+        )
+        self.assertRegex(payload["sourceContentChecksum"], r"^[0-9a-f]{64}$")
 
     def test_agent_content_processor_does_not_require_a_model(self):
         manifest, _ = self.prepare()

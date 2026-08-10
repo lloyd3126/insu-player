@@ -80,8 +80,8 @@ for (const artifactId of [sourceId, proofreadId, translationId, segmentationId])
     writeFileSync(
       path.join(artifactRoot, "manifest.json"),
       artifactId === segmentationId
-        ? '{"schemaVersion":3}\n'
-        : '{"schemaVersion":4}\n',
+        ? '{"schemaVersion":4}\n'
+        : '{"schemaVersion":5}\n',
     )
   }
 }
@@ -100,8 +100,8 @@ const artifactDigest = (
   }
   return hasher.digest("hex")
 }
-const contentArtifactManifest = '{"schemaVersion":4}\n'
-const segmentationArtifactManifest = '{"schemaVersion":3}\n'
+const contentArtifactManifest = '{"schemaVersion":5}\n'
+const segmentationArtifactManifest = '{"schemaVersion":4}\n'
 writeFileSync(
   path.join(job, "logs", "workflow.log"),
   "download complete\ntranscription complete\nsubtitle reflow complete\n",
@@ -109,7 +109,7 @@ writeFileSync(
 writeFileSync(
   path.join(job, "status.json"),
   `${JSON.stringify({
-    schemaVersion: 5,
+    schemaVersion: 6,
     videoId: "demo-video",
     title: "雙語測試影音",
     sourceUrl: "https://example.test/demo",
@@ -186,7 +186,10 @@ writeFileSync(
         ),
         warningCount: 0,
         hardDefectCount: 0,
-        dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+        dependencies: [
+          { artifactId: sourceId, relation: "timing-source" },
+          { artifactId: sourceId, relation: "content-source" },
+        ],
         createdAt: "2026-08-08T00:50:00.000Z",
         completedAt: "2026-08-08T01:00:00.000Z",
         tracks: [
@@ -227,7 +230,10 @@ writeFileSync(
         ),
         warningCount: 0,
         hardDefectCount: 0,
-        dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+        dependencies: [
+          { artifactId: sourceId, relation: "timing-source" },
+          { artifactId: sourceId, relation: "content-source" },
+        ],
         createdAt: "2026-08-08T01:00:00.000Z",
         completedAt: "2026-08-08T01:30:00.000Z",
         tracks: [

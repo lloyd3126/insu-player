@@ -140,7 +140,7 @@ function seedJob() {
   writeFileSync(path.join(sourceRoot, "source.vtt"), english)
   writeFileSync(path.join(translationRoot, "input.vtt"), english)
   writeFileSync(path.join(translationRoot, "output.vtt"), chinese)
-  writeFileSync(path.join(translationRoot, "manifest.json"), '{"schemaVersion":4}\n')
+  writeFileSync(path.join(translationRoot, "manifest.json"), '{"schemaVersion":5}\n')
   const digest = (contents: string) => createHash("sha256").update(contents).digest("hex")
   const artifactDigest = (
     tracks: Array<Record<string, unknown>>,
@@ -162,7 +162,7 @@ function seedJob() {
     tracks: Array<Record<string, unknown>>,
     overrides: Record<string, unknown> = {},
   ) => {
-    const manifestContents = kind === "source" ? undefined : '{"schemaVersion":4}\n'
+    const manifestContents = kind === "source" ? undefined : '{"schemaVersion":5}\n'
     return {
       id,
       kind,
@@ -191,7 +191,7 @@ function seedJob() {
   writeFileSync(
     path.join(job, "status.json"),
     `${JSON.stringify({
-      schemaVersion: 5,
+      schemaVersion: 6,
       videoId: "demo-video",
       title: "雙語測試影音",
       sourceUrl: "https://example.test/video",
@@ -220,7 +220,10 @@ function seedJob() {
         ], {
           outputLanguage: "zh-TW",
           processor: { provider: "agent", service: "codex" },
-          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
           manifestPath: `subtitle-work/artifacts/${translationId}/manifest.json`,
         }),
       ],
@@ -307,6 +310,8 @@ describe("Hono application", () => {
       status: "ok",
       runtime: "bun",
       framework: "hono",
+      buildId: "insu-player-status-6-content-5",
+      statusSchemaVersion: 6,
       database: "sqlite",
       port: 4178,
     })

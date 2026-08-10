@@ -16,6 +16,10 @@ import {
   type RemovalOperations,
 } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
+import {
+  SERVER_BUILD_ID,
+  STATUS_SCHEMA_VERSION,
+} from "@server/runtime-contract"
 
 export interface ApplicationOptions {
   jobs: JobRepository
@@ -219,6 +223,8 @@ export function createApplication(options: ApplicationOptions) {
       status: "ok",
       runtime: "bun",
       framework: "hono",
+      buildId: SERVER_BUILD_ID,
+      statusSchemaVersion: STATUS_SCHEMA_VERSION,
       database: "sqlite",
       port,
     })

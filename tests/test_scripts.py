@@ -435,7 +435,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schemaVersion 5", result.stdout)
+        self.assertIn("schemaVersion 6", result.stdout)
 
     def test_job_state_requires_current_transcription_language_metadata(self) -> None:
         job_dir = self.workspace / "jobs" / "test-video"
@@ -474,7 +474,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             stdout=subprocess.DEVNULL,
         )
         status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
-        self.assertEqual(status["schemaVersion"], 5)
+        self.assertEqual(status["schemaVersion"], 6)
         self.assertEqual(
             status["transcription"],
             {
@@ -510,7 +510,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         (job_dir / "status.json").write_text(
             json.dumps(
                 {
-                    "schemaVersion": 5,
+                    "schemaVersion": 6,
                     "videoId": "test-video",
                     "state": "queued",
                     "stage": "queued",
@@ -656,9 +656,28 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         manifest.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 4,
+                    "schemaVersion": 5,
+                    "mode": "translate",
+                    "sourceLanguage": "en",
+                    "outputLanguage": "fr",
+                    "timingSourceArtifactId": "test-video-source-model-transcript-en-r1",
+                    "sourceContentArtifactId": "test-video-source-model-transcript-en-r1",
+                    "sourceContentKind": "model-transcript",
+                    "sourceContentManifest": None,
+                    "sourceContentChecksum": None,
+                    "referenceArtifactIds": ["test-video-source-manual-cc-en-r1"],
                     "timingProcessor": {"provider": "local", "model": "medium"},
                     "contentProcessor": {"provider": "agent", "service": "codex"},
+                    "outputProfile": {"punctuationPolicy": "preserve"},
+                    "segments": [
+                        {
+                            "id": "S0001",
+                            "start": "00:00:00.000",
+                            "end": "00:00:02.000",
+                            "sourceText": "Sample caption",
+                            "outputText": "Exemple de sous-titre",
+                        }
+                    ],
                 }
             ) + "\n",
             encoding="utf-8",
@@ -707,6 +726,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             artifact["dependencies"],
             [
                 {"relation": "timing-source", "artifactId": "test-video-source-model-transcript-en-r1"},
+                {"relation": "content-source", "artifactId": "test-video-source-model-transcript-en-r1"},
                 {"relation": "text-reference", "artifactId": "test-video-source-manual-cc-en-r1"},
             ],
         )
@@ -718,9 +738,28 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             (job_dir / artifact["manifestPath"]).read_text(encoding="utf-8"),
             json.dumps(
                 {
-                    "schemaVersion": 4,
+                    "schemaVersion": 5,
+                    "mode": "translate",
+                    "sourceLanguage": "en",
+                    "outputLanguage": "fr",
+                    "timingSourceArtifactId": "test-video-source-model-transcript-en-r1",
+                    "sourceContentArtifactId": "test-video-source-model-transcript-en-r1",
+                    "sourceContentKind": "model-transcript",
+                    "sourceContentManifest": None,
+                    "sourceContentChecksum": None,
+                    "referenceArtifactIds": ["test-video-source-manual-cc-en-r1"],
                     "timingProcessor": {"provider": "local", "model": "medium"},
                     "contentProcessor": {"provider": "agent", "service": "codex"},
+                    "outputProfile": {"punctuationPolicy": "preserve"},
+                    "segments": [
+                        {
+                            "id": "S0001",
+                            "start": "00:00:00.000",
+                            "end": "00:00:02.000",
+                            "sourceText": "Sample caption",
+                            "outputText": "Exemple de sous-titre",
+                        }
+                    ],
                 }
             ) + "\n",
         )
@@ -730,6 +769,49 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         )
         for track in artifact["tracks"]:
             self.assertTrue((job_dir / track["path"]).is_file())
+
+        no_reference_manifest = job_dir / "subtitle-work" / "content-manifest-no-reference.json"
+        no_reference_payload = json.loads(manifest.read_text(encoding="utf-8"))
+        no_reference_payload["referenceArtifactIds"] = []
+        no_reference_manifest.write_text(
+            json.dumps(no_reference_payload) + "\n",
+            encoding="utf-8",
+        )
+        self.run_script(
+            "import-subtitle-revision.sh",
+            str(self.workspace),
+            "test-video",
+            str(source),
+            str(target),
+            "--source-language",
+            "en",
+            "--output-language",
+            "fr",
+            "--processor-provider",
+            "agent",
+            "--processor-service",
+            "codex",
+            "--artifact-kind",
+            "translation",
+            "--revision",
+            "3",
+            "--timing-source-artifact",
+            "test-video-source-model-transcript-en-r1",
+            "--manifest",
+            str(no_reference_manifest),
+        )
+        no_reference = next(
+            item
+            for item in self.read_status()["subtitleArtifacts"]
+            if item["kind"] == "translation" and item["revision"] == 3
+        )
+        self.assertEqual(
+            no_reference["dependencies"],
+            [
+                {"relation": "timing-source", "artifactId": "test-video-source-model-transcript-en-r1"},
+                {"relation": "content-source", "artifactId": "test-video-source-model-transcript-en-r1"},
+            ],
+        )
 
     def test_complete_job_cleanup_delegates_to_confirmed_removal_plan(self) -> None:
         self.run_script(

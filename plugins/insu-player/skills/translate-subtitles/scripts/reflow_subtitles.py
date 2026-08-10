@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SEGMENT_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 SENTENCE_END_PATTERN = re.compile(r"[.!?。！？؟։।॥](?:[\"'”’\)\]\}]+)?$")
@@ -294,6 +295,70 @@ def sentence_segments(units: list[TimedUnit]) -> list[dict[str, object]]:
     return segments
 
 
+def proofread_source_segments(
+    path: Path,
+    *,
+    expected_language: str,
+    expected_timing_artifact: str,
+    transcript_segments: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[str], str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid proofread content manifest: {path}") from error
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError(
+            f"proofread content manifest must use schemaVersion {SCHEMA_VERSION}"
+        )
+    if payload.get("mode") != "proofread":
+        raise ValueError("translation content source must be a proofread manifest")
+    if payload.get("sourceLanguage") != expected_language or payload.get("outputLanguage") != expected_language:
+        raise ValueError("proofread content source language does not match the transcript")
+    if payload.get("timingSourceArtifactId") != expected_timing_artifact:
+        raise ValueError("proofread content source uses a different timing artifact")
+    raw_segments = payload.get("segments")
+    if not isinstance(raw_segments, list) or len(raw_segments) != len(transcript_segments):
+        raise ValueError("proofread content source does not match the transcript sentences")
+    translated_source: list[dict[str, object]] = []
+    for transcript_segment, raw_segment in zip(
+        transcript_segments, raw_segments, strict=True
+    ):
+        if not isinstance(raw_segment, dict):
+            raise ValueError("proofread content source contains an invalid segment")
+        identifier = transcript_segment["id"]
+        for field in ("id", "sourceUnitStart", "sourceUnitEnd"):
+            if raw_segment.get(field) != transcript_segment[field]:
+                raise ValueError(
+                    f"proofread content source changed {identifier}.{field}"
+                )
+        source_text = validate_content(
+            raw_segment.get("outputText"), f"{identifier}.outputText"
+        )
+        required_terms = raw_segment.get("requiredTerms")
+        if not isinstance(required_terms, list) or not all(
+            isinstance(term, str) and term for term in required_terms
+        ):
+            raise ValueError(
+                f"proofread content source has invalid {identifier}.requiredTerms"
+            )
+        translated_source.append(
+            {
+                **transcript_segment,
+                "sourceText": source_text,
+                "draftOutputText": "",
+                "outputText": "",
+                "requiredTerms": list(required_terms),
+            }
+        )
+    references = payload.get("referenceArtifactIds")
+    if not isinstance(references, list) or not all(
+        isinstance(value, str) for value in references
+    ):
+        raise ValueError("proofread content source references are invalid")
+    checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+    return translated_source, list(references), checksum
+
+
 def render_vtt(
     segments: list[dict[str, object]],
     language: str,
@@ -338,6 +403,41 @@ def manifest_view(payload: object) -> ManifestView:
         output_key = "outputText"
         if "contentModel" in payload or "transcriptionModel" in payload:
             raise ValueError("subtitle revision manifest contains removed model fields")
+        source_content_artifact = payload.get("sourceContentArtifactId")
+        source_content_kind = payload.get("sourceContentKind")
+        timing_source_artifact = payload.get("timingSourceArtifactId")
+        if not isinstance(timing_source_artifact, str) or not timing_source_artifact:
+            raise ValueError("subtitle revision manifest has no timing source artifact")
+        if not isinstance(source_content_artifact, str) or not source_content_artifact:
+            raise ValueError("subtitle revision manifest has no content source artifact")
+        if source_content_kind not in {"model-transcript", "proofread"}:
+            raise ValueError("subtitle revision manifest has an invalid content source kind")
+        if mode == "proofread" and source_content_kind != "model-transcript":
+            raise ValueError("proofread content must come from the model transcript")
+        if (
+            source_content_kind == "model-transcript"
+            and source_content_artifact != timing_source_artifact
+        ):
+            raise ValueError("model transcript content and timing sources must match")
+        if source_content_kind == "proofread":
+            if mode != "translate":
+                raise ValueError("only translation accepts proofread content")
+            source_manifest = payload.get("sourceContentManifest")
+            source_checksum = payload.get("sourceContentChecksum")
+            if not isinstance(source_manifest, str) or not source_manifest:
+                raise ValueError("proofread content source manifest is missing")
+            if not isinstance(source_checksum, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", source_checksum
+            ):
+                raise ValueError("proofread content source checksum is invalid")
+            try:
+                actual_source_checksum = hashlib.sha256(
+                    Path(source_manifest).read_bytes()
+                ).hexdigest()
+            except OSError as error:
+                raise ValueError("proofread content source manifest is unavailable") from error
+            if actual_source_checksum != source_checksum:
+                raise ValueError("proofread content source checksum changed")
         processor_identity(
             payload.get("timingProcessor"),
             "timingProcessor",
@@ -437,6 +537,37 @@ def prepare(args: argparse.Namespace) -> int:
     if args.mode == "translate" and source_language == output_language:
         raise ValueError("translate mode requires different source and output languages")
     segments = sentence_segments(units)
+    source_content_artifact = args.source_content_artifact or args.timing_source_artifact
+    source_content_kind = "model-transcript"
+    source_content_manifest: str | None = None
+    source_content_checksum: str | None = None
+    references = list(args.reference_artifact)
+    if (
+        args.source_content_manifest is None
+        and source_content_artifact != args.timing_source_artifact
+    ):
+        raise ValueError(
+            "model transcript content and timing sources must use the same artifact"
+        )
+    if args.source_content_manifest is not None:
+        if args.mode != "translate":
+            raise ValueError("only translation accepts a proofread content source")
+        if not args.source_content_artifact:
+            raise ValueError(
+                "translation from proofreading requires --source-content-artifact"
+            )
+        segments, references, source_content_checksum = proofread_source_segments(
+            args.source_content_manifest,
+            expected_language=source_language,
+            expected_timing_artifact=args.timing_source_artifact,
+            transcript_segments=segments,
+        )
+        source_content_kind = "proofread"
+        source_content_manifest = str(args.source_content_manifest)
+        if args.reference_artifact:
+            raise ValueError(
+                "translation inherits text references from its proofread content source"
+            )
     payload: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "mode": args.mode,
@@ -445,7 +576,11 @@ def prepare(args: argparse.Namespace) -> int:
         "outputLanguage": output_language,
         "sourceTranscript": str(args.source_transcript),
         "timingSourceArtifactId": args.timing_source_artifact,
-        "referenceArtifactIds": args.reference_artifact,
+        "sourceContentArtifactId": source_content_artifact,
+        "sourceContentKind": source_content_kind,
+        "sourceContentManifest": source_content_manifest,
+        "sourceContentChecksum": source_content_checksum,
+        "referenceArtifactIds": references,
         "timingProcessor": {"provider": provider, "model": model},
         "contentProcessor": None,
         "outputProfile": {"punctuationPolicy": args.punctuation_policy},
@@ -521,6 +656,8 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--source-language")
     prepare_parser.add_argument("--output-language", required=True)
     prepare_parser.add_argument("--timing-source-artifact", required=True)
+    prepare_parser.add_argument("--source-content-artifact")
+    prepare_parser.add_argument("--source-content-manifest", type=Path)
     prepare_parser.add_argument("--reference-artifact", action="append", default=[])
     prepare_parser.add_argument("--source-output", type=Path)
     prepare_parser.add_argument(
@@ -544,6 +681,23 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--input-output", required=True, type=Path)
     render_parser.add_argument("--output", required=True, type=Path)
     render_parser.set_defaults(handler=render)
+
+    manifest_parser = subparsers.add_parser("validate-manifest")
+    manifest_parser.add_argument("--manifest", required=True, type=Path)
+
+    def validate_manifest_command(args: argparse.Namespace) -> int:
+        try:
+            payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"invalid subtitle revision manifest: {args.manifest}") from error
+        view = manifest_view(payload)
+        print(
+            f"Validated {len(view.segments)} complete-sentence manifest units "
+            f"for {view.source_language} -> {view.output_language}."
+        )
+        return 0
+
+    manifest_parser.set_defaults(handler=validate_manifest_command)
 
     validate_parser = subparsers.add_parser("validate-pair")
     validate_parser.add_argument("--input", required=True, type=Path)

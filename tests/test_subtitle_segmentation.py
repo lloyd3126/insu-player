@@ -121,7 +121,9 @@ class SubtitleSegmentationTests(unittest.TestCase):
         plan = self.plan()
         payload = json.loads(plan.read_text(encoding="utf-8"))
         self.assertEqual(payload["contentMode"], "translate")
-        self.assertEqual(payload["schemaVersion"], 3)
+        self.assertEqual(payload["schemaVersion"], 4)
+        self.assertEqual(payload["sourceContentArtifactId"], "source-model-en-r1")
+        self.assertEqual(payload["sourceContentKind"], "model-transcript")
         self.assertEqual(payload["contentProcessor"]["provider"], "agent")
         self.assertEqual(payload["segmentationProcessor"]["service"], "codex")
         self.assertFalse(payload["targetFrozen"])
@@ -150,6 +152,57 @@ class SubtitleSegmentationTests(unittest.TestCase):
         self.assertEqual(payload["sourceLanguage"], "en")
         self.assertEqual(payload["outputLanguage"], "en")
         self.assertEqual(payload["contentMode"], "proofread")
+
+    def test_translation_from_proofreading_keeps_distinct_content_and_timing(self):
+        proofread = self.content_manifest("proofread", "en")
+        translation = self.root / "content-from-proofread.json"
+        self.run_script(
+            REFLOW,
+            "prepare",
+            "--source-transcript",
+            self.transcript,
+            "--manifest",
+            translation,
+            "--mode",
+            "translate",
+            "--source-language",
+            "en",
+            "--output-language",
+            "fr",
+            "--timing-source-artifact",
+            "source-model-en-r1",
+            "--source-content-artifact",
+            "proofread-en-r1",
+            "--source-content-manifest",
+            proofread,
+        )
+        self.run_script(
+            REFLOW,
+            "record-content-processor",
+            "--manifest",
+            translation,
+            "--provider",
+            "agent",
+            "--service",
+            "codex",
+        )
+        content = json.loads(translation.read_text(encoding="utf-8"))
+        content["segments"][0]["outputText"] = "C'est un travail important."
+        translation.write_text(json.dumps(content), encoding="utf-8")
+        plan = self.root / "proofread-translation-plan.json"
+        self.run_script(
+            SEGMENT,
+            "prepare",
+            "--content-manifest",
+            translation,
+            "--source-transcript",
+            self.transcript,
+            "--output",
+            plan,
+        )
+        payload = json.loads(plan.read_text(encoding="utf-8"))
+        self.assertEqual(payload["sourceContentArtifactId"], "proofread-en-r1")
+        self.assertEqual(payload["sourceContentKind"], "proofread")
 
     def test_frozen_target_cannot_be_changed_for_alignment_convenience(self):
         plan = self.plan()

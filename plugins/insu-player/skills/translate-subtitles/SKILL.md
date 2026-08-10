@@ -5,13 +5,13 @@ description: Translate a model-timed source-language transcript into complete, n
 
 # Translate Complete Subtitle Sentences
 
-Create a schema-version 4 `translate` content manifest. This skill owns complete-sentence translation and polishing only. `$segment-subtitles` separately owns display cuts and Source Alignment.
+Create a schema-version 5 `translate` content manifest. This skill owns complete-sentence translation and polishing only. `$segment-subtitles` separately owns display cuts and Source Alignment.
 
 Read [references/language-contract.md](references/language-contract.md) whenever the language pair, writing system, normalization, or selected model capability is uncertain.
 
 ## Require the Correct Evidence
 
-1. Require a normalized model transcript with ordered `word`, `token`, or `grapheme-group` timing from the original audio.
+1. Require a normalized model transcript with ordered `word`, `token`, or `grapheme-group` timing from the original audio. It remains the timing source even when a proofread artifact supplies the translation text.
 2. Consume the detected source language from the schema-version 2 model transcript. Ask only which language the user wants for the translated subtitles, using ordinary language names. Never ask for codes. Resolve the source and output to distinct canonical BCP 47 tags before invoking scripts.
 3. A creator-provided manual CC track may be used as optional spelling and terminology evidence. Its cue boundaries are never timing authority.
 4. Never inspect, download, import, or reference platform automatic captions.
@@ -35,6 +35,23 @@ python3 scripts/reflow_subtitles.py prepare \
 ```
 
 Omit `--reference-artifact` when no manual CC exists. The manifest records complete source sentences, immutable source timed-unit ranges, `draftOutputText`, `outputText`, required terms, timing provenance, and optional text-reference provenance.
+
+When a ready, validated proofread artifact exists, use its immutable manifest as the translation content source instead of translating the uncorrected transcript:
+
+```bash
+python3 scripts/reflow_subtitles.py prepare \
+  --source-transcript WORKSPACE/jobs/VIDEO_ID/whisper/PROVIDER/transcript.json \
+  --manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/translate-SOURCE-TARGET.json \
+  --mode translate \
+  --source-language SOURCE_BCP47 \
+  --output-language TARGET_BCP47 \
+  --timing-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
+  --source-content-artifact PROOFREAD_ARTIFACT_ID \
+  --source-content-manifest PROOFREAD_MANIFEST \
+  --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.sentence.vtt
+```
+
+The proofread manifest must match the transcript sentence IDs, timed-unit ranges, language, and timing artifact exactly. Its final `outputText` becomes each translation segment's `sourceText`. Inherit its manual CC references and do not pass new `--reference-artifact` values in this path.
 
 Record the content processor before writing the translation. For Codex:
 
@@ -75,10 +92,11 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   --revision REVISION \
   --manifest MANIFEST \
   --timing-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
+  --content-source-artifact MODEL_TRANSCRIPT_OR_PROOFREAD_ARTIFACT_ID \
   --text-reference-artifact MANUAL_CC_ARTIFACT_ID
 ```
 
-The validated translation revision becomes playable immediately. Omit the optional text reference when absent. Do not create a `proofread` or `segmentation` artifact from this skill.
+The validated translation revision becomes playable immediately. Omit the optional text reference when absent. When translating from proofreading, omit direct text references because the translation inherits them through its content source. Do not create a `proofread` or `segmentation` artifact from this skill.
 
 Hand the content manifest, exact model transcript, timing-source artifact ID, and translation artifact ID to `$segment-subtitles`. Failed or processing segmentation must leave the last valid translation revision available.
 

@@ -87,15 +87,16 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   --source-language SOURCE_BCP47 --output-language OUTPUT_BCP47 \
   --artifact-kind proofread_or_translation --revision REVISION \
   --manifest MANIFEST --timing-source-artifact MODEL_SOURCE_ARTIFACT_ID \
+  --content-source-artifact MODEL_OR_PROOFREAD_ARTIFACT_ID \
   --text-reference-artifact MANUAL_CC_ARTIFACT_ID \
   --processor-provider agent --processor-service codex
 ~~~
 
-Each complete proofread or translation revision is playable before segmentation. Then follow `$segment-subtitles` to create a separate downstream artifact: decide finalized output-language pieces first, freeze them, align continuous source timed-unit spans, validate, render, and import with the timing-source and content-parent artifact IDs. A processing or invalid new artifact must never hide the last valid active track.
+Each complete proofread or translation revision is playable before segmentation. A later translation should use the latest valid proofread artifact as its content source while retaining the original model transcript as timing source. Only fall back to direct model-transcript content when no valid proofread exists. Then follow `$segment-subtitles` to create a separate downstream artifact: decide finalized output-language pieces first, freeze them, align continuous source timed-unit spans, validate, render, and import with the timing-source and content-parent artifact IDs. A processing or invalid new artifact must never hide the last valid active track.
 
 Keep complete corrected or translated sentences separate from derived display segmentation. Final segmented tracks must have identical cue IDs and intervals derived from continuous source timed units. Apply punctuation normalization only through the selected language/output profile. Do not claim that a processor supports an arbitrary language unless that exact capability was verified and recorded. The player exposes only ready validated tracks; artifact kind, provenance, revisions, processor, validation, active-version switching, and deletion belong in 字幕管理.
 
-Current data contracts are clean-break only: job status uses schema 5 and model transcripts use schema 2. Reject any other version and rebuild the job; never migrate, coerce, or invoke a legacy reader.
+Current data contracts are clean-break only: job status uses schema 6, content manifests use schema 5, segmentation plans use schema 4, and model transcripts use schema 2. Reject any other version and rebuild the job; never migrate, coerce, or invoke a legacy reader.
 
 ## Recovery, Updating, and Removal
 

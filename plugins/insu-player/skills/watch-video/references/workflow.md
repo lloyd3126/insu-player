@@ -8,7 +8,7 @@
 http://127.0.0.1:8000/
 ```
 
-首頁是全高入口頁，navbar 只保留「使用說明」、「功能設定」與「影音中心」。「使用說明」以 tabs 切換開始使用、我的提示與支援網站。內建使用情境提示位於「我的提示」建立卡下方。「功能設定」以 tabs 切換環境變數、本機模型與雲端模型。三個分頁都在上方提供對應的 Agent 提示卡，Tab panel 固定不捲動，只有下方表格捲動。環境變數表格顯示白名單變數、設定狀態、遮蔽的新值輸入與操作，不顯示 SDK 狀態。本機模型顯示 workspace 實際下載的 Whisper 模型與大小，雲端模型顯示 API SDK 安裝狀態與 API Key 選單。「影音中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。有影音時預設開啟「我的影音」，只顯示全寬搜尋列與最多三欄的縮圖標題卡片。沒有影音時預設開啟「詳細資訊」。單筆詳情依序提供關於影音、畫質管理、字幕管理、影音摘要、影音筆記與執行紀錄。「畫質管理」列出來源可下載畫質、本地已下載畫質、目前播放畫質與背景下載進度。「字幕管理」再以內層 tabs 切換原始字幕、翻譯字幕與切分字幕，共用來源→翻譯→切分版本譜系、revision 選單、驗證狀態與多語並排表格。只有表格捲動。字幕內層分頁與 revision 都寫入 localhost URL，重新整理後保留目前畫面。播放器畫質選單只顯示已下載畫質，字幕選單只顯示語言碼。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影音中心，背景任務與狀態輪詢不會中斷。
+首頁是全高入口頁，navbar 只保留「使用說明」、「功能設定」與「影音中心」。「使用說明」以 tabs 切換開始使用、我的提示與支援網站。內建使用情境提示位於「我的提示」建立卡下方。「功能設定」以 tabs 切換環境變數、本機模型與雲端模型。三個分頁都在上方提供對應的 Agent 提示卡，Tab panel 固定不捲動，只有下方表格捲動。環境變數表格顯示白名單變數、設定狀態、遮蔽的新值輸入與操作，不顯示 SDK 狀態。本機模型顯示 workspace 實際下載的 Whisper 模型與大小，雲端模型顯示 API SDK 安裝狀態與 API Key 選單。「影音中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。有影音時預設開啟「我的影音」，只顯示全寬搜尋列與最多三欄的縮圖標題卡片。沒有影音時預設開啟「詳細資訊」。單筆詳情依序提供關於影音、畫質管理、字幕管理、影音摘要、影音筆記與執行紀錄。「畫質管理」列出來源可下載畫質、本地已下載畫質、目前播放畫質與背景下載進度。「字幕管理」再以內層 tabs 切換原始字幕、校正字幕、翻譯字幕與切分字幕，共用來源→校正或翻譯→切分版本譜系、revision 選單、驗證狀態與多語並排表格。校正、翻譯與切分分頁上方各有可複製的 Agent 提示卡。翻譯卡優先沿用最新有效校正稿，只有沒有校正稿時才使用模型轉錄文字。只有表格捲動。字幕內層分頁與 revision 都寫入 localhost URL，重新整理後保留目前畫面。播放器畫質選單只顯示已下載畫質，字幕選單只顯示語言碼。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影音中心，背景任務與狀態輪詢不會中斷。
 
 首頁仍是單一 React 應用程式，但使用 React Router 將使用說明、功能設定、影音中心、影音詳情、播放器及其 tab 狀態映射到 localhost URL。重新整理或直接開啟該 URL 必須恢復同一個 modal 與 tab。Hono/Bun 服務要對這些 allowlist 前端路徑回傳同一份 React `index.html`。
 
@@ -315,10 +315,12 @@ API 音訊會先轉為低位元率分段，單檔低於 25 MB，再把 segment �
 
 ## 階段 7：完整句內容與獨立字幕切分
 
-`transcribe.sh` 先建立 schema-version 2 model transcript，保存 canonical `language`、實際 `engineLanguage` 與 timed units，再建立 schema-version 4 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言。timed units 可以是 word、token 或 grapheme-group。Job status 固定使用 schema version 5。舊 status、transcript 或 manifest 不遷移、不轉換、不走 legacy reader，直接重建。
+`transcribe.sh` 先建立 schema-version 2 model transcript，保存 canonical `language`、實際 `engineLanguage` 與 timed units，再建立 schema-version 5 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor`、`sourceContentArtifactId`、`sourceContentKind` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言。timed units 可以是 word、token 或 grapheme-group。Job status 固定使用 schema version 6，segmentation plan 固定使用 schema version 4。舊 status、transcript、content manifest 或 segmentation plan 不遷移、不轉換、不走 legacy reader，直接重建。
 
 - `mode=proofread`：使用 `$proofread-subtitles`，來源與輸出語言相同，完成同語校正與潤色。
 - `mode=translate`：使用 `$translate-subtitles`，先對完整句初譯，再完成自然目標語潤色。
+
+使用者先做校正、後來新增翻譯時，不重新下載影音或重跑 timing 模型。翻譯的 `sourceContentArtifactId` 指向選定的有效校正 artifact，`sourceContentKind` 是 `proofread`，每句 `sourceText` 取自該校正 manifest 的最終 `outputText`。`timingSourceArtifactId` 仍指向原始模型轉錄。若有多個有效校正版本，字幕管理提示卡讓使用者用一般名稱選擇。只有沒有有效校正版本時，翻譯才直接使用模型轉錄文字。
 
 兩者都把初稿寫入 `draftOutputText`、定稿寫入 `outputText`，保存 source timed-unit ranges、raw punctuation、專有名詞、數字、邏輯關係、required terms 與 processor metadata。不要在這一步依 cue 或字數切分。
 
@@ -334,6 +336,7 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   --revision 1 \
   --manifest .local/insu-player/jobs/VIDEO_ID/subtitle-work/content-manifest.json \
   --timing-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
+  --content-source-artifact MODEL_OR_PROOFREAD_ARTIFACT_ID \
   --text-reference-artifact MANUAL_CC_ARTIFACT_ID
 ```
 
@@ -367,7 +370,7 @@ Validation 通過後，以同一 importer 寫入 `segmentation` artifact，並�
 - [ ] 關閉 modal 後 iframe `src` 被清除，影片停止解碼
 - [ ] 重開同支影片可從 job 內 `ui-state.json` 的進度接續
 - [ ] 「詳情」依序顯示關於影音、畫質管理、字幕管理、影音摘要、影音筆記與執行紀錄
-- [ ] 「字幕管理」內以原始字幕、翻譯字幕、切分字幕 tabs 共用版本譜系與 revision 選擇。原始字幕包含 yt-dlp 來源或本機、雲端模型轉錄的字幕，翻譯與切分表格都以多語並排呈現，且只有表格區域捲動
+- [ ] 「字幕管理」內以原始字幕、校正字幕、翻譯字幕、切分字幕 tabs 共用版本譜系與 revision 選擇。校正、翻譯與切分分頁上方提供對應的提示卡，翻譯卡優先沿用最新有效校正稿，且只有表格區域捲動
 - [ ] 字幕內層 tab 與 revision 都映射到 URL，重新整理可恢復同一畫面。舊的三個字幕頂層路徑不再接受
 - [ ] 完整翻譯一完成就可播放。有效切分稿完成時在不中斷播放偏好的前提下自動升級。無效或處理中的新版不取代舊版
 - [ ] 開啟「關於影音」時不先請求字幕與 log，只有切到字幕或執行紀錄分頁才按需載入

@@ -75,7 +75,7 @@ class LibraryRemovalTests(unittest.TestCase):
 
     def write_status(self, **overrides: object) -> None:
         payload: dict[str, object] = {
-            "schemaVersion": 5,
+            "schemaVersion": 6,
             "videoId": "demo-video",
             "title": "Demo Video",
             "state": "ready",
@@ -383,7 +383,8 @@ class LibraryRemovalTests(unittest.TestCase):
                 "sourceLanguage": "en",
                 "outputLanguage": "fr",
                 "dependencies": [
-                    {"artifactId": source_id, "relation": "timing-source"}
+                    {"artifactId": source_id, "relation": "timing-source"},
+                    {"artifactId": source_id, "relation": "content-source"},
                 ],
                 "tracks": [
                     track(translation_id, "en", "input_sentence", translation_source),

@@ -176,18 +176,22 @@ prepare_args=(
   --timing-source-artifact "$timing_source_artifact"
   --source-output "$source_sentence_vtt"
 )
-for reference_artifact in "${manual_reference_artifacts[@]}"; do
-  prepare_args+=(--reference-artifact "$reference_artifact")
-done
+if [ "${#manual_reference_artifacts[@]}" -gt 0 ]; then
+  for reference_artifact in "${manual_reference_artifacts[@]}"; do
+    prepare_args+=(--reference-artifact "$reference_artifact")
+  done
+fi
 case "$output_language" in zh|zh-*) prepare_args+=(--punctuation-policy remove-commas-periods) ;; esac
 "$CAPTION_PYTHON" "${prepare_args[@]}"
 caption_validate_vtt "$source_sentence_vtt"
 caption_job_state asset --job-dir "$job_dir" --name wordTranscript --path "$transcript_json" >/dev/null
 caption_job_state asset --job-dir "$job_dir" --name contentPlan --path "$subtitle_manifest" >/dev/null
 pipeline_args=(--job-dir "$job_dir" --mode "$content_mode" --stage content_revision --source-language "$language_code" --output-language "$output_language" --timing-processor-provider "$provider_name" --timing-processor-model "$model_name")
-for reference_artifact in "${manual_reference_artifacts[@]}"; do
-  pipeline_args+=(--manual-reference-artifact "$reference_artifact")
-done
+if [ "${#manual_reference_artifacts[@]}" -gt 0 ]; then
+  for reference_artifact in "${manual_reference_artifacts[@]}"; do
+    pipeline_args+=(--manual-reference-artifact "$reference_artifact")
+  done
+fi
 caption_job_state subtitle-pipeline "${pipeline_args[@]}" >/dev/null
 if [ "$content_mode" = "proofread" ]; then
   caption_job_state update --job-dir "$job_dir" --state needs_proofreading --stage content_revision --message "模型時間軸與完整句已完成，等待同語言校正" --progress 0 --clear-error --record-history >/dev/null

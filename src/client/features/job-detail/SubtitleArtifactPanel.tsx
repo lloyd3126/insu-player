@@ -25,6 +25,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SubtitleRevisionPreviewDialog } from "@/features/job-detail/SubtitleRevisionPreviewDialog"
 import { SubtitleRevisionTable } from "@/features/job-detail/SubtitleRevisionTable"
+import { SubtitleCreationCard } from "@/features/job-detail/SubtitleCreationCard"
 import { JobNextActionCard } from "@/features/job-detail/JobNextActionCard"
 import {
   SUBTITLE_KIND_COPY,
@@ -216,6 +217,13 @@ function SubtitleArtifactWorkspace({ kind }: { kind: SubtitleArtifactKind }) {
 
   return (
     <div className="subtitle-artifact-workspace">
+      {kind !== "source" ? (
+        <SubtitleCreationCard
+          videoId={meta.job.videoId}
+          kind={kind}
+          catalog={state.catalog}
+        />
+      ) : null}
       {artifacts.length > 0 ? (
         <SubtitleRevisionTable
           videoId={meta.job.videoId}

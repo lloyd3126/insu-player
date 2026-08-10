@@ -107,7 +107,7 @@ CREATE TABLE `subtitle_artifact_dependencies` (
 	`artifact_id` text NOT NULL,
 	`depends_on_artifact_id` text NOT NULL,
 	`relation` text DEFAULT 'input' NOT NULL,
-	PRIMARY KEY(`artifact_id`, `depends_on_artifact_id`),
+	PRIMARY KEY(`artifact_id`, `depends_on_artifact_id`, `relation`),
 	FOREIGN KEY (`artifact_id`) REFERENCES `subtitle_artifacts`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`depends_on_artifact_id`) REFERENCES `subtitle_artifacts`(`id`) ON UPDATE no action ON DELETE cascade
 );

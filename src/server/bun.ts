@@ -14,6 +14,10 @@ import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { atomicWriteJson } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
+import {
+  SERVER_BUILD_ID,
+  STATUS_SCHEMA_VERSION,
+} from "@server/runtime-contract"
 import { MediaService } from "@server/services/media-service"
 import { RemovalService } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
@@ -41,9 +45,72 @@ function readActiveEndpoint(candidate: string) {
     ) {
       return null
     }
-    return payload as { host: string; port: number; pid: number }
+    return payload as {
+      host: string
+      port: number
+      pid: number
+      runtime?: string
+      buildId?: string
+      statusSchemaVersion?: number
+    }
   } catch {
     return null
+  }
+}
+
+async function readServerHealth(active: {
+  host: string
+  port: number
+}) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 2000)
+  try {
+    const response = await fetch(
+      new URL("api/health", localUrl(active.host, active.port)),
+      { signal: controller.signal },
+    )
+    if (!response.ok) return null
+    const payload = await response.json()
+    return payload && typeof payload === "object"
+      ? payload as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function stopOutdatedServer(
+  active: { host: string; port: number; pid: number; runtime?: string },
+  descriptors: string[],
+) {
+  const health = await readServerHealth(active)
+  if (
+    active.runtime !== "hono-bun" ||
+    health?.runtime !== "bun" ||
+    health.framework !== "hono"
+  ) {
+    throw new Error(
+      "workspace server descriptor points to an unverified process; stop it manually before restarting INSU Player",
+    )
+  }
+  process.kill(active.pid, "SIGTERM")
+  const deadline = Date.now() + 5000
+  while (processIsAlive(active.pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  if (processIsAlive(active.pid)) {
+    throw new Error("outdated INSU Player server did not stop within five seconds")
+  }
+  for (const descriptor of descriptors) {
+    if (!existsSync(descriptor)) continue
+    try {
+      const payload = JSON.parse(readFileSync(descriptor, "utf8"))
+      if (payload?.pid === active.pid) rmSync(descriptor, { force: true })
+    } catch {
+      // Leave descriptors that cannot be proven to belong to the stopped process.
+    }
   }
 }
 
@@ -97,10 +164,20 @@ const serverDescriptor = path.join(workspace, ".insu-player-server.json")
 const sessionDescriptor = path.join(workspace, ".insu-environment-session.json")
 const active = readActiveEndpoint(serverDescriptor)
 if (active) {
-  console.log(`Local video library: ${localUrl(active.host, active.port)}`)
-  console.log(`Workspace: ${workspace}`)
-  console.log(`Already running with pid ${active.pid}.`)
-  process.exit(0)
+  const health = await readServerHealth(active)
+  if (
+    active.buildId === SERVER_BUILD_ID &&
+    active.statusSchemaVersion === STATUS_SCHEMA_VERSION &&
+    health?.buildId === SERVER_BUILD_ID &&
+    health.statusSchemaVersion === STATUS_SCHEMA_VERSION
+  ) {
+    console.log(`Local video library: ${localUrl(active.host, active.port)}`)
+    console.log(`Workspace: ${workspace}`)
+    console.log(`Already running with pid ${active.pid}.`)
+    process.exit(0)
+  }
+  console.log("Stopping an outdated INSU Player server before starting the current build.")
+  await stopOutdatedServer(active, [serverDescriptor, sessionDescriptor])
 }
 
 const pidFile = values["pid-file"] ? path.resolve(values["pid-file"]) : null
@@ -164,6 +241,8 @@ atomicWriteJson(serverDescriptor, {
   port: actualPort,
   pid: process.pid,
   runtime: "hono-bun",
+  buildId: SERVER_BUILD_ID,
+  statusSchemaVersion: STATUS_SCHEMA_VERSION,
 })
 atomicWriteJson(sessionDescriptor, {
   host: values.host,

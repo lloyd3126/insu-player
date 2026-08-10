@@ -488,6 +488,7 @@ function validateDependencies(
     return
   }
   const timingSources = related(artifact, "timing-source", byId)
+  const contentSources = related(artifact, "content-source", byId)
   const references = related(artifact, "text-reference", byId)
   const contentParents = related(artifact, "content-parent", byId)
   if (
@@ -509,12 +510,44 @@ function validateDependencies(
     throw new Error(`${artifact.id} text references must be same-language manual CC`)
   }
   if (artifact.kind === "proofread" || artifact.kind === "translation") {
-    if (contentParents.length !== 0) {
-      throw new Error(`${artifact.id} content revisions cannot have a content parent`)
+    if (contentParents.length !== 0 || contentSources.length !== 1) {
+      throw new Error(
+        `${artifact.id} content revisions require one content source and no content parent`,
+      )
+    }
+    const contentSource = contentSources[0]
+    if (
+      artifact.kind === "proofread" &&
+      contentSource?.id !== timingSources[0]?.id
+    ) {
+      throw new Error(`${artifact.id} proofread content source must be its model transcript`)
+    }
+    if (artifact.kind === "translation") {
+      if (
+        contentSource?.kind === "source" &&
+        contentSource.id !== timingSources[0]?.id
+      ) {
+        throw new Error(`${artifact.id} direct translation must use its model transcript`)
+      }
+      if (
+        contentSource?.kind !== "source" &&
+        (contentSource?.kind !== "proofread" ||
+          contentSource.sourceLanguage !== artifact.sourceLanguage ||
+          contentSource.outputLanguage !== artifact.sourceLanguage)
+      ) {
+        throw new Error(`${artifact.id} translation content source is invalid`)
+      }
+      if (contentSource.kind === "proofread" && references.length !== 0) {
+        throw new Error(`${artifact.id} inherits references from proofreading`)
+      }
     }
     return
   }
-  if (references.length !== 0 || contentParents.length !== 1) {
+  if (
+    contentSources.length !== 0 ||
+    references.length !== 0 ||
+    contentParents.length !== 1
+  ) {
     throw new Error(`${artifact.id} segmentation requires one content parent`)
   }
   const contentParent = contentParents[0]

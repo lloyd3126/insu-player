@@ -8,6 +8,9 @@ import {
   MODEL_PROMPTS,
   buildAddVideoConversationPrompt,
   buildAddVideoPrompt,
+  buildCreateProofreadSubtitlePrompt,
+  buildCreateSegmentedSubtitlePrompt,
+  buildCreateTranslationSubtitlePrompt,
   buildRecoveryPrompt,
   buildSubtitleManagementPrompt,
   normalizeVideoUrl,
@@ -106,6 +109,24 @@ describe("INSU prompt contract", () => {
     expect(prompt).toContain("不要再次要求我選模型或處理方式")
   })
 
+  test("translation creation preserves proofread content and original timing", () => {
+    const prompt = buildCreateTranslationSubtitlePrompt({
+      videoId: "safe-id",
+      sourceLanguage: "en",
+      sourceArtifactId: "safe-id-proofread-en-r2",
+      timingArtifactId: "safe-id-source-model-en-r1",
+      sourceKind: "proofread",
+    })
+
+    expect(prompt).toContain("先只問我想翻譯成哪一種語言")
+    expect(prompt).toContain("不要要求我回答語言碼")
+    expect(prompt).toContain("唯一翻譯文字來源")
+    expect(prompt).toContain("不要退回未校正文字重新翻譯")
+    expect(prompt).toContain("不要重新下載影音")
+    expect(prompt).toContain("$translate-subtitles")
+    expect(prompt).toContain("$segment-subtitles")
+  })
+
   test("all website prompt sources reject full-width semicolons", () => {
     const prompts = [
       CREATE_PROMPT_WITH_AGENT,
@@ -117,6 +138,27 @@ describe("INSU prompt contract", () => {
       buildAddVideoPrompt("https://example.test/video"),
       buildRecoveryPrompt({ videoId: "safe-id" }),
       buildSubtitleManagementPrompt({ videoId: "safe-id" }),
+      buildCreateProofreadSubtitlePrompt({
+        videoId: "safe-id",
+        sourceLanguage: "en",
+        sourceArtifactId: "source-en-r1",
+        timingArtifactId: "source-en-r1",
+        sourceKind: "model-transcript",
+      }),
+      buildCreateTranslationSubtitlePrompt({
+        videoId: "safe-id",
+        sourceLanguage: "en",
+        sourceArtifactId: "proofread-en-r1",
+        timingArtifactId: "source-en-r1",
+        sourceKind: "proofread",
+      }),
+      buildCreateSegmentedSubtitlePrompt({
+        videoId: "safe-id",
+        sourceLanguage: "en",
+        sourceArtifactId: "translation-en-ja-r1",
+        timingArtifactId: "source-en-r1",
+        sourceKind: "translation",
+      }),
     ]
     expect(prompts.every((prompt) => !prompt.includes("\uFF1B"))).toBe(true)
   })

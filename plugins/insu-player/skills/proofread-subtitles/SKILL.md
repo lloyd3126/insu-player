@@ -5,7 +5,7 @@ description: Correct a timed transcript in its original BCP 47 language without 
 
 # Proofread Complete Subtitle Sentences
 
-Produce a schema-version 4 subtitle revision whose `mode` is `proofread` and whose source and output language codes are identical. Keep same-language correction separate from translation and display segmentation.
+Produce a schema-version 5 subtitle revision whose `mode` is `proofread` and whose source and output language codes are identical. Keep same-language correction separate from translation and display segmentation.
 
 Read [references/proofreading-contract.md](references/proofreading-contract.md) before every correction task.
 
@@ -58,6 +58,8 @@ python3 scripts/proofread_subtitles.py render \
 
 Import the validated pair as a `proofread` artifact. It becomes playable immediately. Then hand the manifest and exact model transcript to `$segment-subtitles`; that skill owns output-first cuts, frozen revisions, Source Alignment, and segmented VTT.
 
+The validated proofread artifact may later become the content source of a new translation. Preserve its immutable manifest and artifact ID. Translation must use its final `outputText` while continuing to use the original model transcript for timing.
+
 ```bash
 plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   WORKSPACE VIDEO_ID INPUT.vtt OUTPUT.vtt \
@@ -69,6 +71,7 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   --revision REVISION \
   --manifest MANIFEST \
   --timing-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
+  --content-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
   --text-reference-artifact MANUAL_CC_ARTIFACT_ID
 ```
 

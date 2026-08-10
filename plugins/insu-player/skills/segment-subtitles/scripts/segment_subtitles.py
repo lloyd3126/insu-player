@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 3
-CONTENT_SCHEMA_VERSION = 4
+SCHEMA_VERSION = 4
+CONTENT_SCHEMA_VERSION = 5
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 UNIT_ID_PATTERN = re.compile(r"^U[0-9]{6,}$")
 SEGMENT_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
@@ -262,7 +262,7 @@ def normalize_required_terms(raw_terms: object, label: str) -> list[str]:
 def prepare(args: argparse.Namespace) -> int:
     content = load_json(args.content_manifest, "content manifest")
     if content.get("schemaVersion") != CONTENT_SCHEMA_VERSION:
-        raise PlanError("segment-subtitles requires a schemaVersion 4 content manifest")
+        raise PlanError("segment-subtitles requires a schemaVersion 5 content manifest")
     mode = content.get("mode")
     if mode not in {"proofread", "translate"}:
         raise PlanError("content manifest mode must be proofread or translate")
@@ -283,6 +283,41 @@ def prepare(args: argparse.Namespace) -> int:
         content.get("contentProcessor"),
         "contentProcessor",
     )
+    source_content_artifact = content.get("sourceContentArtifactId")
+    source_content_kind = content.get("sourceContentKind")
+    timing_source_artifact = content.get("timingSourceArtifactId")
+    if not isinstance(timing_source_artifact, str) or not timing_source_artifact:
+        raise PlanError("content manifest has no timing source artifact")
+    if not isinstance(source_content_artifact, str) or not source_content_artifact:
+        raise PlanError("content manifest has no content source artifact")
+    if source_content_kind not in {"model-transcript", "proofread"}:
+        raise PlanError("content manifest has an invalid content source kind")
+    if mode == "proofread" and source_content_kind != "model-transcript":
+        raise PlanError("proofread content must come from the model transcript")
+    if (
+        source_content_kind == "model-transcript"
+        and source_content_artifact != timing_source_artifact
+    ):
+        raise PlanError("model transcript content and timing sources must match")
+    if source_content_kind == "proofread":
+        if mode != "translate":
+            raise PlanError("only translation accepts proofread content")
+        source_manifest = content.get("sourceContentManifest")
+        source_checksum = content.get("sourceContentChecksum")
+        if not isinstance(source_manifest, str) or not source_manifest:
+            raise PlanError("proofread content source manifest is missing")
+        if not isinstance(source_checksum, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", source_checksum
+        ):
+            raise PlanError("proofread content source checksum is invalid")
+        try:
+            actual_source_checksum = hashlib.sha256(
+                Path(source_manifest).read_bytes()
+            ).hexdigest()
+        except OSError as error:
+            raise PlanError("proofread content source manifest is unavailable") from error
+        if actual_source_checksum != source_checksum:
+            raise PlanError("proofread content source checksum changed")
     transcript = load_json(args.source_transcript, "source transcript")
     units = timed_units(transcript)
     unit_positions = {str(unit["id"]): index for index, unit in enumerate(units)}
@@ -348,6 +383,8 @@ def prepare(args: argparse.Namespace) -> int:
         "outputLanguage": output_language,
         "sourceTranscript": str(args.source_transcript),
         "contentManifest": str(args.content_manifest),
+        "sourceContentArtifactId": source_content_artifact,
+        "sourceContentKind": source_content_kind,
         "timingProcessor": timing_processor,
         "contentProcessor": content_processor,
         "segmentationProcessor": None,

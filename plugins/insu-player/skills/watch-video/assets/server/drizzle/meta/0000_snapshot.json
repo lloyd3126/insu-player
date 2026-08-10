@@ -799,12 +799,13 @@
         }
       },
       "compositePrimaryKeys": {
-        "subtitle_artifact_dependencies_artifact_id_depends_on_artifact_id_pk": {
+        "subtitle_artifact_dependencies_artifact_id_depends_on_artifact_id_relation_pk": {
           "columns": [
             "artifact_id",
-            "depends_on_artifact_id"
+            "depends_on_artifact_id",
+            "relation"
           ],
-          "name": "subtitle_artifact_dependencies_artifact_id_depends_on_artifact_id_pk"
+          "name": "subtitle_artifact_dependencies_artifact_id_depends_on_artifact_id_relation_pk"
         }
       },
       "uniqueConstraints": {},
