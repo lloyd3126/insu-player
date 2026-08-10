@@ -40,6 +40,7 @@ function track(
     checksum: createHash("sha256")
       .update(readFileSync(path.join(directory, relativePath)))
       .digest("hex"),
+    updatedAt: "2026-08-09T00:00:01Z",
   }
 }
 
@@ -366,5 +367,65 @@ describe("subtitle catalog resolver", () => {
       service: "codex",
       model: null,
     })
+  })
+
+  test("rejects tracks without the current updatedAt field", () => {
+    const directory = workspace()
+    const sourceId = "source-r1"
+    const oldTrack = track(
+      directory,
+      sourceId,
+      "en",
+      "source_raw",
+      "Hello",
+    ) as Record<string, unknown>
+    delete oldTrack.updatedAt
+    expect(() =>
+      resolveSubtitleCatalog({
+        videoId: "demo",
+        jobDirectory: directory,
+        rawArtifacts: [artifact(directory, "source", sourceId, 1, [oldTrack])],
+        explicitActiveTracks: {},
+      }),
+    ).toThrow("current schema")
+  })
+
+  test("rejects an older content manifest schema", () => {
+    const directory = workspace()
+    const sourceId = "source-r1"
+    const translationId = "translation-r1"
+    const source = artifact(directory, "source", sourceId, 1, [
+      track(directory, sourceId, "en", "source_raw", "Hello"),
+    ])
+    const translation = artifact(directory, "translation", translationId, 1, [
+      track(directory, translationId, "en", "input_sentence", "Hello"),
+      track(directory, translationId, "fr", "output_sentence", "Bonjour"),
+    ], {
+      sourceLanguage: "en",
+      outputLanguage: "fr",
+      processor: { provider: "agent", service: "codex" },
+      dependencies: [
+        { artifactId: sourceId, relation: "timing-source" },
+        { artifactId: sourceId, relation: "content-source" },
+      ],
+    })
+    writeFileSync(
+      path.join(
+        directory,
+        "subtitle-work",
+        "artifacts",
+        translationId,
+        "manifest.json",
+      ),
+      '{"schemaVersion":4}\n',
+    )
+    expect(() =>
+      resolveSubtitleCatalog({
+        videoId: "demo",
+        jobDirectory: directory,
+        rawArtifacts: [source, translation],
+        explicitActiveTracks: {},
+      }),
+    ).toThrow("must use schemaVersion 5")
   })
 })

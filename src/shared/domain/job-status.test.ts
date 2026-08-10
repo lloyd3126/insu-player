@@ -13,8 +13,8 @@ function job(overrides: Partial<JobSummary> = {}): JobSummary {
     stage: "queued",
     progress: 0,
     message: "",
-    createdAt: null,
-    updatedAt: null,
+    createdAt: "2026-08-10T00:00:00.000Z",
+    updatedAt: "2026-08-10T00:00:00.000Z",
     completedAt: null,
     lastError: null,
     watchable: false,
@@ -55,6 +55,7 @@ describe("job status presentation", () => {
         timingProcessor: { provider: "local", model: "medium" },
         segmentationProcessor: { provider: "agent", service: "codex" },
         manualReferenceArtifactIds: [],
+        updatedAt: "2026-08-10T00:00:00.000Z",
       },
     })
     expect(phaseForJob(summary)).toBe("正在重新切分字幕")

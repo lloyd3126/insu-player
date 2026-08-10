@@ -23,8 +23,8 @@ const OPERATION_HEARTBEAT_GRACE_MS = 15_000
 
 interface StoredMediaRendition extends Omit<MediaRendition, "active"> {
   path: string
-  formatId?: string | null
-  selection?: string | null
+  formatId: string | null
+  selection: string | null
 }
 
 interface StoredMediaCatalog {
@@ -56,6 +56,10 @@ function nullableFiniteNumber(value: unknown) {
     : typeof value === "number" && Number.isFinite(value) && value > 0
       ? value
       : null
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
 }
 
 function processIsAlive(pid: unknown) {
@@ -101,7 +105,8 @@ function parseFormat(value: unknown): MediaSourceFormat | null {
   if (
     (candidate.width !== null && !width) ||
     (candidate.fps !== null && !fps) ||
-    (candidate.estimatedBytes !== null && !estimatedBytes)
+    (candidate.estimatedBytes !== null && !estimatedBytes) ||
+    (candidate.videoCodec !== null && typeof candidate.videoCodec !== "string")
   ) {
     return null
   }
@@ -111,8 +116,7 @@ function parseFormat(value: unknown): MediaSourceFormat | null {
     fps,
     estimatedBytes,
     container: "mp4",
-    videoCodec:
-      typeof candidate.videoCodec === "string" ? candidate.videoCodec : null,
+    videoCodec: candidate.videoCodec as string | null,
   }
 }
 
@@ -144,10 +148,16 @@ function parseOperation(value: unknown): MediaOperation | null {
     !RENDITION_ID_PATTERN.test(candidate.id) ||
     typeof candidate.stage !== "string" ||
     typeof candidate.message !== "string" ||
-    typeof candidate.startedAt !== "string" ||
-    typeof candidate.updatedAt !== "string"
+    !validTimestamp(candidate.startedAt) ||
+    !validTimestamp(candidate.updatedAt)
   ) {
     throw new Error("media operation fields are invalid")
+  }
+  if (
+    (candidate.error !== null && typeof candidate.error !== "string") ||
+    (candidate.completedAt !== null && !validTimestamp(candidate.completedAt))
+  ) {
+    throw new Error("media operation nullable fields are invalid")
   }
   const requestedHeight =
     candidate.requestedHeight === null
@@ -167,12 +177,11 @@ function parseOperation(value: unknown): MediaOperation | null {
     stage: candidate.stage,
     progress,
     message: candidate.message,
-    error: typeof candidate.error === "string" ? candidate.error : null,
+    error: candidate.error as string | null,
     pid,
     startedAt: candidate.startedAt,
     updatedAt: candidate.updatedAt,
-    completedAt:
-      typeof candidate.completedAt === "string" ? candidate.completedAt : null,
+    completedAt: candidate.completedAt as string | null,
   }
 }
 
@@ -205,6 +214,10 @@ export function readStoredMediaCatalog(
     throw new Error("media catalog availability is invalid")
   }
   const rawFormats = (availability as Record<string, unknown>).formats
+  const discoveredAt = (availability as Record<string, unknown>).discoveredAt
+  if (discoveredAt !== null && !validTimestamp(discoveredAt)) {
+    throw new Error("media catalog discoveredAt is invalid")
+  }
   if (!Array.isArray(rawFormats)) throw new Error("media formats are invalid")
   const formats = rawFormats.map(parseFormat)
   if (formats.some((format) => !format)) throw new Error("media format is invalid")
@@ -232,7 +245,12 @@ export function readStoredMediaCatalog(
       !height ||
       !sizeBytes ||
       !CHECKSUM_PATTERN.test(checksum) ||
-      typeof rendition.createdAt !== "string"
+      !validTimestamp(rendition.createdAt) ||
+      rendition.container !== "mp4" ||
+      (rendition.videoCodec !== null && typeof rendition.videoCodec !== "string") ||
+      (rendition.audioCodec !== null && typeof rendition.audioCodec !== "string") ||
+      (rendition.formatId !== null && typeof rendition.formatId !== "string") ||
+      (rendition.selection !== null && typeof rendition.selection !== "string")
     ) {
       throw new Error("media rendition fields are invalid")
     }
@@ -246,18 +264,15 @@ export function readStoredMediaCatalog(
       requestedHeight,
       width,
       height,
-      container: String(rendition.container || "mp4"),
-      videoCodec:
-        typeof rendition.videoCodec === "string" ? rendition.videoCodec : null,
-      audioCodec:
-        typeof rendition.audioCodec === "string" ? rendition.audioCodec : null,
+      container: "mp4",
+      videoCodec: rendition.videoCodec as string | null,
+      audioCodec: rendition.audioCodec as string | null,
       sizeBytes,
       checksum,
       createdAt: rendition.createdAt,
       path: relativePath,
-      formatId: typeof rendition.formatId === "string" ? rendition.formatId : null,
-      selection:
-        typeof rendition.selection === "string" ? rendition.selection : null,
+      formatId: rendition.formatId as string | null,
+      selection: rendition.selection as string | null,
     }
   })
   const activeRenditionId =
@@ -273,10 +288,7 @@ export function readStoredMediaCatalog(
     revision,
     activeRenditionId,
     availability: {
-      discoveredAt:
-        typeof (availability as Record<string, unknown>).discoveredAt === "string"
-          ? String((availability as Record<string, unknown>).discoveredAt)
-          : null,
+      discoveredAt: discoveredAt as string | null,
       formats: formats as MediaSourceFormat[],
     },
     renditions,
@@ -339,16 +351,14 @@ export function publicMediaCatalog(
 }
 
 export function activeMediaPath(jobDirectory: string, videoId: string) {
-  try {
-    const catalog = readStoredMediaCatalog(jobDirectory, videoId)
-    const active = catalog.renditions.find(
-      (rendition) => rendition.id === catalog.activeRenditionId,
-    )
-    if (!active) return null
-    return safeContainedFile(jobDirectory, path.join(jobDirectory, active.path))
-  } catch {
-    return null
-  }
+  const candidate = mediaCatalogPath(jobDirectory)
+  if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) return null
+  const catalog = readStoredMediaCatalog(jobDirectory, videoId)
+  const active = catalog.renditions.find(
+    (rendition) => rendition.id === catalog.activeRenditionId,
+  )
+  if (!active) throw new Error("media catalog active rendition is unavailable")
+  return safeContainedFile(jobDirectory, path.join(jobDirectory, active.path))
 }
 
 export function setActiveMediaRendition(

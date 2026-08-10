@@ -34,12 +34,29 @@ def _clean_text(value: object, field: str, *, required: bool = True) -> str:
 def normalize_prompt(item: object) -> dict[str, str]:
     if not isinstance(item, dict):
         raise ValueError("each prompt must be an object")
+    required_fields = {
+        "id",
+        "title",
+        "scenario",
+        "prompt",
+        "updatedAt",
+    }
+    if "updatedAt" not in item:
+        raise ValueError("prompt updatedAt must be a timestamp")
+    if set(item) != required_fields:
+        raise ValueError("prompt fields do not match the current schema")
     prompt_id = item.get("id")
     if not isinstance(prompt_id, str) or not PROMPT_ID_PATTERN.fullmatch(prompt_id):
         raise ValueError("prompt id must use lowercase letters, numbers, hyphens, or underscores")
     updated_at = item.get("updatedAt")
-    if not isinstance(updated_at, str) or not updated_at.strip():
-        updated_at = datetime.now(timezone.utc).isoformat()
+    if not isinstance(updated_at, str):
+        raise ValueError("prompt updatedAt must be a timestamp")
+    try:
+        parsed = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("prompt updatedAt must be a timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError("prompt updatedAt must include a timezone")
     return {
         "id": prompt_id,
         "title": _clean_text(item.get("title"), "title"),
@@ -54,7 +71,12 @@ def load_prompt_library(workspace: Path) -> dict[str, object]:
     if not path.is_file():
         return {"version": 1, "prompts": []}
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or not isinstance(payload.get("prompts"), list):
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"version", "prompts"}
+        or payload.get("version") != 1
+        or not isinstance(payload.get("prompts"), list)
+    ):
         raise ValueError("prompts.json must contain a prompts array")
     if len(payload["prompts"]) > MAX_PROMPTS:
         raise ValueError(f"prompts.json cannot contain more than {MAX_PROMPTS} prompts")

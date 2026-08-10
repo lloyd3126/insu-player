@@ -449,7 +449,11 @@ export function createApplication(options: ApplicationOptions) {
     try {
       return context.json(options.jobs.summarize(context.req.param("videoId"), true))
     } catch (error) {
-      return context.json({ error: errorMessage(error) }, 404)
+      const message = errorMessage(error)
+      return context.json(
+        { error: message },
+        message === "job not found" || message === "invalid video ID" ? 404 : 500,
+      )
     }
   })
 

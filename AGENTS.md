@@ -25,6 +25,8 @@
 - 下載、安裝、轉錄、指定畫質或其他長時間工作超出目前 turn 時，使用 `$monitor-player-job` 建立附著目前 task 的 heartbeat。排程只負責重新喚醒 Agent。`status.json`、job history、media catalog 與 log 仍是事實來源。不得建立 standalone task、worktree、sleep 輪詢、cron、daemon 或資料庫 fallback。完成、重複失敗或需要使用者決策時停止 heartbeat。
 - 固定首頁是唯一觀看入口。播放器在同源 iframe modal 內開啟。
 - `status.json`、job history 與 log 是中斷復原的事實來源。
+- 只接受現行資料契約：`status.json` schema 6、model transcript schema 2、proofread／translation manifest schema 5、segmentation manifest schema 4、media catalog schema 1。舊版、缺欄或無效資料直接失敗，不得建立 migration、legacy reader、推定值或相容 fallback。沒有外部使用者時直接刪除舊產物並重建。
+- 只沿用 build ID 與 status schema 都完全相同的 workspace server。若 descriptor 指向其他 build，必須明確停止該 workspace 的程序再重新啟動，server 不得自動終止或接管舊程序。
 - 來源字幕只接受創作者人工 CC 或由模型從原始音訊產生的轉錄。平台自動字幕一律不得下載、匯入或作為參考。人工 CC 可立即播放，也可作為文字與術語參考，但不能作為細粒度 timing。
 - 把使用者視為第一次使用且不了解技術名詞的人。網頁提示一次只要求貼上網址。Agent 只用一般語言確認下載權利、要整理原語字幕或翻譯、翻譯目標語言，以及實際資料處理邊界。不得要求使用者選 skill、模型名稱、provider、processor、timing、content、segmentation、artifact、Source Alignment、BCP 47 或模型參數。
 - 來源語言預設由 timing 模型從音訊偵測。只有無法可靠辨識、多語混用或語系差異會影響結果時，才用一般語言名稱追問。Agent 必須在內部正規化保存用 BCP 47 tag，再轉成所選模型接受的參數。

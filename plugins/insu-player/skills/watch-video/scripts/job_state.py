@@ -87,6 +87,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def validate_timestamp(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{label} must be a timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} must include a timezone")
+    return value
+
+
 def validate_video_id(video_id: str) -> str:
     if not VIDEO_ID_PATTERN.fullmatch(video_id):
         raise ValueError(f"invalid video ID: {video_id!r}")
@@ -157,6 +169,208 @@ def validate_processor_payload(
     return resolved
 
 
+def validate_subtitle_artifacts(job_dir: Path, value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError("job state must contain subtitleArtifacts")
+    required_artifact_fields = {
+        "id",
+        "kind",
+        "revision",
+        "lifecycleState",
+        "validationState",
+        "freshnessState",
+        "sourceLanguage",
+        "outputLanguage",
+        "sourceType",
+        "processor",
+        "timingUnitKind",
+        "targetFrozen",
+        "manifestPath",
+        "checksum",
+        "warningCount",
+        "hardDefectCount",
+        "dependencies",
+        "tracks",
+        "createdAt",
+        "completedAt",
+    }
+    required_track_fields = {
+        "id",
+        "languageCode",
+        "role",
+        "state",
+        "path",
+        "checksum",
+        "updatedAt",
+    }
+    expected_roles = {
+        "source": {"source_raw"},
+        "proofread": {"input_sentence", "output_sentence"},
+        "translation": {"input_sentence", "output_sentence"},
+        "segmentation": {"input_segmented", "output_segmented"},
+    }
+    artifact_ids: set[str] = set()
+    track_ids: set[str] = set()
+    for artifact in value:
+        if not isinstance(artifact, dict) or set(artifact) != required_artifact_fields:
+            raise ValueError("subtitle artifact fields do not match the current schema")
+        artifact_id = artifact.get("id")
+        kind = artifact.get("kind")
+        if (
+            not isinstance(artifact_id, str)
+            or not ARTIFACT_ID_PATTERN.fullmatch(artifact_id)
+            or artifact_id in artifact_ids
+            or kind not in SUBTITLE_ARTIFACT_KINDS
+        ):
+            raise ValueError("subtitle artifact identity is invalid")
+        artifact_ids.add(artifact_id)
+        revision = artifact.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+            raise ValueError(f"subtitle artifact revision is invalid: {artifact_id}")
+        lifecycle = artifact.get("lifecycleState")
+        if lifecycle not in SUBTITLE_LIFECYCLE_STATES:
+            raise ValueError(f"subtitle artifact lifecycle is invalid: {artifact_id}")
+        if artifact.get("validationState") not in SUBTITLE_VALIDATION_STATES:
+            raise ValueError(f"subtitle artifact validation is invalid: {artifact_id}")
+        if artifact.get("freshnessState") not in SUBTITLE_FRESHNESS_STATES:
+            raise ValueError(f"subtitle artifact freshness is invalid: {artifact_id}")
+        source_language = validate_language(str(artifact.get("sourceLanguage", "")))
+        output_language = artifact.get("outputLanguage")
+        source_type = artifact.get("sourceType")
+        if kind == "source":
+            if output_language is not None or source_type not in SUBTITLE_SOURCE_TYPES:
+                raise ValueError(f"source subtitle artifact languages are invalid: {artifact_id}")
+        else:
+            if not isinstance(output_language, str):
+                raise ValueError(f"subtitle artifact output language is missing: {artifact_id}")
+            validate_language(output_language)
+            if source_type is not None:
+                raise ValueError(f"subtitle revision sourceType must be null: {artifact_id}")
+            if kind == "proofread" and output_language != source_language:
+                raise ValueError(f"proofread subtitle artifact must preserve language: {artifact_id}")
+            if kind == "translation" and output_language == source_language:
+                raise ValueError(f"translation subtitle artifact must change language: {artifact_id}")
+        processor = validate_processor_payload(
+            artifact.get("processor"),
+            label=f"{artifact_id}.processor",
+            allow_yt_dlp=True,
+        )
+        timing_kind = artifact.get("timingUnitKind")
+        if kind == "source" and source_type == "manual-cc":
+            if processor["provider"] != "yt-dlp" or timing_kind != "cue":
+                raise ValueError(f"manual CC artifact timing is invalid: {artifact_id}")
+        elif kind == "source":
+            if (
+                processor["provider"] not in {"local", "openai"}
+                or timing_kind not in {"word", "token", "grapheme-group"}
+            ):
+                raise ValueError(f"model transcript timing is invalid: {artifact_id}")
+        elif processor["provider"] == "yt-dlp":
+            raise ValueError(f"subtitle revision processor is invalid: {artifact_id}")
+        if artifact.get("targetFrozen") is not (kind == "segmentation"):
+            raise ValueError(f"subtitle artifact targetFrozen is invalid: {artifact_id}")
+        for count_field in ("warningCount", "hardDefectCount"):
+            count = artifact.get(count_field)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ValueError(f"subtitle artifact {count_field} is invalid: {artifact_id}")
+        validate_timestamp(artifact.get("createdAt"), f"{artifact_id}.createdAt")
+        if lifecycle == "ready":
+            validate_timestamp(artifact.get("completedAt"), f"{artifact_id}.completedAt")
+        elif artifact.get("completedAt") is not None:
+            validate_timestamp(artifact.get("completedAt"), f"{artifact_id}.completedAt")
+        dependencies = artifact.get("dependencies")
+        if not isinstance(dependencies, list):
+            raise ValueError(f"subtitle artifact dependencies are invalid: {artifact_id}")
+        seen_dependencies: set[tuple[str, str]] = set()
+        for dependency in dependencies:
+            if not isinstance(dependency, dict) or set(dependency) != {"artifactId", "relation"}:
+                raise ValueError(f"subtitle dependency fields are invalid: {artifact_id}")
+            parent_id = dependency.get("artifactId")
+            relation = dependency.get("relation")
+            if (
+                not isinstance(parent_id, str)
+                or not ARTIFACT_ID_PATTERN.fullmatch(parent_id)
+                or relation not in SUBTITLE_DEPENDENCY_RELATIONS
+                or (relation, parent_id) in seen_dependencies
+            ):
+                raise ValueError(f"subtitle dependency is invalid: {artifact_id}")
+            seen_dependencies.add((str(relation), parent_id))
+        tracks = artifact.get("tracks")
+        if not isinstance(tracks, list):
+            raise ValueError(f"subtitle artifact tracks are invalid: {artifact_id}")
+        roles: set[str] = set()
+        artifact_checksum = hashlib.sha256()
+        for track in tracks:
+            if (
+                not isinstance(track, dict)
+                or not required_track_fields.issubset(track)
+                or set(track) - (required_track_fields | {"bytes"})
+            ):
+                raise ValueError(f"subtitle track fields are invalid: {artifact_id}")
+            track_id = track.get("id")
+            language = track.get("languageCode")
+            role = track.get("role")
+            if (
+                not isinstance(track_id, str)
+                or not ARTIFACT_ID_PATTERN.fullmatch(track_id)
+                or track_id in track_ids
+                or not isinstance(language, str)
+                or not LANGUAGE_PATTERN.fullmatch(language)
+                or role not in SUBTITLE_TRACK_ROLES
+                or role in roles
+                or not isinstance(track.get("state"), str)
+                or not track["state"].strip()
+            ):
+                raise ValueError(f"subtitle track identity is invalid: {artifact_id}")
+            track_ids.add(track_id)
+            roles.add(str(role))
+            expected_language = (
+                source_language
+                if role == "source_raw" or str(role).startswith("input_")
+                else output_language
+            )
+            if language != expected_language:
+                raise ValueError(f"subtitle track language is invalid: {track_id}")
+            relative_path = track.get("path")
+            if not isinstance(relative_path, str) or Path(relative_path).is_absolute():
+                raise ValueError(f"subtitle track path is invalid: {track_id}")
+            if not relative_path.startswith(f"subtitle-work/artifacts/{artifact_id}/"):
+                raise ValueError(f"subtitle track path leaves its artifact: {track_id}")
+            track_path = job_dir / relative_path
+            if not track_path.is_file() or track_path.is_symlink():
+                raise ValueError(f"subtitle track is unavailable: {track_id}")
+            digest = hashlib.sha256(track_path.read_bytes()).hexdigest()
+            if track.get("checksum") != digest:
+                raise ValueError(f"subtitle track checksum mismatch: {track_id}")
+            validate_timestamp(track.get("updatedAt"), f"{track_id}.updatedAt")
+            artifact_checksum.update(language.encode("utf-8"))
+            artifact_checksum.update(digest.encode("ascii"))
+        if lifecycle == "ready" and roles != expected_roles[str(kind)]:
+            raise ValueError(f"ready subtitle artifact tracks are invalid: {artifact_id}")
+        manifest_path = artifact.get("manifestPath")
+        if kind == "source":
+            if manifest_path is not None or dependencies:
+                raise ValueError(f"source subtitle artifact structure is invalid: {artifact_id}")
+        else:
+            if not isinstance(manifest_path, str) or not manifest_path.startswith(
+                f"subtitle-work/artifacts/{artifact_id}/"
+            ):
+                raise ValueError(f"subtitle artifact manifest path is invalid: {artifact_id}")
+            manifest = job_dir / manifest_path
+            if not manifest.is_file() or manifest.is_symlink():
+                raise ValueError(f"subtitle artifact manifest is unavailable: {artifact_id}")
+            manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+            expected_schema = 4 if kind == "segmentation" else 5
+            if not isinstance(manifest_payload, dict) or manifest_payload.get("schemaVersion") != expected_schema:
+                raise ValueError(
+                    f"subtitle artifact manifest must use schemaVersion {expected_schema}: {artifact_id}"
+                )
+            artifact_checksum.update(hashlib.sha256(manifest.read_bytes()).digest())
+        if artifact.get("checksum") != artifact_checksum.hexdigest():
+            raise ValueError(f"subtitle artifact checksum mismatch: {artifact_id}")
+    return value
+
+
 def state_path(job_dir: Path) -> Path:
     return job_dir / "status.json"
 
@@ -206,20 +420,98 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
         raise ValueError(f"job state is not a JSON object: {path}")
     if data.get("schemaVersion") != SCHEMA_VERSION:
         raise ValueError(f"job state must use schemaVersion {SCHEMA_VERSION}: {path}")
-    if not isinstance(data.get("subtitleArtifacts"), list):
-        raise ValueError(f"job state must contain subtitleArtifacts: {path}")
-    for artifact in data["subtitleArtifacts"]:
-        if not isinstance(artifact, dict):
-            raise ValueError(f"job state contains an invalid subtitle artifact: {path}")
-        if {"provider", "model"}.intersection(artifact):
-            raise ValueError(f"subtitle artifact contains removed processor fields: {path}")
-        validate_processor_payload(
-            artifact.get("processor"),
-            label="subtitleArtifact.processor",
-            allow_yt_dlp=True,
-        )
+    required_fields = {
+        "videoId",
+        "title",
+        "sourceUrl",
+        "durationSeconds",
+        "state",
+        "stage",
+        "progress",
+        "message",
+        "assets",
+        "subtitleArtifacts",
+        "activeSubtitleTracks",
+        "subtitlePipeline",
+        "transcription",
+        "process",
+        "lastError",
+        "createdAt",
+        "updatedAt",
+        "completedAt",
+        "history",
+    }
+    missing_fields = sorted(required_fields - set(data))
+    if missing_fields:
+        raise ValueError(f"job state is missing required fields {missing_fields}: {path}")
+    if not isinstance(data.get("title"), str) or not data["title"].strip():
+        raise ValueError(f"job state title is invalid: {path}")
+    if not isinstance(data.get("sourceUrl"), str):
+        raise ValueError(f"job state sourceUrl is invalid: {path}")
+    if not isinstance(data.get("message"), str) or not data["message"].strip():
+        raise ValueError(f"job state message is invalid: {path}")
+    validate_timestamp(data.get("createdAt"), "job state createdAt")
+    validate_timestamp(data.get("updatedAt"), "job state updatedAt")
+    completed_at = data.get("completedAt")
+    if completed_at is not None:
+        validate_timestamp(completed_at, "job state completedAt")
+    if data.get("lastError") is not None and not isinstance(data.get("lastError"), str):
+        raise ValueError(f"job state lastError is invalid: {path}")
+    duration = data.get("durationSeconds")
+    if duration is not None and (
+        isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or not math.isfinite(float(duration))
+        or float(duration) <= 0
+    ):
+        raise ValueError(f"job state durationSeconds is invalid: {path}")
+    if not isinstance(data.get("assets"), dict):
+        raise ValueError(f"job state must contain assets: {path}")
+    for name, asset in data["assets"].items():
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name)
+            or not isinstance(asset, dict)
+            or set(asset) != {"path", "bytes", "updatedAt"}
+            or not isinstance(asset.get("path"), str)
+            or not asset["path"]
+            or Path(asset["path"]).is_absolute()
+            or ".." in Path(asset["path"]).parts
+            or (
+                asset.get("bytes") is not None
+                and (
+                    isinstance(asset.get("bytes"), bool)
+                    or not isinstance(asset.get("bytes"), int)
+                    or asset["bytes"] < 0
+                )
+            )
+        ):
+            raise ValueError(f"job state asset metadata is invalid: {path}")
+        validate_timestamp(asset.get("updatedAt"), f"job asset {name}.updatedAt")
+    process = data.get("process")
+    if process is not None:
+        if (
+            not isinstance(process, dict)
+            or set(process) != {"pid", "startedAt", "command"}
+            or isinstance(process.get("pid"), bool)
+            or not isinstance(process.get("pid"), int)
+            or process["pid"] <= 0
+            or not isinstance(process.get("command"), str)
+            or not process["command"].strip()
+        ):
+            raise ValueError(f"job state process metadata is invalid: {path}")
+        validate_timestamp(process.get("startedAt"), "job state process.startedAt")
+    validate_subtitle_artifacts(job_dir, data.get("subtitleArtifacts"))
     if not isinstance(data.get("activeSubtitleTracks"), dict):
         raise ValueError(f"job state must contain activeSubtitleTracks: {path}")
+    for language, track_id in data["activeSubtitleTracks"].items():
+        if (
+            not isinstance(language, str)
+            or not LANGUAGE_PATTERN.fullmatch(language)
+            or not isinstance(track_id, str)
+            or not ARTIFACT_ID_PATTERN.fullmatch(track_id)
+        ):
+            raise ValueError(f"job state contains an invalid active subtitle track: {path}")
     if data.get("videoId") != job_dir.name:
         raise ValueError(f"job state videoId must match its directory: {path}")
     if data.get("state") not in STATES:
@@ -258,10 +550,27 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
             raise ValueError(f"job state transcription engineLanguage is invalid: {path}")
         if not isinstance(transcription.get("updatedAt"), str):
             raise ValueError(f"job state transcription updatedAt is missing: {path}")
+        validate_timestamp(transcription["updatedAt"], "transcription.updatedAt")
     pipeline = data.get("subtitlePipeline")
     if pipeline is not None:
         if not isinstance(pipeline, dict):
             raise ValueError(f"job state subtitlePipeline must be an object: {path}")
+        allowed_pipeline_fields = {
+            "mode",
+            "stage",
+            "sourceLanguage",
+            "outputLanguage",
+            "timingProcessor",
+            "contentProcessor",
+            "segmentationProcessor",
+            "manualReferenceArtifactIds",
+            "updatedAt",
+        }
+        unknown_pipeline_fields = sorted(set(pipeline) - allowed_pipeline_fields)
+        if unknown_pipeline_fields:
+            raise ValueError(
+                f"subtitlePipeline contains unsupported fields {unknown_pipeline_fields}: {path}"
+            )
         if pipeline.get("mode") not in SUBTITLE_PIPELINE_MODES:
             raise ValueError(f"subtitlePipeline.mode is unsupported: {path}")
         if pipeline.get("stage") not in SUBTITLE_PIPELINE_STAGES:
@@ -274,6 +583,13 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
             raise ValueError(f"translate subtitlePipeline must change language: {path}")
         if not isinstance(pipeline.get("manualReferenceArtifactIds"), list):
             raise ValueError(f"subtitlePipeline references must be an array: {path}")
+        if not all(
+            isinstance(artifact_id, str)
+            and ARTIFACT_ID_PATTERN.fullmatch(artifact_id)
+            for artifact_id in pipeline["manualReferenceArtifactIds"]
+        ):
+            raise ValueError(f"subtitlePipeline references are invalid: {path}")
+        validate_timestamp(pipeline.get("updatedAt"), "subtitlePipeline.updatedAt")
         forbidden_fields = {
             "timingProvider",
             "timingModel",
@@ -304,11 +620,15 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
     for entry in history:
         if (
             not isinstance(entry, dict)
+            or set(entry) != {"at", "state", "stage", "message"}
             or entry.get("state") not in STATES
             or not isinstance(entry.get("stage"), str)
             or not JOB_STAGE_PATTERN.fullmatch(entry["stage"])
+            or not isinstance(entry.get("message"), str)
+            or not entry["message"].strip()
         ):
             raise ValueError(f"job state contains an invalid history entry: {path}")
+        validate_timestamp(entry.get("at"), "job history at")
     return data
 
 
@@ -347,8 +667,10 @@ def relative_job_path(job_dir: Path, candidate: Path) -> str:
 def save_status(job_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
     status["schemaVersion"] = SCHEMA_VERSION
     status["updatedAt"] = utc_now()
-    history = status.setdefault("history", [])
-    if isinstance(history, list) and len(history) > 120:
+    history = status.get("history")
+    if not isinstance(history, list):
+        raise ValueError("job state history must be an array")
+    if len(history) > 120:
         status["history"] = history[-120:]
     atomic_write_json(state_path(job_dir), status)
     return status
@@ -424,7 +746,7 @@ def patch_status(
         or old_message != status.get("message")
     )
     if record_history or changed:
-        status.setdefault("history", []).append(
+        status["history"].append(
             {
                 "at": utc_now(),
                 "state": status.get("state"),
@@ -437,7 +759,7 @@ def patch_status(
 
 def set_asset(job_dir: Path, name: str, path: Path) -> dict[str, Any]:
     status = load_status(job_dir, create_default=True)
-    assets = status.setdefault("assets", {})
+    assets = status["assets"]
     assets[name] = {
         "path": relative_job_path(job_dir, path),
         "bytes": path.stat().st_size if path.exists() and path.is_file() else None,
@@ -448,7 +770,7 @@ def set_asset(job_dir: Path, name: str, path: Path) -> dict[str, Any]:
 
 def remove_asset(job_dir: Path, name: str) -> dict[str, Any]:
     status = load_status(job_dir, create_default=True)
-    assets = status.setdefault("assets", {})
+    assets = status["assets"]
     assets.pop(name, None)
     return save_status(job_dir, status)
 
@@ -614,7 +936,7 @@ def set_subtitle_artifact(
         artifact_checksum.update(hashlib.sha256(manifest.read_bytes()).digest())
 
     status = load_status(job_dir, create_default=True)
-    artifacts = status.setdefault("subtitleArtifacts", [])
+    artifacts = status["subtitleArtifacts"]
     if not isinstance(artifacts, list):
         raise ValueError("subtitleArtifacts must be a list")
     artifacts_by_id = {

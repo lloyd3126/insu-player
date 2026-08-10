@@ -506,24 +506,26 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
 
     def test_job_state_rejects_flat_subtitle_artifact_processor_fields(self) -> None:
         job_dir = self.workspace / "jobs" / "test-video"
-        job_dir.mkdir(parents=True)
-        (job_dir / "status.json").write_text(
-            json.dumps(
-                {
-                    "schemaVersion": 6,
-                    "videoId": "test-video",
-                    "state": "queued",
-                    "stage": "queued",
-                    "progress": 0,
-                    "subtitleArtifacts": [
-                        {"id": "legacy-source", "provider": "local", "model": "medium"}
-                    ],
-                    "activeSubtitleTracks": {},
-                    "history": [],
-                }
-            ),
-            encoding="utf-8",
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "init",
+                "--job-dir",
+                str(job_dir),
+                "--video-id",
+                "test-video",
+                "--source-url",
+                "https://example.test/video",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
         )
+        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+        status["subtitleArtifacts"] = [
+            {"id": "legacy-source", "provider": "local", "model": "medium"}
+        ]
+        (job_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
         result = subprocess.run(
             [
                 sys.executable,
@@ -539,7 +541,76 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("removed processor fields", result.stdout)
+        self.assertIn("current schema", result.stdout)
+
+    def test_job_state_rejects_history_without_current_stage(self) -> None:
+        job_dir = self.workspace / "jobs" / "test-video"
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "init",
+                "--job-dir",
+                str(job_dir),
+                "--video-id",
+                "test-video",
+                "--source-url",
+                "https://example.test/video",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+        del status["history"][0]["stage"]
+        (job_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "show",
+                "--job-dir",
+                str(job_dir),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid history entry", result.stdout)
+
+    def test_prompt_library_rejects_missing_current_timestamp(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        (self.workspace / "prompts.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "prompts": [
+                        {
+                            "id": "old-prompt",
+                            "title": "Old",
+                            "scenario": "Test",
+                            "prompt": "Content",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "prompt_library.py"),
+                "list",
+                str(self.workspace),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("updatedAt must be a timestamp", result.stdout)
 
     def test_progress_runner_handles_commands_without_percentage_output(self) -> None:
         job_dir = self.workspace / "jobs" / "no-progress"

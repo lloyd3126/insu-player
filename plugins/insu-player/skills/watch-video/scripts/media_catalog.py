@@ -48,6 +48,18 @@ def finite_number(value: Any) -> float | None:
     return float(value)
 
 
+def validate_timestamp(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{label} must be a timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} must include a timezone")
+    return value
+
+
 def validate_video_id(value: str) -> str:
     if not VIDEO_ID_PATTERN.fullmatch(value):
         raise ValueError("invalid video ID")
@@ -117,16 +129,87 @@ def validate_catalog(payload: Any, video_id: str) -> dict[str, Any]:
         checksum = rendition.get("checksum")
         if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
             raise ValueError("media rendition checksum is invalid")
+        if rendition.get("container") != "mp4":
+            raise ValueError("media rendition container must be mp4")
+        for field in ("videoCodec", "audioCodec", "formatId", "selection"):
+            if rendition.get(field) is not None and not isinstance(rendition.get(field), str):
+                raise ValueError(f"media rendition {field} is invalid")
+            if field not in rendition:
+                raise ValueError(f"media rendition {field} is required")
+        validate_timestamp(rendition.get("createdAt"), "media rendition createdAt")
     active = payload.get("activeRenditionId")
     if active is not None and active not in ids:
         raise ValueError("active rendition is not registered")
     availability = payload.get("availability")
-    if not isinstance(availability, dict) or not isinstance(availability.get("formats"), list):
+    if (
+        not isinstance(availability, dict)
+        or set(availability) != {"discoveredAt", "formats"}
+        or not isinstance(availability.get("formats"), list)
+    ):
         raise ValueError("media catalog availability is invalid")
+    discovered_at = availability.get("discoveredAt")
+    if discovered_at is not None:
+        validate_timestamp(discovered_at, "media catalog discoveredAt")
+    for source_format in availability["formats"]:
+        if not isinstance(source_format, dict) or set(source_format) != {
+            "height",
+            "width",
+            "fps",
+            "container",
+            "videoCodec",
+            "estimatedBytes",
+        }:
+            raise ValueError("media source format fields are invalid")
+        if positive_int(source_format.get("height")) is None or source_format.get("container") != "mp4":
+            raise ValueError("media source format is invalid")
+        for field in ("width", "estimatedBytes"):
+            value = source_format.get(field)
+            if value is not None and positive_int(value) is None:
+                raise ValueError(f"media source format {field} is invalid")
+        fps = source_format.get("fps")
+        if fps is not None and (finite_number(fps) is None or float(fps) <= 0):
+            raise ValueError("media source format fps is invalid")
+        if source_format.get("videoCodec") is not None and not isinstance(source_format.get("videoCodec"), str):
+            raise ValueError("media source format videoCodec is invalid")
     operation = payload.get("operation")
     if operation is not None:
-        if not isinstance(operation, dict) or operation.get("state") not in RUN_STATES:
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != {
+                "id",
+                "requestedHeight",
+                "state",
+                "stage",
+                "progress",
+                "message",
+                "error",
+                "pid",
+                "startedAt",
+                "updatedAt",
+                "completedAt",
+            }
+            or operation.get("state") not in RUN_STATES
+        ):
             raise ValueError("media catalog operation is invalid")
+        if not isinstance(operation.get("id"), str) or not RUN_ID_PATTERN.fullmatch(operation["id"]):
+            raise ValueError("media catalog operation ID is invalid")
+        if operation.get("requestedHeight") is not None and positive_int(operation.get("requestedHeight")) is None:
+            raise ValueError("media catalog operation requestedHeight is invalid")
+        progress = finite_number(operation.get("progress"))
+        if progress is None or not 0 <= progress <= 100:
+            raise ValueError("media catalog operation progress is invalid")
+        if not isinstance(operation.get("stage"), str) or not isinstance(operation.get("message"), str):
+            raise ValueError("media catalog operation text fields are invalid")
+        if operation.get("error") is not None and not isinstance(operation.get("error"), str):
+            raise ValueError("media catalog operation error is invalid")
+        if operation.get("pid") is not None and positive_int(operation.get("pid")) is None:
+            raise ValueError("media catalog operation pid is invalid")
+        validate_timestamp(operation.get("startedAt"), "media catalog operation startedAt")
+        validate_timestamp(operation.get("updatedAt"), "media catalog operation updatedAt")
+        if operation.get("completedAt") is not None:
+            validate_timestamp(operation.get("completedAt"), "media catalog operation completedAt")
+    elif "operation" not in payload:
+        raise ValueError("media catalog operation is required")
     return payload
 
 
@@ -153,7 +236,10 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def write_catalog(job_dir: Path, payload: dict[str, Any]) -> None:
-    payload["revision"] = int(payload.get("revision") or 0) + 1
+    revision = payload.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise ValueError("media catalog revision must be a non-negative integer")
+    payload["revision"] = revision + 1
     validate_catalog(payload, str(payload["videoId"]))
     atomic_write_json(catalog_path(job_dir), payload)
 
@@ -270,7 +356,12 @@ def command_publish(args: argparse.Namespace) -> int:
         raise ValueError("media selection is invalid")
     width = positive_int(selected.get("width"))
     height = positive_int(selected.get("height"))
-    if width is None or height is None or height != args.requested_height:
+    if (
+        width is None
+        or height is None
+        or height != args.requested_height
+        or selected.get("container") != "mp4"
+    ):
         raise ValueError("published media resolution does not match the requested height")
     if validation.get("resolutionConfirmed") is not True:
         raise ValueError("published media resolution was not verified")
@@ -299,7 +390,7 @@ def command_publish(args: argparse.Namespace) -> int:
         "requestedHeight": args.requested_height,
         "width": width,
         "height": height,
-        "container": str(selected.get("container") or "mp4"),
+        "container": selected["container"],
         "videoCodec": selected.get("videoCodec") or selected.get("probedVideoCodec"),
         "audioCodec": selected.get("audioCodec") or selected.get("probedAudioCodec"),
         "formatId": selected.get("formatId"),

@@ -56,7 +56,7 @@ export interface SubtitlePipeline {
   contentProcessor?: ProcessorIdentity
   segmentationProcessor?: ProcessorIdentity
   manualReferenceArtifactIds: string[]
-  updatedAt?: string
+  updatedAt: string
 }
 
 export interface TranscriptionSummary {
@@ -69,10 +69,10 @@ export interface TranscriptionSummary {
 
 export interface JobHistoryEntry {
   sequence: number
-  at?: string
-  state?: JobState
-  stage?: string
-  message?: string
+  at: string
+  state: JobState
+  stage: string
+  message: string
 }
 
 export interface JobSummary {
@@ -84,8 +84,8 @@ export interface JobSummary {
   stage: string
   progress: number
   message: string
-  createdAt: string | null
-  updatedAt: string | null
+  createdAt: string
+  updatedAt: string
   completedAt: string | null
   lastError: string | null
   watchable: boolean

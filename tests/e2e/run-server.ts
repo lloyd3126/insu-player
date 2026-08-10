@@ -51,6 +51,8 @@ writeFileSync(
         container: "mp4",
         videoCodec: "avc1",
         audioCodec: "aac",
+        formatId: "720+audio",
+        selection: null,
         sizeBytes: Buffer.byteLength(mediaContents),
         checksum: mediaChecksum,
         createdAt: "2026-08-08T00:00:00.000Z",
@@ -122,7 +124,11 @@ writeFileSync(
     updatedAt: "2026-08-08T02:30:00.000Z",
     completedAt: "2026-08-08T02:30:00.000Z",
     assets: {
-      mediaCatalog: { path: "media-work/catalog.json" },
+      mediaCatalog: {
+        path: "media-work/catalog.json",
+        bytes: 1,
+        updatedAt: "2026-08-08T02:30:00.000Z",
+      },
     },
     subtitlePipeline: {
       mode: "translate",
@@ -133,6 +139,7 @@ writeFileSync(
       contentProcessor: { provider: "agent", service: "codex" },
       segmentationProcessor: { provider: "agent", service: "codex" },
       manualReferenceArtifactIds: [],
+      updatedAt: "2026-08-08T02:30:00.000Z",
     },
     subtitleArtifacts: [
       {
@@ -163,6 +170,7 @@ writeFileSync(
             state: "ready",
             path: `subtitle-work/artifacts/${sourceId}/source.vtt`,
             checksum: digest(english),
+            updatedAt: "2026-08-08T00:45:00.000Z",
           },
         ],
       },
@@ -200,6 +208,7 @@ writeFileSync(
             state: "ready",
             path: `subtitle-work/artifacts/${proofreadId}/input.vtt`,
             checksum: digest(english),
+            updatedAt: "2026-08-08T01:00:00.000Z",
           },
           {
             id: `${proofreadId}-output_sentence`,
@@ -208,6 +217,7 @@ writeFileSync(
             state: "ready",
             path: `subtitle-work/artifacts/${proofreadId}/output.vtt`,
             checksum: digest(english),
+            updatedAt: "2026-08-08T01:00:00.000Z",
           },
         ],
       },
@@ -222,6 +232,7 @@ writeFileSync(
         outputLanguage: "zh-TW",
         sourceType: null,
         processor: { provider: "agent", service: "codex" },
+        timingUnitKind: null,
         targetFrozen: false,
         manifestPath: `subtitle-work/artifacts/${translationId}/manifest.json`,
         checksum: artifactDigest(
@@ -244,6 +255,7 @@ writeFileSync(
             state: "ready",
             path: `subtitle-work/artifacts/${translationId}/input.vtt`,
             checksum: digest(english),
+            updatedAt: "2026-08-08T01:30:00.000Z",
           },
           {
             id: `${translationId}-output_sentence`,
@@ -252,6 +264,7 @@ writeFileSync(
             state: "ready",
             path: `subtitle-work/artifacts/${translationId}/output.vtt`,
             checksum: digest(chinese),
+            updatedAt: "2026-08-08T01:30:00.000Z",
           },
         ],
       },
@@ -266,6 +279,7 @@ writeFileSync(
         outputLanguage: "zh-TW",
         sourceType: null,
         processor: { provider: "agent", service: "codex" },
+        timingUnitKind: null,
         targetFrozen: true,
         manifestPath: `subtitle-work/artifacts/${segmentationId}/manifest.json`,
         checksum: artifactDigest(
@@ -288,6 +302,7 @@ writeFileSync(
             state: "ready",
             path: `subtitle-work/artifacts/${segmentationId}/input.vtt`,
             checksum: digest(english),
+            updatedAt: "2026-08-08T02:30:00.000Z",
           },
           {
             id: `${segmentationId}-output_segmented`,
@@ -296,11 +311,14 @@ writeFileSync(
             state: "ready",
             path: `subtitle-work/artifacts/${segmentationId}/output.vtt`,
             checksum: digest(chinese),
+            updatedAt: "2026-08-08T02:30:00.000Z",
           },
         ],
       },
     ],
     activeSubtitleTracks: {},
+    lastError: null,
+    process: null,
     transcription: {
       provider: "local",
       model: "medium",

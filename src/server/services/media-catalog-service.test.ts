@@ -151,4 +151,36 @@ describe("media catalog service", () => {
       "media rendition file is unavailable",
     )
   })
+
+  test("rejects rendition fields omitted by an older catalog shape", () => {
+    const oldRendition = rendition("720p-test", 720, "720p media") as Record<
+      string,
+      unknown
+    >
+    delete oldRendition.formatId
+    writeCatalog({ renditions: [oldRendition] })
+    expect(() => publicMediaCatalog(job, "demo-video")).toThrow(
+      "media rendition fields are invalid",
+    )
+  })
+
+  test("rejects source formats without the current codec field", () => {
+    writeCatalog({
+      availability: {
+        discoveredAt: "2026-08-08T00:00:00.000Z",
+        formats: [
+          {
+            height: 1080,
+            width: 1920,
+            fps: 30,
+            estimatedBytes: null,
+            container: "mp4",
+          },
+        ],
+      },
+    })
+    expect(() => publicMediaCatalog(job, "demo-video")).toThrow(
+      "media format is invalid",
+    )
+  })
 })

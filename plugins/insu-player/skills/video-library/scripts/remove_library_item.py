@@ -850,16 +850,17 @@ class SubtitleArtifactRemovalHandler:
                 "updatedAt": now,
             }
         )
-        history = status.setdefault("history", [])
-        if isinstance(history, list):
-            history.append(
-                {
-                    "at": now,
-                    "state": state,
-                    "stage": stage,
-                    "message": message,
-                }
-            )
+        history = status.get("history")
+        if not isinstance(history, list):
+            raise RemovalError("status history does not match the current schema")
+        history.append(
+            {
+                "at": now,
+                "state": state,
+                "stage": stage,
+                "message": message,
+            }
+        )
 
         staging = job_directory / f".removing-subtitle-{expected_digest[:12]}"
         if staging.exists() or staging.is_symlink():

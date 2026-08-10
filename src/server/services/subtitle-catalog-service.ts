@@ -34,6 +34,39 @@ const PLAYBACK_ROLES = new Set<SubtitleTrackRole>([
   "output_sentence",
   "output_segmented",
 ])
+const ARTIFACT_FIELDS = new Set([
+  "id",
+  "kind",
+  "revision",
+  "lifecycleState",
+  "validationState",
+  "freshnessState",
+  "sourceLanguage",
+  "outputLanguage",
+  "sourceType",
+  "processor",
+  "timingUnitKind",
+  "targetFrozen",
+  "manifestPath",
+  "checksum",
+  "warningCount",
+  "hardDefectCount",
+  "dependencies",
+  "tracks",
+  "createdAt",
+  "completedAt",
+])
+const TRACK_FIELDS = new Set([
+  "id",
+  "languageCode",
+  "role",
+  "state",
+  "path",
+  "checksum",
+  "updatedAt",
+  "bytes",
+])
+const REQUIRED_TRACK_FIELDS = [...TRACK_FIELDS].filter((field) => field !== "bytes")
 
 interface ResolvedSubtitleArtifactTrack extends SubtitleArtifactTrack {
   relativePath: string
@@ -115,6 +148,14 @@ function requiredLanguage(value: unknown, label: string) {
   return language
 }
 
+function requiredTimestamp(value: unknown, label: string) {
+  const timestamp = requiredString(value, label)
+  if (!Number.isFinite(Date.parse(timestamp))) {
+    throw new Error(`${label} must be a timestamp`)
+  }
+  return timestamp
+}
+
 function resolvedProcessor(
   value: unknown,
   label: string,
@@ -123,6 +164,13 @@ function resolvedProcessor(
     throw new Error(`${label} must be an object`)
   }
   const candidate = value as Record<string, unknown>
+  if (
+    Object.keys(candidate).some(
+      (key) => !["provider", "service", "model"].includes(key),
+    )
+  ) {
+    throw new Error(`${label} contains unsupported fields`)
+  }
   return {
     provider: requiredEnum(
       candidate.provider,
@@ -136,6 +184,30 @@ function resolvedProcessor(
 
 function checksum(contents: string) {
   return createHash("sha256").update(contents).digest("hex")
+}
+
+function validateManifestSchema(
+  manifestPath: string,
+  kind: SubtitleArtifactKind,
+  artifactId: string,
+) {
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+  } catch {
+    throw new Error(`${artifactId}.manifestPath is not valid JSON`)
+  }
+  const expectedVersion = kind === "segmentation" ? 4 : 5
+  if (
+    !manifest ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    (manifest as Record<string, unknown>).schemaVersion !== expectedVersion
+  ) {
+    throw new Error(
+      `${artifactId}.manifestPath must use schemaVersion ${expectedVersion}`,
+    )
+  }
 }
 
 function resolvedTrack(
@@ -193,7 +265,7 @@ function resolvedTrack(
     sizeBytes: metadata.size,
     cueCount,
     checksum: actualChecksum,
-    updatedAt: stringValue(raw.updatedAt) ?? metadata.mtime.toISOString(),
+    updatedAt: requiredTimestamp(raw.updatedAt, `${artifactId}.${id}.updatedAt`),
   }
 }
 
@@ -207,6 +279,15 @@ function dependencies(value: unknown, artifactId: string) {
       throw new Error(`${artifactId}.dependency must be an object`)
     }
     const candidate = raw as Record<string, unknown>
+    if (
+      Object.keys(candidate).some(
+        (key) => !["artifactId", "relation"].includes(key),
+      ) ||
+      !("artifactId" in candidate) ||
+      !("relation" in candidate)
+    ) {
+      throw new Error(`${artifactId}.dependency fields are invalid`)
+    }
     const dependency = {
       artifactId: requiredString(
         candidate.artifactId,
@@ -276,6 +357,12 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       throw new Error("subtitle artifact must be an object")
     }
     const candidate = raw as Record<string, unknown>
+    if (
+      Object.keys(candidate).some((key) => !ARTIFACT_FIELDS.has(key)) ||
+      [...ARTIFACT_FIELDS].some((key) => !(key in candidate))
+    ) {
+      throw new Error("subtitle artifact fields do not match the current schema")
+    }
     const id = requiredString(candidate.id, "subtitle artifact id")
     if (!IDENTIFIER_PATTERN.test(id) || artifactIds.has(id)) {
       throw new Error(`invalid or duplicate subtitle artifact ID: ${id}`)
@@ -363,10 +450,17 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       if (!track || typeof track !== "object") {
         throw new Error(`${id}.track must be an object`)
       }
+      const rawTrack = track as Record<string, unknown>
+      if (
+        Object.keys(rawTrack).some((key) => !TRACK_FIELDS.has(key)) ||
+        REQUIRED_TRACK_FIELDS.some((key) => !(key in rawTrack))
+      ) {
+        throw new Error(`${id}.track fields do not match the current schema`)
+      }
       const resolved = resolvedTrack(
         input.jobDirectory,
         id,
-        track as Record<string, unknown>,
+        rawTrack,
       )
       if (trackIds.has(resolved.id)) {
         throw new Error(`duplicate subtitle track ID: ${resolved.id}`)
@@ -396,6 +490,7 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
     if (kind !== "source" && !manifestPath) {
       throw new Error(`${id}.manifestPath is required`)
     }
+    if (manifestPath) validateManifestSchema(manifestPath, kind, id)
     const targetFrozen = requiredBoolean(candidate.targetFrozen, `${id}.targetFrozen`)
     if ((kind === "segmentation") !== targetFrozen) {
       throw new Error(`${id}.targetFrozen does not match the artifact kind`)
@@ -451,8 +546,13 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       ),
       dependencies: dependencies(candidate.dependencies, id),
       tracks,
-      createdAt: stringValue(candidate.createdAt),
-      completedAt: stringValue(candidate.completedAt),
+      createdAt: requiredTimestamp(candidate.createdAt, `${id}.createdAt`),
+      completedAt:
+        lifecycleState === "ready"
+          ? requiredTimestamp(candidate.completedAt, `${id}.completedAt`)
+          : candidate.completedAt === null
+            ? null
+            : requiredTimestamp(candidate.completedAt, `${id}.completedAt`),
     }
     validateTrackContract(artifact)
     return artifact

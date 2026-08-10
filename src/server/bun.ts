@@ -17,6 +17,7 @@ import { JobRepository } from "@server/repositories/job-repository"
 import {
   SERVER_BUILD_ID,
   STATUS_SCHEMA_VERSION,
+  isCurrentServerRuntime,
 } from "@server/runtime-contract"
 import { MediaService } from "@server/services/media-service"
 import { RemovalService } from "@server/services/removal-service"
@@ -33,18 +34,23 @@ function processIsAlive(pid: unknown) {
 }
 
 function readActiveEndpoint(candidate: string) {
+  if (!existsSync(candidate)) return null
+  if (lstatSync(candidate).isSymbolicLink()) {
+    throw new Error("workspace server descriptor cannot be a symbolic link")
+  }
   try {
-    if (!existsSync(candidate) || lstatSync(candidate).isSymbolicLink()) return null
     const payload = JSON.parse(readFileSync(candidate, "utf8")) as Record<string, unknown>
     if (
       !["127.0.0.1", "localhost", "::1"].includes(String(payload.host)) ||
       !Number.isInteger(payload.port) ||
       Number(payload.port) < 1 ||
       Number(payload.port) > 65535 ||
-      !processIsAlive(payload.pid)
+      !Number.isInteger(payload.pid) ||
+      Number(payload.pid) <= 0
     ) {
-      return null
+      throw new Error("workspace server descriptor is invalid")
     }
+    if (!processIsAlive(payload.pid)) return null
     return payload as {
       host: string
       port: number
@@ -53,8 +59,11 @@ function readActiveEndpoint(candidate: string) {
       buildId?: string
       statusSchemaVersion?: number
     }
-  } catch {
-    return null
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("server descriptor")) {
+      throw error
+    }
+    throw new Error("workspace server descriptor is not valid JSON")
   }
 }
 
@@ -78,39 +87,6 @@ async function readServerHealth(active: {
     return null
   } finally {
     clearTimeout(timeout)
-  }
-}
-
-async function stopOutdatedServer(
-  active: { host: string; port: number; pid: number; runtime?: string },
-  descriptors: string[],
-) {
-  const health = await readServerHealth(active)
-  if (
-    active.runtime !== "hono-bun" ||
-    health?.runtime !== "bun" ||
-    health.framework !== "hono"
-  ) {
-    throw new Error(
-      "workspace server descriptor points to an unverified process; stop it manually before restarting INSU Player",
-    )
-  }
-  process.kill(active.pid, "SIGTERM")
-  const deadline = Date.now() + 5000
-  while (processIsAlive(active.pid) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-  if (processIsAlive(active.pid)) {
-    throw new Error("outdated INSU Player server did not stop within five seconds")
-  }
-  for (const descriptor of descriptors) {
-    if (!existsSync(descriptor)) continue
-    try {
-      const payload = JSON.parse(readFileSync(descriptor, "utf8"))
-      if (payload?.pid === active.pid) rmSync(descriptor, { force: true })
-    } catch {
-      // Leave descriptors that cannot be proven to belong to the stopped process.
-    }
   }
 }
 
@@ -165,19 +141,15 @@ const sessionDescriptor = path.join(workspace, ".insu-environment-session.json")
 const active = readActiveEndpoint(serverDescriptor)
 if (active) {
   const health = await readServerHealth(active)
-  if (
-    active.buildId === SERVER_BUILD_ID &&
-    active.statusSchemaVersion === STATUS_SCHEMA_VERSION &&
-    health?.buildId === SERVER_BUILD_ID &&
-    health.statusSchemaVersion === STATUS_SCHEMA_VERSION
-  ) {
+  if (isCurrentServerRuntime(active, health)) {
     console.log(`Local video library: ${localUrl(active.host, active.port)}`)
     console.log(`Workspace: ${workspace}`)
     console.log(`Already running with pid ${active.pid}.`)
     process.exit(0)
   }
-  console.log("Stopping an outdated INSU Player server before starting the current build.")
-  await stopOutdatedServer(active, [serverDescriptor, sessionDescriptor])
+  throw new Error(
+    `workspace already has a different INSU Player build running at ${localUrl(active.host, active.port)}; stop that process explicitly before starting this build`,
+  )
 }
 
 const pidFile = values["pid-file"] ? path.resolve(values["pid-file"]) : null

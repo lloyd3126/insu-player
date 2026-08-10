@@ -92,7 +92,7 @@ export interface SubtitleArtifactTrack {
   sizeBytes: number | null
   cueCount: number
   checksum: string
-  updatedAt: string | null
+  updatedAt: string
 }
 
 export interface SubtitleArtifact {
@@ -114,7 +114,7 @@ export interface SubtitleArtifact {
   hardDefectCount: number
   dependencies: SubtitleArtifactDependency[]
   tracks: SubtitleArtifactTrack[]
-  createdAt: string | null
+  createdAt: string
   completedAt: string | null
 }
 

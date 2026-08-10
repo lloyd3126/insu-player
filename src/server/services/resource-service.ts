@@ -35,6 +35,10 @@ function executable(candidate: string) {
   }
 }
 
+function validTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
+}
+
 async function spawnText(command: string, args: string[], cwd: string) {
   const process = Bun.spawn([command, ...args], {
     cwd,
@@ -211,17 +215,33 @@ export class ResourceService {
     const promptPath = path.join(this.workspace, "prompts.json")
     if (!existsSync(promptPath)) return { available: true, version: 1, prompts: [] }
     try {
-      const payload = JSON.parse(readFileSync(promptPath, "utf8")) as {
-        prompts?: unknown[]
-      }
-      if (!Array.isArray(payload.prompts) || payload.prompts.length > 100) {
+      const payload = JSON.parse(readFileSync(promptPath, "utf8")) as Record<
+        string,
+        unknown
+      >
+      if (
+        payload.version !== 1 ||
+        Object.keys(payload).some((key) => !["version", "prompts"].includes(key)) ||
+        !Array.isArray(payload.prompts) ||
+        payload.prompts.length > 100
+      ) {
         throw new Error("prompts.json must contain at most 100 prompts")
       }
       const ids = new Set<string>()
       const prompts = payload.prompts.map((raw) => {
         if (!raw || typeof raw !== "object") throw new Error("invalid prompt")
         const item = raw as Record<string, unknown>
-        if (typeof item.id !== "string" || !PROMPT_ID_PATTERN.test(item.id) || ids.has(item.id)) {
+        if (
+          Object.keys(item).some(
+            (key) => !["id", "title", "scenario", "prompt", "updatedAt"].includes(key),
+          ) ||
+          !["id", "title", "scenario", "prompt", "updatedAt"].every(
+            (key) => key in item,
+          ) ||
+          typeof item.id !== "string" ||
+          !PROMPT_ID_PATTERN.test(item.id) ||
+          ids.has(item.id)
+        ) {
           throw new Error("prompt ids must be valid and unique")
         }
         ids.add(item.id)
@@ -230,15 +250,15 @@ export class ResourceService {
             throw new Error(`${field} must be non-empty text`)
           }
         }
+        if (!validTimestamp(item.updatedAt)) {
+          throw new Error("prompt updatedAt must be a timestamp")
+        }
         return {
           id: item.id,
           title: String(item.title).trim(),
           scenario: String(item.scenario).trim(),
           prompt: String(item.prompt).trim(),
-          updatedAt:
-            typeof item.updatedAt === "string"
-              ? item.updatedAt
-              : new Date().toISOString(),
+          updatedAt: item.updatedAt,
         } satisfies PromptItem
       })
       return { available: true, version: 1, prompts }

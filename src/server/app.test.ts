@@ -120,6 +120,8 @@ function seedJob() {
           container: "mp4",
           videoCodec: "avc1",
           audioCodec: "aac",
+          formatId: "720+audio",
+          selection: null,
           sizeBytes: Buffer.byteLength(mediaContents),
           checksum: mediaChecksum,
           createdAt: "2026-08-08T00:00:00.000Z",
@@ -163,6 +165,10 @@ function seedJob() {
     overrides: Record<string, unknown> = {},
   ) => {
     const manifestContents = kind === "source" ? undefined : '{"schemaVersion":5}\n'
+    const currentTracks = tracks.map((track) => ({
+      updatedAt: "2026-08-08T01:00:00.000Z",
+      ...track,
+    }))
     return {
       id,
       kind,
@@ -177,11 +183,11 @@ function seedJob() {
       timingUnitKind: "word",
       targetFrozen: false,
       manifestPath: null,
-      checksum: artifactDigest(tracks, manifestContents),
+      checksum: artifactDigest(currentTracks, manifestContents),
       warningCount: 0,
       hardDefectCount: 0,
       dependencies: [],
-      tracks,
+      tracks: currentTracks,
       createdAt: "2026-08-08T00:00:00.000Z",
       completedAt: "2026-08-08T01:00:00.000Z",
       ...overrides,
@@ -203,6 +209,22 @@ function seedJob() {
       createdAt: "2026-08-08T00:00:00.000Z",
       updatedAt: "2026-08-08T01:00:00.000Z",
       completedAt: "2026-08-08T01:00:00.000Z",
+      lastError: null,
+      process: null,
+      assets: {
+        mediaCatalog: {
+          path: "media-work/catalog.json",
+          bytes: 1,
+          updatedAt: "2026-08-08T01:00:00.000Z",
+        },
+      },
+      transcription: {
+        provider: "local",
+        model: "medium",
+        languageTag: "en",
+        engineLanguage: "en",
+        updatedAt: "2026-08-08T01:00:00.000Z",
+      },
       subtitleArtifacts: [
         artifact(sourceId, "source", [{
           id: `${sourceId}-source_raw`, languageCode: "en", role: "source_raw", state: "ready",
@@ -236,13 +258,26 @@ function seedJob() {
         timingProcessor: { provider: "local", model: "medium" },
         contentProcessor: { provider: "agent", service: "codex" },
         manualReferenceArtifactIds: [],
+        updatedAt: "2026-08-08T01:00:00.000Z",
       },
       history: [
-        { at: "2026-08-08T00:00:00.000Z", state: "downloading", message: "開始" },
-        { at: "2026-08-08T01:00:00.000Z", state: "ready", message: "完成" },
+        { at: "2026-08-08T00:00:00.000Z", state: "downloading", stage: "download", message: "開始" },
+        { at: "2026-08-08T01:00:00.000Z", state: "ready", stage: "complete", message: "完成" },
       ],
     })}\n`,
   )
+}
+
+function mutateStatus(
+  mutation: (status: Record<string, unknown>) => void,
+) {
+  const statusPath = path.join(workspace, "jobs", "demo-video", "status.json")
+  const status = JSON.parse(readFileSync(statusPath, "utf8")) as Record<
+    string,
+    unknown
+  >
+  mutation(status)
+  writeFileSync(statusPath, `${JSON.stringify(status)}\n`)
 }
 
 beforeEach(() => {
@@ -310,7 +345,7 @@ describe("Hono application", () => {
       status: "ok",
       runtime: "bun",
       framework: "hono",
-      buildId: "insu-player-status-6-content-5",
+      buildId: "insu-player-status-6-content-5-strict",
       statusSchemaVersion: 6,
       database: "sqlite",
       port: 4178,
@@ -352,6 +387,59 @@ describe("Hono application", () => {
       .query("select count(*) as count from active_subtitle_tracks")
       .get() as { count: number }
     expect(activeTrackCount.count).toBe(2)
+  })
+
+  test("rejects an older status schema instead of projecting a fallback row", async () => {
+    mutateStatus((status) => {
+      status.schemaVersion = 5
+    })
+    const response = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video",
+    )
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({
+      error: "status.json must use schemaVersion 6",
+    })
+    expect(
+      sqlite.query("select count(*) as count from jobs").get(),
+    ).toEqual({ count: 0 })
+  })
+
+  test("rejects a status without current history fields", async () => {
+    mutateStatus((status) => {
+      status.history = [
+        {
+          at: "2026-08-08T00:00:00.000Z",
+          state: "ready",
+          message: "舊紀錄缺少 stage",
+        },
+      ]
+    })
+    const response = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video",
+    )
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({
+      error: "status.json contains an invalid history entry",
+    })
+  })
+
+  test("rejects an older playback state instead of inferring missing fields", async () => {
+    writeFileSync(
+      path.join(workspace, "jobs", "demo-video", "ui-state.json"),
+      `${JSON.stringify({
+        time: 12,
+        duration: 125.9,
+        updatedAt: "2026-08-08T01:00:00.000Z",
+      })}\n`,
+    )
+    const response = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video",
+    )
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({
+      error: "ui-state.json does not match the current schema",
+    })
   })
 
   test("returns the subtitle catalog, artifact comparison, and active bilingual rows", async () => {

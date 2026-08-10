@@ -87,6 +87,8 @@ http://127.0.0.1:8000/
 
 `status.json` 記錄標題、來源、目前 state/stage、0–100 進度、程序 PID、錯誤、產物、最多 120 筆歷程，以及 revisioned `subtitleArtifacts`、親子依賴、tracks 與選用的 `activeSubtitleTracks`。寫入採暫存檔加 atomic replace，避免首頁在更新中讀到半份 JSON。`app.db` 只做可重建的查詢投影。
 
+資料只接受現行契約：job status schema 6、model transcript schema 2、proofread／translation manifest schema 5、segmentation manifest schema 4、media catalog schema 1。讀取時缺少必要欄位、時間戳、processor identity、track 更新時間或 manifest 版本就直接失敗。不要用檔案修改時間補欄位，不要合成假的失敗 job，也不要加入 migration、legacy reader 或相容 fallback。沒有外部使用者時，舊資料以精確刪除流程移除後重新建立。
+
 「我的提示」分頁先顯示建立提示卡，再顯示內建情境與可直接複製的提示，最後列出 Agent 維護的 workspace 提示。建立卡右上角可複製提示交給 Agent 共同整理。Agent 依 [prompt-library.md](prompt-library.md) 使用專用腳本新增或修改，首頁只提供 `GET /api/prompts`，不允許使用者在瀏覽器直接編輯 workspace。「環境變數」分頁以安全提示卡與表格管理程式白名單中的變數，目前為 `OPENAI_API_KEY`。值只存在本機服務程序，公開 API 只回傳是否已設定，停止服務後即消失。SDK 安裝狀態只在雲端模型分頁呈現。
 
 ## Workspace 與服務邊界
@@ -95,7 +97,7 @@ http://127.0.0.1:8000/
 - Portable 模式使用該 repository 的 `.local/insu-player/`。Developer checkout 或 installed plugin 優先使用者明確指定的 project-local workspace。未指定時才使用 `<目前專案根目錄>/.local/insu-player/`。
 - 在執行 doctor、setup、serve 或 process 前先解析一次 workspace 的絕對路徑，回報給使用者，後續每一步固定使用同一路徑。
 - 不搜尋目前專案之外的 INSU workspace，也不因另一個 workspace 已完成安裝、有影片或正在背景執行而改用它。只有使用者明確指定時才能跨越專案邊界。
-- 只有選定 workspace 內的 `.insu-player-server.pid`、`.insu-player-server.json` 與 live process 能證明服務屬於該 workspace。單看 localhost port、程序名稱或其他專案的 PID 不足以沿用服務。
+- 只有選定 workspace 內的 `.insu-player-server.pid`、`.insu-player-server.json`、live process 與 `/api/health` 的完全相同 `buildId`、`statusSchemaVersion` 能證明服務可沿用。單看 localhost port、程序名稱或其他專案的 PID 不足以沿用服務。若同一 workspace 正在執行不同 build，先回報 endpoint，再明確停止該 workspace-owned process 並重新啟動。新版 server 不會自動停止或接管舊 build。
 - Port 衝突不會改變 workspace 身分。一般啟動不指定 port。服務先嘗試 `8000`，若已被占用就原子性地綁定作業系統分配的可用 localhost port，把實際 endpoint 寫入 `.insu-player-server.json`，並回報實際首頁網址。只有使用者明確要求特定 port 時才嚴格使用該 port。
 - Workspace 解析完成後，第一個使用者可見動作是啟動或沿用該 workspace 的服務，並用 Codex 內建瀏覽器開啟實際首頁。不要等 doctor、安裝、下載或字幕處理完成才開啟，也不要只把 URL 印在回覆中。
 

@@ -71,28 +71,41 @@ const ACTIVE_STATES = new Set([
   "segmenting",
   "preparing_player",
 ])
+const MEDIA_CATALOG_REQUIRED_STATES = new Set<JobState>([
+  "downloaded",
+  "needs_transcription",
+  "transcribing",
+  "needs_proofreading",
+  "proofreading",
+  "needs_translation",
+  "translating",
+  "needs_segmentation",
+  "segmenting",
+  "preparing_player",
+  "ready",
+])
 
 interface RawStatus {
   schemaVersion: number
   videoId: string
-  title?: string
-  sourceUrl?: string
+  title: string
+  sourceUrl: string
+  durationSeconds: number | null
   state: JobState
   stage: string
   progress: number
-  message?: string
-  createdAt?: string | null
-  updatedAt?: string | null
-  completedAt?: string | null
-  lastError?: string | null
-  process?: { pid?: number } | null
-  assets?: Record<string, unknown>
-  subtitlePipeline?: SubtitlePipeline | null
+  message: string
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+  lastError: string | null
+  process: { pid: number; startedAt: string; command: string } | null
+  assets: Record<string, unknown>
+  subtitlePipeline: SubtitlePipeline | null
   subtitleArtifacts: unknown[]
   activeSubtitleTracks: Record<string, unknown>
-  transcription?: TranscriptionSummary | null
-  durationSeconds?: number | null
-  history?: Array<Omit<JobHistoryEntry, "sequence">>
+  transcription: TranscriptionSummary | null
+  history: Array<Omit<JobHistoryEntry, "sequence">>
 }
 
 function processIsAlive(pid: unknown) {
@@ -105,13 +118,24 @@ function processIsAlive(pid: unknown) {
   }
 }
 
-function finiteNumber(value: unknown, fallback = 0) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function isTimestamp(value: unknown) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
 }
 
 function validProcessorIdentity(value: unknown, timingOnly = false) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const candidate = value as Record<string, unknown>
+  if (
+    Object.keys(candidate).some(
+      (key) => !["provider", "service", "model"].includes(key),
+    )
+  ) {
+    return false
+  }
   const provider = candidate.provider
   const model =
     typeof candidate.model === "string" && candidate.model.trim()
@@ -194,27 +218,30 @@ export class JobRepository {
         updatedAt: null,
       }
     }
-    try {
-      const payload = readJsonFile<Record<string, unknown>>(statePath)
-      const time = finiteNumber(payload.time)
-      const duration = finiteNumber(payload.duration, Number.NaN)
-      return {
-        time: time >= 0 ? time : 0,
-        duration: Number.isFinite(duration) && duration > 0 ? duration : null,
-        captionLanguage:
-          typeof payload.captionLanguage === "string"
-            ? payload.captionLanguage
-            : null,
-        updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
-      }
-    } catch {
-      return {
-        time: 0,
-        duration: null,
-        captionLanguage: null,
-        updatedAt: null,
-      }
+    const payload = readJsonFile<Record<string, unknown>>(statePath)
+    if (
+      Object.keys(payload).some(
+        (key) => !["time", "duration", "captionLanguage", "updatedAt"].includes(key),
+      ) ||
+      !["time", "duration", "captionLanguage", "updatedAt"].every(
+        (key) => key in payload,
+      ) ||
+      typeof payload.time !== "number" ||
+      !Number.isFinite(payload.time) ||
+      payload.time < 0 ||
+      (payload.duration !== null &&
+        (typeof payload.duration !== "number" ||
+          !Number.isFinite(payload.duration) ||
+          payload.duration <= 0 ||
+          payload.time > payload.duration + 5)) ||
+      (payload.captionLanguage !== null &&
+        (typeof payload.captionLanguage !== "string" ||
+          !LANGUAGE_PATTERN.test(payload.captionLanguage))) ||
+      (payload.updatedAt !== null && !isTimestamp(payload.updatedAt))
+    ) {
+      throw new Error("ui-state.json does not match the current schema")
     }
+    return payload as unknown as PlaybackState
   }
 
   savePlaybackState(
@@ -279,6 +306,58 @@ export class JobRepository {
     if (status.schemaVersion !== STATUS_SCHEMA_VERSION) {
       throw new Error(`status.json must use schemaVersion ${STATUS_SCHEMA_VERSION}`)
     }
+    if (
+      typeof status.title !== "string" ||
+      !status.title.trim() ||
+      typeof status.sourceUrl !== "string" ||
+      typeof status.message !== "string" ||
+      !status.message.trim() ||
+      !isTimestamp(status.createdAt) ||
+      !isTimestamp(status.updatedAt) ||
+      (status.completedAt !== null && !isTimestamp(status.completedAt)) ||
+      (status.lastError !== null && typeof status.lastError !== "string") ||
+      (status.durationSeconds !== null &&
+        (typeof status.durationSeconds !== "number" ||
+          !Number.isFinite(status.durationSeconds) ||
+          status.durationSeconds <= 0)) ||
+      !isRecord(status.assets)
+    ) {
+      throw new Error("status.json is missing required current-schema fields")
+    }
+    if (status.process !== null) {
+      if (
+        !isRecord(status.process) ||
+        !Number.isInteger(status.process.pid) ||
+        Number(status.process.pid) <= 0 ||
+        !isTimestamp(status.process.startedAt) ||
+        typeof status.process.command !== "string" ||
+        !status.process.command.trim() ||
+        Object.keys(status.process).some(
+          (key) => !["pid", "startedAt", "command"].includes(key),
+        )
+      ) {
+        throw new Error("status.json contains invalid process metadata")
+      }
+    }
+    for (const [name, value] of Object.entries(status.assets)) {
+      if (
+        !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(name) ||
+        !isRecord(value) ||
+        Object.keys(value).some(
+          (key) => !["path", "bytes", "updatedAt"].includes(key),
+        ) ||
+        !["path", "bytes", "updatedAt"].every((key) => key in value) ||
+        typeof value.path !== "string" ||
+        !value.path ||
+        path.isAbsolute(value.path) ||
+        value.path.split(/[\\/]+/).includes("..") ||
+        (value.bytes !== null &&
+          (!Number.isInteger(value.bytes) || Number(value.bytes) < 0)) ||
+        !isTimestamp(value.updatedAt)
+      ) {
+        throw new Error("status.json contains invalid asset metadata")
+      }
+    }
     if (!Array.isArray(status.subtitleArtifacts)) {
       throw new Error("status.json must contain subtitleArtifacts")
     }
@@ -288,6 +367,15 @@ export class JobRepository {
       Array.isArray(status.activeSubtitleTracks)
     ) {
       throw new Error("status.json must contain activeSubtitleTracks")
+    }
+    for (const [language, trackId] of Object.entries(status.activeSubtitleTracks)) {
+      if (
+        !LANGUAGE_PATTERN.test(language) ||
+        typeof trackId !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(trackId)
+      ) {
+        throw new Error("status.json contains an invalid active subtitle track")
+      }
     }
     if (status.videoId !== videoId) {
       throw new Error("status.json videoId must match its directory")
@@ -306,7 +394,10 @@ export class JobRepository {
     ) {
       throw new Error("status.json progress must be between 0 and 100")
     }
-    if (status.transcription !== null && status.transcription !== undefined) {
+    if (status.transcription === undefined) {
+      throw new Error("status.json must contain transcription")
+    }
+    if (status.transcription !== null) {
       const transcription = status.transcription as unknown as Record<string, unknown>
       if (
         typeof status.transcription !== "object" ||
@@ -326,7 +417,7 @@ export class JobRepository {
         !/^[A-Za-z0-9._-]+$/.test(transcription.model) ||
         typeof transcription.languageTag !== "string" ||
         !LANGUAGE_PATTERN.test(transcription.languageTag) ||
-        typeof transcription.updatedAt !== "string" ||
+        !isTimestamp(transcription.updatedAt) ||
         (transcription.languageTag === "und"
           ? transcription.engineLanguage !== null
           : typeof transcription.engineLanguage !== "string" ||
@@ -335,10 +426,25 @@ export class JobRepository {
         throw new Error("status.json contains invalid transcription metadata")
       }
     }
-    if (status.subtitlePipeline !== null && status.subtitlePipeline !== undefined) {
+    if (status.subtitlePipeline === undefined) {
+      throw new Error("status.json must contain subtitlePipeline")
+    }
+    if (status.subtitlePipeline !== null) {
       const pipeline = status.subtitlePipeline as Record<string, unknown>
+      const allowedPipelineFields = new Set([
+        "mode",
+        "stage",
+        "sourceLanguage",
+        "outputLanguage",
+        "timingProcessor",
+        "contentProcessor",
+        "segmentationProcessor",
+        "manualReferenceArtifactIds",
+        "updatedAt",
+      ])
       if (
         typeof status.subtitlePipeline !== "object" ||
+        Object.keys(pipeline).some((key) => !allowedPipelineFields.has(key)) ||
         !["proofread", "translate"].includes(
           String((status.subtitlePipeline as Record<string, unknown>).mode),
         ) ||
@@ -356,6 +462,12 @@ export class JobRepository {
         !Array.isArray(
           pipeline.manualReferenceArtifactIds,
         ) ||
+        pipeline.manualReferenceArtifactIds.some(
+          (artifactId) =>
+            typeof artifactId !== "string" ||
+            !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(artifactId),
+        ) ||
+        !isTimestamp(pipeline.updatedAt) ||
         [
           "timingProvider",
           "timingModel",
@@ -372,16 +484,23 @@ export class JobRepository {
         throw new Error("status.json contains an invalid subtitlePipeline")
       }
     }
-    if (Array.isArray(status.history)) {
-      for (const entry of status.history) {
-        if (
-          !entry ||
-          typeof entry !== "object" ||
-          (entry.state !== undefined && !JOB_STATE_SET.has(String(entry.state))) ||
-          (entry.stage !== undefined && !JOB_STAGE_PATTERN.test(String(entry.stage)))
-        ) {
-          throw new Error("status.json contains an invalid history entry")
-        }
+    if (!Array.isArray(status.history)) {
+      throw new Error("status.json must contain history")
+    }
+    for (const entry of status.history) {
+      if (
+        !isRecord(entry) ||
+        Object.keys(entry).some(
+          (key) => !["at", "state", "stage", "message"].includes(key),
+        ) ||
+        !isTimestamp(entry.at) ||
+        !JOB_STATE_SET.has(String(entry.state)) ||
+        typeof entry.stage !== "string" ||
+        !JOB_STAGE_PATTERN.test(entry.stage) ||
+        typeof entry.message !== "string" ||
+        !entry.message.trim()
+      ) {
+        throw new Error("status.json contains an invalid history entry")
       }
     }
     return {
@@ -482,38 +601,18 @@ export class JobRepository {
       throw new Error("job not found")
     }
 
-    let status: RawStatus
-    let statusModifiedAt = 0
-    try {
-      const loaded = this.loadRawStatus(videoId)
-      status = loaded.status
-      statusModifiedAt = loaded.modifiedAt
-    } catch (error) {
-      status = {
-        schemaVersion: STATUS_SCHEMA_VERSION,
-        videoId,
-        title: videoId,
-        sourceUrl: "",
-        state: "failed",
-        stage: "status",
-        progress: 0,
-        message: "狀態檔無法讀取",
-        updatedAt: null,
-        lastError: error instanceof Error ? error.message : String(error),
-        history: [],
-        subtitlePipeline: null,
-        subtitleArtifacts: [],
-        activeSubtitleTracks: {},
-      }
-    }
+    const loaded = this.loadRawStatus(videoId)
+    const status = loaded.status
+    const statusModifiedAt = loaded.modifiedAt
 
-    const video = this.videoPath(videoId)
-    let mediaCatalog: ReturnType<typeof publicMediaCatalog> | null = null
-    try {
-      mediaCatalog = publicMediaCatalog(directory, videoId)
-    } catch {
-      mediaCatalog = null
+    const hasMediaCatalog = isRegularFile(mediaCatalogPath(directory))
+    if (MEDIA_CATALOG_REQUIRED_STATES.has(status.state) && !hasMediaCatalog) {
+      throw new Error(`media catalog is required for job state ${status.state}`)
     }
+    const mediaCatalog = hasMediaCatalog
+      ? publicMediaCatalog(directory, videoId)
+      : null
+    const video = hasMediaCatalog ? this.videoPath(videoId) : null
     const activeRendition = mediaCatalog?.renditions.find(
       (rendition) => rendition.active,
     )
@@ -521,7 +620,7 @@ export class JobRepository {
     const thumbnail = this.thumbnailPath(videoId)
     const state = status.state
     let effectiveState: JobState = state
-    let message = String(status.message || "")
+    let message = status.message
 
     if (ACTIVE_STATES.has(state)) {
       const updated = status.updatedAt ? Date.parse(status.updatedAt) : Number.NaN
@@ -538,24 +637,24 @@ export class JobRepository {
     }
 
     const playback = this.playbackState(videoId)
-    const statusDuration = finiteNumber(status.durationSeconds, Number.NaN)
+    const statusDuration = status.durationSeconds ?? Number.NaN
     const durationSeconds =
       Number.isFinite(statusDuration) && statusDuration > 0
         ? statusDuration
         : playback.duration
     const summary: JobSummary = {
       videoId,
-      title: status.title || videoId,
-      sourceUrl: status.sourceUrl || "",
+      title: status.title,
+      sourceUrl: status.sourceUrl,
       state,
       effectiveState,
-      stage: status.stage || state,
-      progress: finiteNumber(status.progress),
+      stage: status.stage,
+      progress: status.progress,
       message,
-      createdAt: status.createdAt ?? null,
-      updatedAt: status.updatedAt ?? null,
-      completedAt: status.completedAt ?? null,
-      lastError: status.lastError ?? null,
+      createdAt: status.createdAt,
+      updatedAt: status.updatedAt,
+      completedAt: status.completedAt,
+      lastError: status.lastError,
       watchable: Boolean(video),
       captionCodes: subtitleCatalog.availableLanguageCodes,
       activeSubtitleKinds: Object.fromEntries(
@@ -570,8 +669,8 @@ export class JobRepository {
           `${track.artifactKind}:${track.revision}:${track.checksum}`,
         ]),
       ),
-      subtitlePipeline: status.subtitlePipeline ?? null,
-      transcription: status.transcription ?? null,
+      subtitlePipeline: status.subtitlePipeline,
+      transcription: status.transcription,
       sizeBytes: this.jobSize(directory),
       thumbnailUrl: thumbnail ? `/thumbnails/${videoId}` : null,
       watchUrl: video ? `/watch/${videoId}/?embed=1` : null,
@@ -605,11 +704,8 @@ export class JobRepository {
     if (!includeHistory) return summary
     return {
       ...summary,
-      history: Array.isArray(status.history)
-        ? status.history.map((entry, sequence) => ({ ...entry, sequence }))
-        : [],
-      assets:
-        status.assets && typeof status.assets === "object" ? status.assets : {},
+      history: status.history.map((entry, sequence) => ({ ...entry, sequence })),
+      assets: status.assets,
     }
   }
 
@@ -622,7 +718,7 @@ export class JobRepository {
       summaries.push(this.summarize(entry.name, false) as JobSummary)
     }
     return summaries.sort((left, right) =>
-      String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")),
+      right.updatedAt.localeCompare(left.updatedAt),
     )
   }
 
@@ -727,7 +823,7 @@ export class JobRepository {
         .run()
 
       transaction.delete(jobHistory).where(eq(jobHistory.videoId, summary.videoId)).run()
-      const history = Array.isArray(status.history) ? status.history : []
+      const history = status.history
       if (history.length > 0) {
         transaction
           .insert(jobHistory)
@@ -745,28 +841,26 @@ export class JobRepository {
       }
 
       transaction.delete(jobAssets).where(eq(jobAssets.videoId, summary.videoId)).run()
-      const assets = status.assets ?? {}
-      const assetRows = Object.entries(assets).flatMap(([kind, raw]) => {
-        if (!raw || typeof raw !== "object") return []
-        const asset = raw as Record<string, unknown>
-        if (typeof asset.path !== "string") return []
-        return [
-          {
-            videoId: summary.videoId,
-            kind,
-            relativePath: asset.path,
-            sizeBytes:
-              typeof asset.bytes === "number" ? Math.round(asset.bytes) : null,
-            updatedAt:
-              typeof asset.updatedAt === "string" ? asset.updatedAt : null,
-            available: Boolean(
-              safeContainedFile(
-                this.jobDirectory(summary.videoId),
-                path.join(this.jobDirectory(summary.videoId), asset.path),
-              ),
+      const assets = status.assets
+      const assetRows = Object.entries(assets).map(([kind, raw]) => {
+        const asset = raw as {
+          path: string
+          bytes: number | null
+          updatedAt: string
+        }
+        return {
+          videoId: summary.videoId,
+          kind,
+          relativePath: asset.path,
+          sizeBytes: asset.bytes,
+          updatedAt: asset.updatedAt,
+          available: Boolean(
+            safeContainedFile(
+              this.jobDirectory(summary.videoId),
+              path.join(this.jobDirectory(summary.videoId), asset.path),
             ),
-          },
-        ]
+          ),
+        }
       })
       if (assetRows.length > 0) transaction.insert(jobAssets).values(assetRows).run()
 
@@ -778,15 +872,14 @@ export class JobRepository {
         .delete(mediaRenditions)
         .where(eq(mediaRenditions.videoId, summary.videoId))
         .run()
-      let projectedMedia: ReturnType<typeof publicMediaCatalog> | null = null
-      try {
-        projectedMedia = publicMediaCatalog(
-          this.jobDirectory(summary.videoId),
-          summary.videoId,
-        )
-      } catch {
-        projectedMedia = null
-      }
+      const projectedMedia = isRegularFile(
+        mediaCatalogPath(this.jobDirectory(summary.videoId)),
+      )
+        ? publicMediaCatalog(
+            this.jobDirectory(summary.videoId),
+            summary.videoId,
+          )
+        : null
       if (projectedMedia?.renditions.length) {
         const stored = readJsonFile<{
           renditions: Array<{ id: string; path: string }>
@@ -797,21 +890,27 @@ export class JobRepository {
         transaction
           .insert(mediaRenditions)
           .values(
-            projectedMedia.renditions.map((rendition) => ({
-              id: rendition.id,
-              videoId: summary.videoId,
-              requestedHeight: rendition.requestedHeight,
-              width: rendition.width,
-              height: rendition.height,
-              container: rendition.container,
-              videoCodec: rendition.videoCodec,
-              audioCodec: rendition.audioCodec,
-              relativePath: paths.get(rendition.id) ?? "",
-              sizeBytes: rendition.sizeBytes,
-              checksum: rendition.checksum,
-              active: rendition.active,
-              createdAt: rendition.createdAt,
-            })),
+            projectedMedia.renditions.map((rendition) => {
+              const relativePath = paths.get(rendition.id)
+              if (!relativePath) {
+                throw new Error(`media rendition path is missing: ${rendition.id}`)
+              }
+              return {
+                id: rendition.id,
+                videoId: summary.videoId,
+                requestedHeight: rendition.requestedHeight,
+                width: rendition.width,
+                height: rendition.height,
+                container: rendition.container,
+                videoCodec: rendition.videoCodec,
+                audioCodec: rendition.audioCodec,
+                relativePath,
+                sizeBytes: rendition.sizeBytes,
+                checksum: rendition.checksum,
+                active: rendition.active,
+                createdAt: rendition.createdAt,
+              }
+            }),
           )
           .run()
       }
