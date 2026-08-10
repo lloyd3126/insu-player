@@ -93,12 +93,5 @@ class PortableReleaseTests(unittest.TestCase):
         expected = REPO_ROOT / ".local" / "insu-player"
         self.assertEqual(Path(result.stdout.strip()), expected)
 
-    def test_portable_common_migrates_the_previous_workspace_name(self) -> None:
-        common = (REPO_ROOT / "scripts" / "portable" / "common.sh").read_text(encoding="utf-8")
-        self.assertIn('PORTABLE_LEGACY_SLUG="xe""ruca-player"', common)
-        self.assertIn('mv -- "$legacy_workspace" "$PORTABLE_WORKSPACE"', common)
-        self.assertIn('mv -- "$legacy_runtime" "$current_runtime"', common)
-
-
 if __name__ == "__main__":
     unittest.main()

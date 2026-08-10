@@ -23,6 +23,7 @@ Next&nbsp;sentence
   test("uses the English sentence timeline for bilingual comparison", () => {
     const aligned = alignCaptionTracks([
       {
+        id: "zh-source",
         code: "zh-TW",
         cues: [
           { start: 0, end: 2, text: "第一句" },
@@ -30,6 +31,7 @@ Next&nbsp;sentence
         ],
       },
       {
+        id: "en-source",
         code: "en",
         cues: [
           { start: 0, end: 2, text: "First sentence" },
@@ -38,15 +40,15 @@ Next&nbsp;sentence
       },
     ])
 
-    expect(aligned.baselineLanguage).toBe("en")
+    expect(aligned.baselineTrackId).toBe("en-source")
     expect(aligned.rows).toHaveLength(2)
     expect(aligned.rows.map((row) => row.id)).toEqual([
-      "en:0.000:2.000:0",
-      "en:2.000:4.000:0",
+      "en-source:0.000:2.000:0",
+      "en-source:2.000:4.000:0",
     ])
     expect(aligned.rows[0].cues).toEqual({
-      "zh-TW": "第一句",
-      en: "First sentence",
+      "zh-source": "第一句",
+      "en-source": "First sentence",
     })
   })
 
@@ -57,6 +59,7 @@ Next&nbsp;sentence
     ]
     const aligned = alignCaptionTracks([
       {
+        id: "zh-source",
         code: "zh-TW",
         cues: [
           { start: 4, end: 5, text: "之後" },
@@ -69,7 +72,7 @@ Next&nbsp;sentence
           { start: 0, end: 1, text: "   " },
         ],
       },
-      { code: "en", cues: english },
+      { id: "en-source", code: "en", cues: english },
     ])
 
     expect(english).toEqual([
@@ -77,14 +80,15 @@ Next&nbsp;sentence
       { start: 0, end: 2, text: "First sentence" },
     ])
     expect(aligned.rows.map((row) => row.cues)).toEqual([
-      { "zh-TW": "第一句 跨句", en: "First sentence" },
-      { "zh-TW": "跨句 第二句", en: "Second sentence" },
+      { "zh-source": "第一句 跨句", "en-source": "First sentence" },
+      { "zh-source": "跨句 第二句", "en-source": "Second sentence" },
     ])
   })
 
   test("creates stable occurrence IDs for duplicate baseline timings", () => {
     const aligned = alignCaptionTracks([
       {
+        id: "en-source",
         code: "en",
         cues: [
           { start: 0, end: 1, text: "One" },
@@ -94,8 +98,8 @@ Next&nbsp;sentence
     ])
 
     expect(aligned.rows.map((row) => row.id)).toEqual([
-      "en:0.000:1.000:0",
-      "en:0.000:1.000:1",
+      "en-source:0.000:1.000:0",
+      "en-source:0.000:1.000:1",
     ])
   })
 })

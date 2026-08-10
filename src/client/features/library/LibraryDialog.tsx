@@ -54,7 +54,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
-import { getPreferredCaption, NO_CAPTION } from "@/lib/captions"
+import { getJobPreferredCaption, NO_CAPTION } from "@/lib/captions"
 import { cn } from "@/lib/utils"
 import type { JobSummary } from "@shared/contracts/job"
 import { ACTIVE_STATES, ATTENTION_STATES } from "@shared/domain/job-status"
@@ -105,11 +105,11 @@ function LibrarySearch({
 function JobRow({ job }: { job: JobSummary }) {
   const { actions } = useOverlay()
   const [selectedCaption, setSelectedCaption] = useState(() =>
-    getPreferredCaption(job.captionCodes),
+    getJobPreferredCaption(job),
   )
   const caption = job.captionCodes.includes(selectedCaption)
     ? selectedCaption
-    : getPreferredCaption(job.captionCodes)
+    : getJobPreferredCaption(job)
   const openPlayer = async () => {
     await loadPlayerDialog()
     actions.open({
@@ -204,7 +204,7 @@ function JobRow({ job }: { job: JobSummary }) {
 
 function JobGridCard({ job }: { job: JobSummary }) {
   const { actions } = useOverlay()
-  const caption = getPreferredCaption(job.captionCodes)
+  const caption = getJobPreferredCaption(job)
   const duration = formatDuration(job.durationSeconds)
   const loadJobDialog = job.watchable
     ? loadPlayerDialog

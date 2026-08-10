@@ -1,50 +1,96 @@
-import { useOverlay, type JobDetailTab } from "@/app/overlay-context"
+import {
+  useOverlay,
+  type JobDetailDestination,
+  type JobDetailTab,
+} from "@/app/overlay-context"
 import { AppDialog } from "@/components/shared/AppDialog"
 import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { JobAboutPanel } from "@/features/job-detail/JobAboutPanel"
 import { JobActivityPanel } from "@/features/job-detail/JobActivityPanel"
 import { JobDetailPlaceholderPanel } from "@/features/job-detail/JobDetailPlaceholderPanel"
-import { JobSubtitlePanel } from "@/features/job-detail/JobSubtitlePanel"
+import { MediaQualityPanel } from "@/features/job-detail/MediaQualityPanel"
+import { SubtitleManagementPanel } from "@/features/job-detail/SubtitleArtifactPanel"
 import { useJobDetail } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
 
 function JobDetailTabs({
   job,
-  tab,
-  onTabChange,
+  destination,
+  onDestinationChange,
 }: {
   job: JobDetail
-  tab: JobDetailTab
-  onTabChange: (tab: JobDetailTab) => void
+  destination: JobDetailDestination
+  onDestinationChange: (destination: JobDetailDestination) => void
 }) {
+  const tab = destination.tab
+  const openTab = (nextTab: JobDetailTab) => {
+    onDestinationChange(
+      nextTab === "subtitles"
+        ? {
+            type: "detail",
+            videoId: job.videoId,
+            tab: "subtitles",
+            subtitleView: "source",
+          }
+        : {
+            type: "detail",
+            videoId: job.videoId,
+            tab: nextTab,
+          },
+    )
+  }
+
   return (
     <Tabs
       value={tab}
-      onValueChange={(value) => onTabChange(value as JobDetailTab)}
+      onValueChange={(value) => openTab(value as JobDetailTab)}
       className="app-dialog-tabs job-detail-tabs"
     >
       <TabsList variant="line" aria-label="詳情分頁">
         <TabsTrigger value="about">關於影音</TabsTrigger>
-        <TabsTrigger value="activity">執行紀錄</TabsTrigger>
-        <TabsTrigger value="source-subtitle">原始字幕</TabsTrigger>
+        <TabsTrigger value="quality">畫質管理</TabsTrigger>
+        <TabsTrigger value="subtitles">字幕管理</TabsTrigger>
         <TabsTrigger value="summary">影音摘要</TabsTrigger>
-        <TabsTrigger value="translated-subtitle">翻譯字幕</TabsTrigger>
-        <TabsTrigger value="segmentation">切分字幕</TabsTrigger>
         <TabsTrigger value="notes">影音筆記</TabsTrigger>
+        <TabsTrigger value="activity">執行紀錄</TabsTrigger>
       </TabsList>
       <TabsContent value="about" className="detail-tab-panel job-about-panel">
         {tab === "about" ? <JobAboutPanel job={job} /> : null}
       </TabsContent>
-      <TabsContent value="activity" className="detail-tab-panel">
-        {tab === "activity" ? <JobActivityPanel job={job} /> : null}
+      <TabsContent
+        value="quality"
+        className="detail-tab-panel media-quality-panel"
+      >
+        {tab === "quality" ? <MediaQualityPanel job={job} /> : null}
       </TabsContent>
       <TabsContent
-        value="source-subtitle"
+        value="subtitles"
         className="detail-tab-panel job-subtitle-panel"
       >
-        {tab === "source-subtitle" ? (
-          <JobSubtitlePanel job={job} view="source" />
+        {destination.tab === "subtitles" ? (
+          <SubtitleManagementPanel
+            job={job}
+            view={destination.subtitleView}
+            selectedArtifactId={destination.artifactId}
+            onViewChange={(subtitleView) =>
+              onDestinationChange({
+                type: "detail",
+                videoId: job.videoId,
+                tab: "subtitles",
+                subtitleView,
+              })
+            }
+            onArtifactChange={(artifactId) =>
+              onDestinationChange({
+                type: "detail",
+                videoId: job.videoId,
+                tab: "subtitles",
+                subtitleView: destination.subtitleView,
+                ...(artifactId ? { artifactId } : {}),
+              })
+            }
+          />
         ) : null}
       </TabsContent>
       <TabsContent value="summary" className="detail-tab-panel">
@@ -55,22 +101,6 @@ function JobDetailTabs({
           />
         ) : null}
       </TabsContent>
-      <TabsContent
-        value="translated-subtitle"
-        className="detail-tab-panel job-subtitle-panel"
-      >
-        {tab === "translated-subtitle" ? (
-          <JobSubtitlePanel job={job} view="translated" />
-        ) : null}
-      </TabsContent>
-      <TabsContent value="segmentation" className="detail-tab-panel">
-        {tab === "segmentation" ? (
-          <JobDetailPlaceholderPanel
-            title="切分字幕尚未設定"
-            description="這裡會重用原始與翻譯字幕的時間軸，接著加入句子切分工具。"
-          />
-        ) : null}
-      </TabsContent>
       <TabsContent value="notes" className="detail-tab-panel">
         {tab === "notes" ? (
           <JobDetailPlaceholderPanel
@@ -78,6 +108,9 @@ function JobDetailTabs({
             description="這裡會收納觀看影音時整理的筆記。"
           />
         ) : null}
+      </TabsContent>
+      <TabsContent value="activity" className="detail-tab-panel">
+        {tab === "activity" ? <JobActivityPanel job={job} /> : null}
       </TabsContent>
     </Tabs>
   )
@@ -104,14 +137,13 @@ export function JobDetailDialog() {
       {job ? (
         <JobDetailTabs
           job={job}
-          tab={active?.tab ?? "about"}
-          onTabChange={(tab) =>
-            active &&
-            overlay.actions.open({
-              type: "detail",
-              videoId: active.videoId,
-              tab,
-            })
+          destination={active ?? {
+            type: "detail",
+            videoId: job.videoId,
+            tab: "about",
+          }}
+          onDestinationChange={(destination) =>
+            active && overlay.actions.open(destination)
           }
         />
       ) : null}

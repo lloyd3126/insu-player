@@ -1,106 +1,100 @@
 ---
 name: segment-subtitles
-description: Split a completed multilingual subtitle translation into target-first display pieces, freeze the target wording and cuts, align each piece to contiguous source word or token timing, validate linguistic and deterministic defects, and render synchronized source/target WebVTT. Use for subtitle segmentation, source alignment, reflow, width repair, reading-timing repair, bilingual anchor correction, or a segmentation plan in INSU Player.
+description: Split a completed proofread or translated subtitle revision into output-first display pieces, freeze wording and cuts, align every piece to a continuous source timed-unit span, validate defects, and render synchronized input/output WebVTT. Use for subtitle segmentation, Source Alignment, width repair, reading-timing repair, or bilingual anchor correction.
 ---
 
 # Segment and Align Subtitles
 
-Consume a completed schema-version 2 translation manifest from `$translate-subtitles`. Keep translation, segmentation, and library import as separate responsibilities.
+Consume a completed schema-version 3 content manifest from `$proofread-subtitles` or `$translate-subtitles`. This skill is independent from content correction and translation.
 
 ## Read the Applicable Contract
 
-1. Read [references/segmentation-policy.md](references/segmentation-policy.md) for every segmentation or alignment task.
-2. Read [references/manifest-schema.md](references/manifest-schema.md) before creating or editing `segmentation-plan.json`.
+1. Always read [references/segmentation-policy.md](references/segmentation-policy.md).
+2. Read [references/manifest-schema.md](references/manifest-schema.md) before editing a plan.
 3. Read [references/validator-rules.md](references/validator-rules.md) when validation fails or when reporting defects.
-4. Read exactly the applicable writing-system profile:
+4. Read exactly the applicable output-language profile:
    - Chinese, Japanese, or Korean: [references/language-cjk.md](references/language-cjk.md)
    - Left-to-right scripts with reliable language-level spacing: [references/language-spacing.md](references/language-spacing.md)
    - Arabic, Hebrew, Persian, or Urdu: [references/language-rtl.md](references/language-rtl.md)
    - Thai, Khmer, Lao, Myanmar, or another script without reliable whitespace word boundaries: [references/language-complex-no-space.md](references/language-complex-no-space.md)
 
-Treat BCP 47 language metadata and the selected model's capabilities as the authority. Do not claim universal model coverage merely because the schema accepts any valid language code.
+BCP 47 metadata and verified model capability are authoritative. Do not infer universal model coverage from schema acceptance.
 
 ## Require the Correct Inputs
 
 Require all of the following:
 
-- a completed `bilingual-sentences.json` with `sourceLanguage`, `targetLanguage`, complete `sourceText`, and polished `targetText`;
+- a completed content manifest with `mode`, `sourceLanguage`, `outputLanguage`, complete `sourceText`, and final `outputText`;
 - the exact model transcript referenced by that manifest;
 - ordered word-, token-, or grapheme-group timing;
-- the selected local or explicitly authorized API language model for linguistic segmentation decisions;
+- the completed proofread or translation artifact ID;
 - glossary and required terms when supplied.
 
-Do not use a platform cue track for precise Source Alignment. If timed units are unavailable, report that exact limitation and stop.
+Manual CC may be inherited as text-reference provenance through the content artifact. Never use platform cue timing for precise alignment, and never accept platform automatic captions.
 
-## Prepare the Target-First Plan
-
-Create a plan without source spans:
+## Prepare Output-First Pieces
 
 ```bash
 python3 scripts/segment_subtitles.py prepare \
-  --translation-manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/bilingual-sentences.json \
+  --content-manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/CONTENT.json \
   --source-transcript WORKSPACE/jobs/VIDEO_ID/whisper/PROVIDER/transcript.json \
   --output WORKSPACE/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json
 ```
 
-For every complete target sentence:
+For translated content, this is the target-first rule: decide the natural target-language pieces before source alignment. For same-language proofreading, apply the identical rule to the finalized output language.
 
-1. Read the complete natural translation before proposing a cut.
-2. Mark clauses, predicates, objects, modifiers, coordination, parentheticals, quotations, names, terms, numbers, and units.
-3. Mark bound or blocked ranges before selecting seams.
-4. Split only at target-language semantic and syntactic boundaries.
-5. Keep each piece independently readable and below the configured hard width.
-6. If no safe seam resolves hard width, return to `$translate-subtitles` for a shorter equivalent translation. Do not rewrite translation inside this skill.
-7. Keep the concatenated target pieces text-equivalent to `targetFullText`.
+For every complete output sentence:
 
-Use the same chosen local or API language model that owns the translation contract unless the user explicitly selects another model. Obtain consent before sending subtitle text to a new external service.
+1. Read the complete sentence before proposing any cut.
+2. Mark clauses, predicates, objects, modifiers, coordination, parentheticals, quotations, names, fixed terms, numbers, and units.
+3. Mark blocked and risky ranges before selecting seams.
+4. Split only at output-language semantic and syntactic boundaries.
+5. Keep every piece independently readable and below the hard width.
+6. If no safe seam resolves hard width, return to the owning content skill for a shorter equivalent revision.
+7. Keep concatenated `outputText` pieces text-equivalent to `outputFullText`.
 
-## Freeze Before Alignment
+Do not follow original cue boundaries, source word count, pauses, or visual CJK/Latin spacing as mandatory seams.
 
-After target pieces are final, run:
-
-```bash
-python3 scripts/segment_subtitles.py freeze-target \
-  --plan WORKSPACE/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json
-```
-
-After freezing, change only `sourceSpan`, anchors, and boundary evidence. Never change target wording, piece count, piece order, or separators. To reconsider cuts without changing the translation, create a new revision:
+## Freeze Then Align
 
 ```bash
-python3 scripts/segment_subtitles.py revise-target --plan PLAN
+python3 scripts/segment_subtitles.py freeze-target --plan PLAN
 ```
 
-If the complete translation itself must change, return to `$translate-subtitles`, produce a new translation revision, and prepare a new segmentation plan.
+After freezing, change only `sourceSpan`, anchors, and boundary evidence. Never change output wording, piece count, order, or separators. Use `revise-target --plan PLAN` to create a new target revision before refreezing.
 
-## Align Source Timed Units
+Assign every frozen piece one continuous, chronological source span. The pieces of a content unit must partition its timed units exactly once with no gap or overlap.
 
-Assign each frozen target piece one continuous, chronological `sourceSpan`. Together, the pieces of a translation unit must cover its source timed units exactly once, with no gap or overlap.
+- Never use a `blocked` or `risky` source boundary.
+- Keep names, terms, numbers, and other bilingual anchors in the paired piece.
+- Preserve natural output order when languages reorder syntax; solve timing through safe cuts or merges, not unnatural wording.
+- Avoid tiny spans and flash fragments.
 
-- Treat pauses and source cue boundaries only as hints.
-- Never use a `risky` or `blocked` boundary.
-- Keep bilingual anchors in the same paired piece.
-- When source and target order differ, preserve natural target order and adjust or merge target cuts before freezing. Do not create non-monotonic playback timing.
-- Do not manufacture tiny source spans for visually large target pieces.
-
-## Validate and Render
-
-Validate the plan:
+## Validate Render and Import
 
 ```bash
 python3 scripts/segment_subtitles.py validate --plan PLAN
-```
 
-Hard defects fail. Fit-width, flash-fragment, and reading-rate observations remain explicit warnings unless the policy classifies the underlying condition as a hard defect.
-
-Render paired tracks only after validation succeeds:
-
-```bash
 python3 scripts/segment_subtitles.py render \
   --plan PLAN \
-  --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/SOURCE.segmented.vtt \
-  --target-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/TARGET.segmented.vtt
+  --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.segmented.vtt \
+  --output WORKSPACE/jobs/VIDEO_ID/subtitle-work/output.segmented.vtt
+
+plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
+  WORKSPACE VIDEO_ID input.segmented.vtt output.segmented.vtt \
+  --source-language SOURCE_BCP47 \
+  --output-language OUTPUT_BCP47 \
+  --provider local \
+  --model MODEL_NAME \
+  --artifact-kind segmentation \
+  --revision REVISION \
+  --manifest PLAN \
+  --timing-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
+  --content-parent-artifact CONTENT_ARTIFACT_ID \
+  --warning-count WARNING_COUNT \
+  --hard-defect-count 0
 ```
 
-The renderer derives timestamps from aligned source timed units and gives both tracks identical cue IDs and intervals. Preserve the original transcript, complete translation manifest, prior translation tracks, and every frozen segmentation revision.
+Only a ready, validated segmentation revision with no hard defects can outrank its content parent for playback. A failed, invalid, or processing revision must never replace a valid proofread or translation fallback.
 
-Hand the validated pair to `$watch-video` for import and job-state updates. Report languages, model/provider, target revision, piece count, width profile, warnings, hard defects, alignment coverage, rendered paths, and any unresolved terminology.
+Preserve the model transcript, content manifest, content artifact, and every frozen segmentation revision. Report languages, content mode, model/provider, timing and content parent IDs, artifact ID/revision, piece count, width profile, warnings, hard defects, alignment coverage, rendered paths, and active playback result.

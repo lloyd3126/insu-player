@@ -41,12 +41,12 @@ const CaptionVirtualRow = memo(function CaptionVirtualRow({
       </td>
       {tracks.map((track) => (
         <td
-          key={track.code}
+          key={track.id}
           data-slot="table-cell"
           className="p-2 align-middle"
           lang={track.code}
         >
-          {row.cues[track.code] || "—"}
+          {row.cues[track.id] || "—"}
         </td>
       ))}
     </tr>
@@ -97,7 +97,11 @@ export function CaptionComparisonTable({
           <h3 id="caption-comparison-title">{title}</h3>
         </div>
         <p>
-          以 <Badge variant="secondary">{comparison.baselineLanguage}</Badge>{" "}
+          以 <Badge variant="secondary">
+            {comparison.tracks.find(
+              (track) => track.id === comparison.baselineTrackId,
+            )?.label ?? "—"}
+          </Badge>{" "}
           時間段為基準
         </p>
       </div>
@@ -133,11 +137,11 @@ export function CaptionComparisonTable({
                 </th>
                 {comparison.tracks.map((track) => (
                   <th
-                    key={track.code}
+                    key={track.id}
                     data-slot="table-head"
                     className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground"
                   >
-                    {track.code}
+                    {track.label}
                   </th>
                 ))}
               </tr>

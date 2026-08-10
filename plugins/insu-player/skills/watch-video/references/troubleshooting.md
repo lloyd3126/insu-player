@@ -27,7 +27,12 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 ## YouTube 回傳 403、要求登入或 bot 驗證
 
-- 停止高速重試，確認 yt-dlp 是否為最新版。
+- 停止高速重試，確認 yt-dlp 是否為最新版。一次 403 只代表該次簽名串流 URL 失敗，不能直接判定高畫質不可用。
+- 讓下載腳本重新解析同一畫質的全新 URL，對每條視訊／音訊串流做小段 HTTP Range probe。兩次 fresh probe 都失敗後，才可嘗試下一個實際存在的畫質。
+- 自動降級不得低於 720p。若只剩 480p、360p 或更低格式，停止並回報候選畫質；使用者明確接受後才重跑 `--allow-low-quality`。
+- 檢查 `<job>/media-work/catalog.json` 與該次 `<job>/media-work/runs/<run-id>/`：run 必須記錄每次 probe 的 HTTP 狀態、下載結果、選定 format ID 及實際解析度，而且任何地方都不得保存簽名串流 URL。
+- 下載完成後比對該次 run 的 `media-info.txt` 與 `selection.json`。實際解析度無法確認或和指定畫質不同時，不可把 rendition 標為完成。
+- 影片畫質不影響本流程的 Whisper 速度；轉錄使用獨立 `audio.m4a`。不要為了轉錄速度降低播放畫質。
 - 先在一般瀏覽器確認影片確實可由使用者觀看。
 - 年齡、會員、私人或地區限制不能靠本 INSU 工作流程規避。
 - `--cookies-from-browser` 會讀取登入工作階段，屬於敏感權限；只有使用者明確要求、理解風險且有權存取時才使用。
@@ -46,9 +51,9 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 ## 首頁顯示處理中，但 terminal 已經停止
 
-首頁會檢查 active job 的 PID 和最後更新時間。程序消失超過約 45 秒後，`effectiveState` 會顯示「已中斷」，但不會擅自修改原始 `status.json`。先打開詳細資料看 log，確認 `video.mp4`、音訊或 VTT 是否已完成，再只重跑對應命令。
+首頁會檢查 active job 的 PID 和最後更新時間。程序消失超過約 45 秒後，`effectiveState` 會顯示「已中斷」，但不會擅自修改原始 `status.json`。先打開詳細資料看 log，確認 active rendition、音訊或 VTT 是否已完成，再只重跑對應命令。「畫質管理」的 operation 若失去 live PID，會顯示為可重試的「已中斷」。
 
-不要只把狀態手動改成 `ready`；`ready` 但缺 `source/video.mp4` 會被首頁視為失敗。
+不要只把狀態手動改成 `ready`；`ready` 但 media catalog 缺少 active rendition 或檔案會被首頁視為失敗。
 
 ## 首頁可以開，但影片拖曳或播放失敗
 
@@ -58,7 +63,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 plugins/insu-player/skills/watch-video/scripts/serve-library.sh <workspace>
 ```
 
-確認瀏覽器 network 中 `/media/VIDEO_ID/video` 回傳 `200` 或 `206`，並查看 job 的 `media-info.txt` 是否列出視訊與音訊 stream。影片庫只認固定路徑 `<workspace>/jobs/VIDEO_ID/source/video.mp4`。
+確認瀏覽器 network 中 `/media/VIDEO_ID/video` 回傳 `200` 或 `206`，並查看 active rendition 對應 run 的 `media-info.txt` 是否列出視訊與音訊 stream。影片庫只接受 `media-work/catalog.json` 登記且位於 `source/renditions/` 的 active rendition。
 
 ## `file://` 可以播放影片但字幕載入失敗
 
@@ -68,7 +73,7 @@ plugins/insu-player/skills/watch-video/scripts/serve-library.sh <workspace>
 
 模板沒有外部 CDN，使用瀏覽器原生 `<video controls>`。若影片不能播，檢查：
 
-- `video.mp4` 是否存在
+- `media-work/catalog.json` 的 active rendition 檔案是否存在
 - 瀏覽器是否支援影片 codec
 - `media-info.txt` 是否顯示視訊與音訊 stream
 - HTTP server 的 terminal 是否回傳 404
@@ -128,10 +133,10 @@ Hono/Bun 服務會先獨占探測 `8000`；若已被占用，就由作業系統�
 ## iframe modal 是黑畫面
 
 - 等待 player 的 metadata 載入；大型 MP4 第一個 Range request 可能稍久。
-- 開啟詳細資料確認 job 可觀看且 `video.mp4` 存在。
+- 開啟詳細資料的「畫質管理」，確認 job 有可觀看的 active rendition。
 - 確認瀏覽器原生 controls 已顯示；頁面不需要任何 CDN。
-- `video.mp4` codec 不相容時重新檢查 `media-info.txt`，必要時用 workflow-local FFmpeg 轉為 H.264 + AAC；先保留原檔，不直接覆蓋唯一副本。
+- Active rendition codec 不相容時重新檢查對應的 `media-info.txt`；不要直接覆蓋現用副本，應產生並驗證新的 rendition 後再切換。
 
 ## 翻譯檔匯入失敗
 
-翻譯模式先使用 `segment_subtitles.py validate` 檢查 frozen target、width、source spans、anchors 與 risky/blocked boundaries，再用 `reflow_subtitles.py validate-pair` 和 `import-bilingual-captions.sh` 驗證成對軌；不要使用單軌 `import-caption.sh`。來源與目標語必須有相同 cue ID、數量與時間，空文字、時間重疊、換行或內部 marker 都會拒絕匯入。確認兩軌和語言碼都正確後才加 `--force`。
+校正或翻譯 revision 先用 `reflow_subtitles.py validate-pair` 驗證完整句 input/output 軌；切分 revision 還要先用 `segment_subtitles.py validate` 檢查 frozen output、width、source spans、anchors 與 risky/blocked boundaries。最後統一用 `import-subtitle-revision.sh` 匯入，不要用來源單軌 `import-caption.sh`。成對軌必須有相同 cue ID、數量與時間；空文字、時間重疊、換行或內部 marker 都會拒絕。每個 revision 都寫入新的 immutable artifact 目錄，既有 revision 不允許覆寫。

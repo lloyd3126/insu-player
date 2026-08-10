@@ -5,6 +5,7 @@ export interface CaptionCue {
 }
 
 export interface CaptionTrack {
+  id: string
   code: string
   label: string
   cueCount: number
@@ -19,7 +20,7 @@ export interface CaptionComparisonRow {
 
 export interface CaptionComparisonResponse {
   videoId: string
-  baselineLanguage: string | null
+  baselineTrackId: string | null
   tracks: CaptionTrack[]
   rows: CaptionComparisonRow[]
 }

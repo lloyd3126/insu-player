@@ -3,7 +3,22 @@ export interface VideoRemovalTarget {
   videoId: string
 }
 
-export type RemovalTarget = VideoRemovalTarget
+export interface SubtitleArtifactRemovalTarget {
+  kind: "subtitle-artifact"
+  videoId: string
+  artifactId: string
+}
+
+export interface MediaRenditionRemovalTarget {
+  kind: "media-rendition"
+  videoId: string
+  renditionId: string
+}
+
+export type RemovalTarget =
+  | VideoRemovalTarget
+  | SubtitleArtifactRemovalTarget
+  | MediaRenditionRemovalTarget
 
 export interface RemovalIssue {
   code: string

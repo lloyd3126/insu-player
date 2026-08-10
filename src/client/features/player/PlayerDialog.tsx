@@ -12,8 +12,10 @@ import { useOverlay } from "@/app/overlay-context"
 import { loadJobDetailDialog } from "@/app/overlay-loaders"
 import { AppDialog } from "@/components/shared/AppDialog"
 import { CaptionLanguageSelect } from "@/components/shared/CaptionLanguageSelect"
+import { MediaQualitySelect } from "@/components/shared/MediaQualitySelect"
 import { Button } from "@/components/ui/button"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
+import { useMediaCatalog } from "@/hooks/use-media-catalog"
 import { getPreferredCaption } from "@/lib/captions"
 import type { JobsResponse } from "@shared/contracts/job"
 
@@ -26,8 +28,9 @@ type PlayerMessage = {
 
 type PlaybackMutation = {
   videoId: string
-  time: number
-  duration: number | null
+  time?: number
+  duration?: number | null
+  captionLanguage?: string | null
 }
 
 export function PlayerDialog() {
@@ -37,18 +40,41 @@ export function PlayerDialog() {
   const iframe = useRef<HTMLIFrameElement>(null)
   const saveTimer = useRef<number | null>(null)
   const latestPlayback = useRef<PlaybackMutation | null>(null)
+  const previousCatalogSignature = useRef<string | null>(null)
   const [ready, setReady] = useState(false)
+  const [playerRevision, setPlayerRevision] = useState(0)
   const active = overlay.state?.type === "player" ? overlay.state : null
   const job = jobsQuery.data?.jobs.find((item) => item.videoId === active?.videoId)
+  const mediaCatalog = useMediaCatalog(active?.videoId ?? null)
   const captionCodes = job?.captionCodes ?? []
+  const activeRendition = mediaCatalog.data?.renditions.find(
+    (rendition) => rendition.active,
+  )
+  const mediaSignature = activeRendition
+    ? `${activeRendition.id}:${activeRendition.checksum}`
+    : job?.activeMedia
+      ? `${job.activeMedia.id}:${job.activeMedia.checksum}`
+      : "media-loading"
+  const catalogSignature = `${captionCodes
+    .map((code) => `${code}:${job?.activeSubtitleVersions[code] ?? "loading"}`)
+    .join("|")}::${mediaSignature}`
   const preferredCaption =
     active?.caption && captionCodes.includes(active.caption)
       ? active.caption
-      : getPreferredCaption(captionCodes, "off")
+      : getPreferredCaption(captionCodes, "off", [
+          job?.playback.captionLanguage,
+          job?.subtitlePipeline?.outputLanguage,
+          job?.subtitlePipeline?.sourceLanguage,
+        ])
   const [caption, setCaption] = useState("off")
   const { mutate: persistPlayback } = useMutation({
-    mutationFn: ({ videoId, time, duration }: PlaybackMutation) =>
-      api.savePlayback(videoId, { time, duration }),
+    mutationFn: ({
+      videoId,
+      time,
+      duration,
+      captionLanguage,
+    }: PlaybackMutation) =>
+      api.savePlayback(videoId, { time, duration, captionLanguage }),
     scope: { id: "player-playback" },
     onSuccess: (saved, variables) => {
       queryClient.setQueryData<JobsResponse>(["jobs"], (current) => {
@@ -62,6 +88,16 @@ export function PlayerDialog() {
           ),
         }
       })
+    },
+  })
+  const activateMedia = useMutation({
+    mutationFn: (renditionId: string) =>
+      api.activateMedia(active!.videoId, renditionId),
+    onSuccess: (data) => {
+      if (!active) return
+      queryClient.setQueryData(["job-media", active.videoId], data)
+      void queryClient.invalidateQueries({ queryKey: ["job", active.videoId] })
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] })
     },
   })
   const flushPlayback = useCallback(
@@ -80,7 +116,11 @@ export function PlayerDialog() {
   const handlePlayerReady = useEffectEvent(
     (message: PlayerMessage, videoId: string) => {
       setReady(true)
-      const saved = active?.videoId === videoId ? (job?.playback.time ?? 0) : 0
+      const pendingTime = latestPlayback.current?.time
+      const saved =
+        active?.videoId === videoId
+          ? (pendingTime ?? job?.playback.time ?? 0)
+          : 0
       if (
         saved > 10 &&
         (!Number.isFinite(message.duration) ||
@@ -103,6 +143,20 @@ export function PlayerDialog() {
     setCaption(preferredCaption)
     setReady(false)
   }, [active?.caption, active?.videoId, preferredCaption])
+
+  useEffect(() => {
+    const videoId = active?.videoId
+    if (!videoId) {
+      previousCatalogSignature.current = null
+      return
+    }
+    const previous = previousCatalogSignature.current
+    previousCatalogSignature.current = catalogSignature
+    if (previous === null || previous === catalogSignature) return
+    flushPlayback(videoId)
+    setReady(false)
+    setPlayerRevision((revision) => revision + 1)
+  }, [active?.videoId, catalogSignature, flushPlayback])
 
   useEffect(() => {
     const videoId = active?.videoId
@@ -157,6 +211,10 @@ export function PlayerDialog() {
     const normalized = value ?? "off"
     setCaption(normalized)
     if (active) {
+      persistPlayback({
+        videoId: active.videoId,
+        captionLanguage: normalized === "off" ? null : normalized,
+      })
       overlay.actions.open(
         {
           type: "player",
@@ -170,6 +228,12 @@ export function PlayerDialog() {
       { type: "player:set-caption", language: normalized },
       location.origin,
     )
+  }
+
+  const selectMedia = (renditionId: string) => {
+    if (!active || renditionId === activeRendition?.id) return
+    flushPlayback(active.videoId)
+    activateMedia.mutate(renditionId)
   }
 
   return (
@@ -186,9 +250,10 @@ export function PlayerDialog() {
         {!ready ? <div className="player-stage__loading">正在準備本機放映室</div> : null}
         {active ? (
           <iframe
+            key={`${active.videoId}:${playerRevision}`}
             ref={iframe}
             title="本機影音播放器"
-            src={`/watch/${encodeURIComponent(active.videoId)}/?embed=1`}
+            src={`/watch/${encodeURIComponent(active.videoId)}/?embed=1&catalog=${encodeURIComponent(catalogSignature)}`}
             allow="autoplay; fullscreen; picture-in-picture"
             allowFullScreen
           />
@@ -197,6 +262,14 @@ export function PlayerDialog() {
       <div className="player-footer">
         <span>播放進度保存在影音 job 資料夾</span>
         <div className="player-footer__actions">
+          {mediaCatalog.data && activeRendition ? (
+            <MediaQualitySelect
+              renditions={mediaCatalog.data.renditions}
+              value={activeRendition.id}
+              onValueChange={selectMedia}
+              disabled={activateMedia.isPending}
+            />
+          ) : null}
           <CaptionLanguageSelect
             codes={captionCodes}
             value={caption}

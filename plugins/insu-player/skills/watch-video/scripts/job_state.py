@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -14,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
+ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
 STATES = {
     "queued",
     "checking",
@@ -24,31 +26,52 @@ STATES = {
     "downloaded",
     "needs_transcription",
     "transcribing",
+    "needs_proofreading",
+    "proofreading",
     "needs_translation",
     "translating",
+    "needs_segmentation",
+    "segmenting",
     "preparing_player",
     "ready",
     "interrupted",
     "failed",
 }
-ACTIVE_STATES = {"checking", "downloading", "transcribing", "translating", "preparing_player"}
-SUBTITLE_WORKFLOW_STAGES = {
+ACTIVE_STATES = {
+    "checking",
+    "downloading",
+    "transcribing",
+    "proofreading",
+    "translating",
+    "segmenting",
+    "preparing_player",
+}
+SUBTITLE_PIPELINE_STAGES = {
+    "awaiting_choice",
     "awaiting_model",
     "model_transcription",
-    "source_caption",
-    "draft_translation",
-    "sentence_polish",
-    "translation_complete",
+    "content_revision",
+    "content_complete",
     "target_segmentation",
     "target_frozen",
     "source_alignment",
-    "segmentation_validation",
-    "segmentation_complete",
-    "subtitle_reflow",
-    "pair_validation",
+    "validation",
     "complete",
 }
-SUBTITLE_WORKFLOW_SOURCES = {"model", "platform", "legacy"}
+SUBTITLE_PIPELINE_MODES = {"proofread", "translate"}
+SUBTITLE_ARTIFACT_KINDS = {"source", "proofread", "translation", "segmentation"}
+SUBTITLE_SOURCE_TYPES = {"manual-cc", "model-transcript"}
+SUBTITLE_DEPENDENCY_RELATIONS = {"timing-source", "text-reference", "content-parent"}
+SUBTITLE_LIFECYCLE_STATES = {"draft", "processing", "ready", "failed", "archived"}
+SUBTITLE_VALIDATION_STATES = {"pending", "valid", "warning", "invalid"}
+SUBTITLE_FRESHNESS_STATES = {"current", "stale", "superseded"}
+SUBTITLE_TRACK_ROLES = {
+    "source_raw",
+    "input_sentence",
+    "output_sentence",
+    "input_segmented",
+    "output_segmented",
+}
 
 
 def utc_now() -> str:
@@ -85,8 +108,9 @@ def default_status(job_dir: Path, video_id: str | None = None) -> dict[str, Any]
         "progress": 0.0,
         "message": "等待處理",
         "assets": {},
-        "subtitleTracks": {},
-        "subtitleWorkflow": None,
+        "subtitleArtifacts": [],
+        "activeSubtitleTracks": {},
+        "subtitlePipeline": None,
         "transcription": None,
         "process": None,
         "lastError": None,
@@ -113,7 +137,45 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"job state is not a JSON object: {path}")
-    validate_video_id(str(data.get("videoId", job_dir.name)))
+    if data.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError(f"job state must use schemaVersion {SCHEMA_VERSION}: {path}")
+    if not isinstance(data.get("subtitleArtifacts"), list):
+        raise ValueError(f"job state must contain subtitleArtifacts: {path}")
+    if not isinstance(data.get("activeSubtitleTracks"), dict):
+        raise ValueError(f"job state must contain activeSubtitleTracks: {path}")
+    if data.get("videoId") != job_dir.name:
+        raise ValueError(f"job state videoId must match its directory: {path}")
+    if data.get("state") not in STATES:
+        raise ValueError(f"job state has an unsupported state: {path}")
+    if not isinstance(data.get("stage"), str) or not data["stage"].strip():
+        raise ValueError(f"job state must contain a non-empty stage: {path}")
+    progress = data.get("progress")
+    if isinstance(progress, bool) or not isinstance(progress, (int, float)):
+        raise ValueError(f"job state progress must be numeric: {path}")
+    if not math.isfinite(float(progress)) or not 0 <= float(progress) <= 100:
+        raise ValueError(f"job state progress must be between 0 and 100: {path}")
+    pipeline = data.get("subtitlePipeline")
+    if pipeline is not None:
+        if not isinstance(pipeline, dict):
+            raise ValueError(f"job state subtitlePipeline must be an object: {path}")
+        if pipeline.get("mode") not in SUBTITLE_PIPELINE_MODES:
+            raise ValueError(f"subtitlePipeline.mode is unsupported: {path}")
+        if pipeline.get("stage") not in SUBTITLE_PIPELINE_STAGES:
+            raise ValueError(f"subtitlePipeline.stage is unsupported: {path}")
+        source_language = validate_language(str(pipeline.get("sourceLanguage", "")))
+        output_language = validate_language(str(pipeline.get("outputLanguage", "")))
+        if pipeline.get("mode") == "proofread" and source_language != output_language:
+            raise ValueError(f"proofread subtitlePipeline must preserve language: {path}")
+        if pipeline.get("mode") == "translate" and source_language == output_language:
+            raise ValueError(f"translate subtitlePipeline must change language: {path}")
+        if not isinstance(pipeline.get("manualReferenceArtifactIds"), list):
+            raise ValueError(f"subtitlePipeline references must be an array: {path}")
+    history = data.get("history")
+    if not isinstance(history, list):
+        raise ValueError(f"job state must contain history: {path}")
+    for entry in history:
+        if not isinstance(entry, dict) or entry.get("state") not in STATES:
+            raise ValueError(f"job state contains an invalid history entry: {path}")
     return data
 
 
@@ -254,27 +316,312 @@ def remove_asset(job_dir: Path, name: str) -> dict[str, Any]:
     return save_status(job_dir, status)
 
 
-def set_subtitle(
+def set_subtitle_artifact(
     job_dir: Path,
-    language: str,
-    track_state: str,
-    path: Path | None,
-    source: str,
-    label: str | None,
+    *,
+    artifact_id: str,
+    kind: str,
+    revision: int,
+    lifecycle_state: str,
+    validation_state: str,
+    freshness_state: str,
+    source_language: str,
+    output_language: str | None,
+    source_type: str | None,
+    provider: str | None,
+    model: str | None,
+    timing_unit_kind: str | None,
+    target_frozen: bool,
+    manifest: Path | None,
+    dependencies: list[list[str]],
+    tracks: list[list[str]],
+    warning_count: int,
+    hard_defect_count: int,
 ) -> dict[str, Any]:
-    validate_language(language)
-    status = load_status(job_dir, create_default=True)
-    tracks = status.setdefault("subtitleTracks", {})
-    track: dict[str, Any] = {
-        "state": track_state,
-        "source": source,
-        "label": label or language,
-        "updatedAt": utc_now(),
+    if not ARTIFACT_ID_PATTERN.fullmatch(artifact_id):
+        raise ValueError(f"invalid subtitle artifact ID: {artifact_id!r}")
+    if kind not in SUBTITLE_ARTIFACT_KINDS:
+        raise ValueError(f"unsupported subtitle artifact kind: {kind}")
+    if revision < 1:
+        raise ValueError("subtitle artifact revision must be positive")
+    if lifecycle_state not in SUBTITLE_LIFECYCLE_STATES:
+        raise ValueError(f"unsupported subtitle lifecycle state: {lifecycle_state}")
+    if validation_state not in SUBTITLE_VALIDATION_STATES:
+        raise ValueError(f"unsupported subtitle validation state: {validation_state}")
+    if freshness_state not in SUBTITLE_FRESHNESS_STATES:
+        raise ValueError(f"unsupported subtitle freshness state: {freshness_state}")
+    validate_language(source_language)
+    if output_language is not None:
+        validate_language(output_language)
+    if kind == "source":
+        if output_language is not None:
+            raise ValueError("source artifacts cannot have an output language")
+        if source_type not in SUBTITLE_SOURCE_TYPES:
+            raise ValueError("source artifacts require a source type")
+        if dependencies:
+            raise ValueError("source artifacts cannot have dependencies")
+        if manifest is not None:
+            raise ValueError("source artifacts cannot have a manifest")
+        if source_type == "manual-cc":
+            if provider != "yt-dlp" or model or timing_unit_kind != "cue":
+                raise ValueError("manual CC must use yt-dlp cue timing")
+        elif (
+            provider not in {"local", "openai"}
+            or not model
+            or timing_unit_kind not in {"word", "token", "grapheme-group"}
+        ):
+            raise ValueError("model transcripts require a model and fine-grained timing")
+    else:
+        if source_type is not None:
+            raise ValueError("only source artifacts may have a source type")
+        if output_language is None:
+            raise ValueError(f"{kind} artifacts require an output language")
+        if kind == "proofread" and output_language != source_language:
+            raise ValueError("proofread artifacts must preserve the source language")
+        if kind == "translation" and output_language == source_language:
+            raise ValueError("translation artifacts must change language")
+        if provider not in {"local", "openai"} or not model:
+            raise ValueError(f"{kind} artifacts require a local or openai content model")
+        if manifest is None:
+            raise ValueError(f"{kind} artifacts require a manifest")
+    if kind == "segmentation" and not target_frozen:
+        raise ValueError("segmentation artifacts require a frozen target")
+    if kind != "segmentation" and target_frozen:
+        raise ValueError("only segmentation artifacts can freeze the target")
+    if warning_count < 0 or hard_defect_count < 0:
+        raise ValueError("subtitle defect counts cannot be negative")
+    normalized_dependencies: list[dict[str, str]] = []
+    seen_dependencies: set[tuple[str, str]] = set()
+    for relation, dependency_id in dependencies:
+        if relation not in SUBTITLE_DEPENDENCY_RELATIONS:
+            raise ValueError(f"unsupported subtitle dependency relation: {relation}")
+        if not ARTIFACT_ID_PATTERN.fullmatch(dependency_id):
+            raise ValueError(f"invalid subtitle dependency ID: {dependency_id!r}")
+        key = (relation, dependency_id)
+        if key in seen_dependencies:
+            raise ValueError("duplicate subtitle artifact dependency")
+        seen_dependencies.add(key)
+        normalized_dependencies.append(
+            {"relation": relation, "artifactId": dependency_id}
+        )
+
+    normalized_tracks: list[dict[str, Any]] = []
+    seen_roles: set[str] = set()
+    artifact_checksum = hashlib.sha256()
+    for language, role, raw_path in tracks:
+        validate_language(language)
+        if role not in SUBTITLE_TRACK_ROLES:
+            raise ValueError(f"unsupported subtitle track role: {role}")
+        if role in seen_roles:
+            raise ValueError(f"duplicate artifact track role: {role}")
+        track_path = Path(raw_path)
+        if track_path.suffix.lower() != ".vtt" or not track_path.is_file():
+            raise ValueError(f"subtitle artifact track is not a VTT file: {track_path}")
+        relative = relative_job_path(job_dir, track_path)
+        artifact_root = f"subtitle-work/artifacts/{artifact_id}/"
+        if not relative.startswith(artifact_root):
+            raise ValueError(f"subtitle track must stay inside {artifact_root}")
+        contents = track_path.read_bytes()
+        digest = hashlib.sha256(contents).hexdigest()
+        artifact_checksum.update(language.encode("utf-8"))
+        artifact_checksum.update(digest.encode("ascii"))
+        normalized_tracks.append(
+            {
+                "id": f"{artifact_id}-{role}",
+                "languageCode": language,
+                "role": role,
+                "state": "ready" if lifecycle_state == "ready" else lifecycle_state,
+                "path": relative,
+                "bytes": len(contents),
+                "checksum": digest,
+                "updatedAt": utc_now(),
+            }
+        )
+        seen_roles.add(role)
+    if lifecycle_state == "ready" and not normalized_tracks:
+        raise ValueError("ready subtitle artifact requires at least one track")
+    expected_roles = {
+        "source": ["source_raw"],
+        "proofread": ["input_sentence", "output_sentence"],
+        "translation": ["input_sentence", "output_sentence"],
+        "segmentation": ["input_segmented", "output_segmented"],
     }
-    if path is not None:
-        track["path"] = relative_job_path(job_dir, path)
-        track["bytes"] = path.stat().st_size if path.exists() else None
-    tracks[language] = track
+    if lifecycle_state == "ready":
+        if sorted(track["role"] for track in normalized_tracks) != sorted(expected_roles[kind]):
+            raise ValueError(f"ready {kind} artifact tracks do not match its contract")
+    for track in normalized_tracks:
+        expected_language = (
+            source_language
+            if track["role"] == "source_raw" or track["role"].startswith("input_")
+            else output_language
+        )
+        if track["languageCode"] != expected_language:
+            raise ValueError("subtitle artifact tracks do not match its languages")
+
+    manifest_path: str | None = None
+    if manifest is not None:
+        if manifest.suffix.lower() != ".json" or not manifest.is_file():
+            raise ValueError(f"subtitle artifact manifest is not JSON: {manifest}")
+        manifest_path = relative_job_path(job_dir, manifest)
+        artifact_root = f"subtitle-work/artifacts/{artifact_id}/"
+        if not manifest_path.startswith(artifact_root):
+            raise ValueError(f"subtitle manifest must stay inside {artifact_root}")
+        artifact_checksum.update(hashlib.sha256(manifest.read_bytes()).digest())
+
+    status = load_status(job_dir, create_default=True)
+    artifacts = status.setdefault("subtitleArtifacts", [])
+    if not isinstance(artifacts, list):
+        raise ValueError("subtitleArtifacts must be a list")
+    artifacts_by_id = {
+        candidate.get("id"): candidate
+        for candidate in artifacts
+        if isinstance(candidate, dict) and isinstance(candidate.get("id"), str)
+    }
+    resolved_dependencies: dict[str, list[dict[str, Any]]] = {
+        relation: [] for relation in SUBTITLE_DEPENDENCY_RELATIONS
+    }
+    for dependency in normalized_dependencies:
+        parent = artifacts_by_id.get(dependency["artifactId"])
+        if parent is None:
+            raise ValueError(
+                f"subtitle dependency does not exist: {dependency['artifactId']}"
+            )
+        resolved_dependencies[dependency["relation"]].append(parent)
+    if kind != "source":
+        timing_sources = resolved_dependencies["timing-source"]
+        references = resolved_dependencies["text-reference"]
+        content_parents = resolved_dependencies["content-parent"]
+        if (
+            len(timing_sources) != 1
+            or timing_sources[0].get("kind") != "source"
+            or timing_sources[0].get("sourceType") != "model-transcript"
+            or timing_sources[0].get("sourceLanguage") != source_language
+        ):
+            raise ValueError("subtitle revisions require one model transcript timing source")
+        if any(
+            reference.get("kind") != "source"
+            or reference.get("sourceType") != "manual-cc"
+            or reference.get("sourceLanguage") != source_language
+            for reference in references
+        ):
+            raise ValueError("text references must be same-language manual CC")
+        if kind in {"proofread", "translation"} and content_parents:
+            raise ValueError("content revisions cannot have a content parent")
+        if kind == "segmentation":
+            if references or len(content_parents) != 1:
+                raise ValueError("segmentation requires one content parent")
+            content_parent = content_parents[0]
+            if (
+                content_parent.get("kind") not in {"proofread", "translation"}
+                or content_parent.get("sourceLanguage") != source_language
+                or content_parent.get("outputLanguage") != output_language
+            ):
+                raise ValueError("segmentation content parent languages do not match")
+    existing = next(
+        (
+            artifact
+            for artifact in artifacts
+            if isinstance(artifact, dict) and artifact.get("id") == artifact_id
+        ),
+        None,
+    )
+    conflicting_revision = next(
+        (
+            candidate
+            for candidate in artifacts
+            if isinstance(candidate, dict)
+            and candidate.get("id") != artifact_id
+            and candidate.get("kind") == kind
+            and candidate.get("revision") == revision
+            and candidate.get("sourceLanguage") == source_language
+            and candidate.get("outputLanguage") == output_language
+            and candidate.get("sourceType") == source_type
+        ),
+        None,
+    )
+    if conflicting_revision is not None:
+        raise ValueError("subtitle artifact revision already has a different ID")
+    now = utc_now()
+    artifact: dict[str, Any] = {
+        "id": artifact_id,
+        "kind": kind,
+        "revision": revision,
+        "lifecycleState": lifecycle_state,
+        "validationState": validation_state,
+        "freshnessState": freshness_state,
+        "sourceLanguage": source_language,
+        "outputLanguage": output_language,
+        "sourceType": source_type,
+        "provider": provider,
+        "model": model,
+        "timingUnitKind": timing_unit_kind,
+        "targetFrozen": target_frozen,
+        "manifestPath": manifest_path,
+        "checksum": artifact_checksum.hexdigest(),
+        "warningCount": warning_count,
+        "hardDefectCount": hard_defect_count,
+        "dependencies": normalized_dependencies,
+        "tracks": normalized_tracks,
+        "createdAt": existing.get("createdAt") if isinstance(existing, dict) else now,
+        "completedAt": now if lifecycle_state == "ready" else None,
+    }
+    if isinstance(existing, dict):
+        immutable = ("kind", "revision", "sourceLanguage", "outputLanguage", "sourceType")
+        if any(existing.get(key) != artifact.get(key) for key in immutable):
+            raise ValueError("an existing subtitle artifact cannot change identity")
+        if existing.get("lifecycleState") == "ready":
+            immutable_ready = (
+                "checksum",
+                "manifestPath",
+                "dependencies",
+                "targetFrozen",
+            )
+            existing_tracks = [
+                {
+                    key: track.get(key)
+                    for key in ("id", "languageCode", "role", "path", "checksum")
+                }
+                for track in existing.get("tracks", [])
+                if isinstance(track, dict)
+            ]
+            artifact_tracks = [
+                {
+                    key: track.get(key)
+                    for key in ("id", "languageCode", "role", "path", "checksum")
+                }
+                for track in artifact["tracks"]
+            ]
+            if any(existing.get(key) != artifact.get(key) for key in immutable_ready):
+                raise ValueError("a ready subtitle artifact revision is immutable")
+            if existing_tracks != artifact_tracks:
+                raise ValueError("a ready subtitle artifact revision is immutable")
+            return status
+        artifacts[artifacts.index(existing)] = artifact
+    else:
+        artifacts.append(artifact)
+
+    if (
+        lifecycle_state == "ready"
+        and validation_state != "invalid"
+        and hard_defect_count == 0
+    ):
+        for candidate in artifacts:
+            if not isinstance(candidate, dict) or candidate.get("id") == artifact_id:
+                continue
+            same_stream = (
+                candidate.get("kind") == kind
+                and candidate.get("sourceLanguage") == source_language
+                and candidate.get("outputLanguage") == output_language
+                and candidate.get("sourceType") == source_type
+            )
+            candidate_revision = candidate.get("revision")
+            if (
+                same_stream
+                and isinstance(candidate_revision, int)
+                and candidate_revision < revision
+                and candidate.get("lifecycleState") == "ready"
+            ):
+                candidate["freshnessState"] = "superseded"
     return save_status(job_dir, status)
 
 
@@ -292,49 +639,60 @@ def set_transcription(job_dir: Path, provider: str, model: str) -> dict[str, Any
     return save_status(job_dir, status)
 
 
-def set_subtitle_workflow(
+def set_subtitle_pipeline(
     job_dir: Path,
     *,
-    translation_requested: bool,
-    source: str,
+    mode: str,
     stage: str,
-    provider: str | None,
-    model: str | None,
-    source_language: str | None,
-    target_language: str | None,
+    source_language: str,
+    output_language: str,
+    timing_provider: str | None,
+    timing_model: str | None,
+    content_provider: str | None,
+    content_model: str | None,
+    manual_reference_artifact_ids: list[str],
 ) -> dict[str, Any]:
-    if source not in SUBTITLE_WORKFLOW_SOURCES:
-        raise ValueError(f"unsupported subtitle workflow source: {source}")
-    if stage not in SUBTITLE_WORKFLOW_STAGES:
-        raise ValueError(f"unsupported subtitle workflow stage: {stage}")
-    if provider is not None and provider not in {"local", "openai"}:
-        raise ValueError(f"unsupported subtitle workflow provider: {provider}")
-    if model is not None and not re.fullmatch(r"[A-Za-z0-9._-]+", model):
-        raise ValueError(f"invalid subtitle workflow model: {model}")
-    if source_language is not None:
-        validate_language(source_language)
-    if target_language is not None:
-        validate_language(target_language)
-    status = load_status(job_dir, create_default=True)
-    existing = status.get("subtitleWorkflow")
-    if isinstance(existing, dict):
-        source_language = source_language or existing.get("sourceLanguage")
-        target_language = target_language or existing.get("targetLanguage")
-    workflow: dict[str, Any] = {
-        "translationRequested": translation_requested,
-        "source": source,
+    if mode not in SUBTITLE_PIPELINE_MODES:
+        raise ValueError(f"unsupported subtitle pipeline mode: {mode}")
+    if stage not in SUBTITLE_PIPELINE_STAGES:
+        raise ValueError(f"unsupported subtitle pipeline stage: {stage}")
+    validate_language(source_language)
+    validate_language(output_language)
+    if mode == "proofread" and source_language != output_language:
+        raise ValueError("proofread pipeline must preserve the source language")
+    if mode == "translate" and source_language == output_language:
+        raise ValueError("translate pipeline must change language")
+    for provider in (timing_provider, content_provider):
+        if provider is not None and provider not in {"local", "openai"}:
+            raise ValueError(f"unsupported subtitle pipeline provider: {provider}")
+    for model in (timing_model, content_model):
+        if model is not None and not re.fullmatch(r"[A-Za-z0-9._-]+", model):
+            raise ValueError(f"invalid subtitle pipeline model: {model}")
+    if len(set(manual_reference_artifact_ids)) != len(manual_reference_artifact_ids):
+        raise ValueError("subtitle pipeline references must be unique")
+    if any(
+        not ARTIFACT_ID_PATTERN.fullmatch(artifact_id)
+        for artifact_id in manual_reference_artifact_ids
+    ):
+        raise ValueError("subtitle pipeline contains an invalid reference artifact ID")
+    pipeline: dict[str, Any] = {
+        "mode": mode,
         "stage": stage,
+        "sourceLanguage": source_language,
+        "outputLanguage": output_language,
+        "manualReferenceArtifactIds": manual_reference_artifact_ids,
         "updatedAt": utc_now(),
     }
-    if provider is not None:
-        workflow["provider"] = provider
-    if model is not None:
-        workflow["model"] = model
-    if source_language is not None:
-        workflow["sourceLanguage"] = source_language
-    if target_language is not None:
-        workflow["targetLanguage"] = target_language
-    status["subtitleWorkflow"] = workflow
+    if timing_provider is not None:
+        pipeline["timingProvider"] = timing_provider
+    if timing_model is not None:
+        pipeline["timingModel"] = timing_model
+    if content_provider is not None:
+        pipeline["contentProvider"] = content_provider
+    if content_model is not None:
+        pipeline["contentModel"] = content_model
+    status = load_status(job_dir, create_default=True)
+    status["subtitlePipeline"] = pipeline
     return save_status(job_dir, status)
 
 
@@ -366,28 +724,61 @@ def build_parser() -> argparse.ArgumentParser:
     asset_parser.add_argument("--path", type=Path)
     asset_parser.add_argument("--remove", action="store_true")
 
-    subtitle_parser = subparsers.add_parser("subtitle", help="record a subtitle track")
-    subtitle_parser.add_argument("--job-dir", required=True, type=Path)
-    subtitle_parser.add_argument("--language", required=True)
-    subtitle_parser.add_argument("--state", default="ready")
-    subtitle_parser.add_argument("--path", type=Path)
-    subtitle_parser.add_argument("--source", default="unknown")
-    subtitle_parser.add_argument("--label")
+    artifact_parser = subparsers.add_parser(
+        "subtitle-artifact", help="register one revisioned subtitle artifact"
+    )
+    artifact_parser.add_argument("--job-dir", required=True, type=Path)
+    artifact_parser.add_argument("--id", required=True)
+    artifact_parser.add_argument("--kind", required=True, choices=sorted(SUBTITLE_ARTIFACT_KINDS))
+    artifact_parser.add_argument("--revision", required=True, type=int)
+    artifact_parser.add_argument(
+        "--lifecycle-state", default="ready", choices=sorted(SUBTITLE_LIFECYCLE_STATES)
+    )
+    artifact_parser.add_argument(
+        "--validation-state", default="valid", choices=sorted(SUBTITLE_VALIDATION_STATES)
+    )
+    artifact_parser.add_argument(
+        "--freshness-state", default="current", choices=sorted(SUBTITLE_FRESHNESS_STATES)
+    )
+    artifact_parser.add_argument("--source-language", required=True)
+    artifact_parser.add_argument("--output-language")
+    artifact_parser.add_argument("--source-type", choices=sorted(SUBTITLE_SOURCE_TYPES))
+    artifact_parser.add_argument("--provider")
+    artifact_parser.add_argument("--model")
+    artifact_parser.add_argument("--timing-unit-kind")
+    artifact_parser.add_argument("--target-frozen", action="store_true")
+    artifact_parser.add_argument("--manifest", type=Path)
+    artifact_parser.add_argument(
+        "--dependency",
+        action="append",
+        nargs=2,
+        metavar=("RELATION", "ARTIFACT_ID"),
+        default=[],
+    )
+    artifact_parser.add_argument(
+        "--track", action="append", nargs=3, metavar=("LANGUAGE", "ROLE", "PATH"), default=[]
+    )
+    artifact_parser.add_argument("--warning-count", type=int, default=0)
+    artifact_parser.add_argument("--hard-defect-count", type=int, default=0)
 
     transcription_parser = subparsers.add_parser("transcription", help="record transcription provider metadata")
     transcription_parser.add_argument("--job-dir", required=True, type=Path)
     transcription_parser.add_argument("--provider", required=True, choices=("local", "openai"))
     transcription_parser.add_argument("--model", required=True)
 
-    workflow_parser = subparsers.add_parser("subtitle-workflow", help="record the visible subtitle workflow stage")
-    workflow_parser.add_argument("--job-dir", required=True, type=Path)
-    workflow_parser.add_argument("--translation", required=True, choices=("requested", "not-requested"))
-    workflow_parser.add_argument("--source", required=True, choices=sorted(SUBTITLE_WORKFLOW_SOURCES))
-    workflow_parser.add_argument("--stage", required=True, choices=sorted(SUBTITLE_WORKFLOW_STAGES))
-    workflow_parser.add_argument("--provider", choices=("local", "openai"))
-    workflow_parser.add_argument("--model")
-    workflow_parser.add_argument("--source-language")
-    workflow_parser.add_argument("--target-language")
+    pipeline_parser = subparsers.add_parser(
+        "subtitle-pipeline", help="record the visible subtitle pipeline stage"
+    )
+    pipeline_parser.add_argument("--job-dir", required=True, type=Path)
+    pipeline_parser.add_argument("--mode", required=True, choices=sorted(SUBTITLE_PIPELINE_MODES))
+    pipeline_parser.add_argument("--stage", required=True, choices=sorted(SUBTITLE_PIPELINE_STAGES))
+    pipeline_parser.add_argument("--source-language", required=True)
+    pipeline_parser.add_argument("--output-language", required=True)
+    pipeline_parser.add_argument("--timing-provider", choices=("local", "openai"))
+    pipeline_parser.add_argument("--timing-model")
+    pipeline_parser.add_argument("--content-provider", choices=("local", "openai"))
+    pipeline_parser.add_argument("--content-model")
+    pipeline_parser.add_argument("--manual-reference-artifact", action="append", default=[])
 
     show_parser = subparsers.add_parser("show", help="print a job record")
     show_parser.add_argument("--job-dir", required=True, type=Path)
@@ -423,27 +814,42 @@ def main() -> int:
             status = set_asset(args.job_dir, args.name, args.path)
         else:
             raise ValueError("asset requires --path or --remove")
-    elif args.command == "subtitle":
-        status = set_subtitle(
+    elif args.command == "subtitle-artifact":
+        status = set_subtitle_artifact(
             args.job_dir,
-            args.language,
-            args.state,
-            args.path,
-            args.source,
-            args.label,
+            artifact_id=args.id,
+            kind=args.kind,
+            revision=args.revision,
+            lifecycle_state=args.lifecycle_state,
+            validation_state=args.validation_state,
+            freshness_state=args.freshness_state,
+            source_language=args.source_language,
+            output_language=args.output_language,
+            source_type=args.source_type,
+            provider=args.provider,
+            model=args.model,
+            timing_unit_kind=args.timing_unit_kind,
+            target_frozen=args.target_frozen,
+            manifest=args.manifest,
+            dependencies=args.dependency,
+            tracks=args.track,
+            warning_count=max(0, args.warning_count),
+            hard_defect_count=max(0, args.hard_defect_count),
         )
     elif args.command == "transcription":
         status = set_transcription(args.job_dir, args.provider, args.model)
-    elif args.command == "subtitle-workflow":
-        status = set_subtitle_workflow(
+    elif args.command == "subtitle-pipeline":
+        status = set_subtitle_pipeline(
             args.job_dir,
-            translation_requested=args.translation == "requested",
-            source=args.source,
+            mode=args.mode,
             stage=args.stage,
-            provider=args.provider,
-            model=args.model,
             source_language=args.source_language,
-            target_language=args.target_language,
+            output_language=args.output_language,
+            timing_provider=args.timing_provider,
+            timing_model=args.timing_model,
+            content_provider=args.content_provider,
+            content_model=args.content_model,
+            manual_reference_artifact_ids=args.manual_reference_artifact,
         )
     elif args.command == "show":
         status = load_status(args.job_dir)

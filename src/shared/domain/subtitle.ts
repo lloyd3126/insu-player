@@ -56,7 +56,7 @@ export function parseWebVtt(value: string): CaptionCue[] {
 }
 
 export function alignCaptionTracks(
-  tracks: Array<{ code: string; cues: CaptionCue[] }>,
+  tracks: Array<{ id: string; code: string; cues: CaptionCue[] }>,
 ) {
   const normalizedTracks = tracks.map((track) => ({
     ...track,
@@ -72,7 +72,7 @@ export function alignCaptionTracks(
   }))
   const populated = normalizedTracks.filter((track) => track.cues.length > 0)
   if (populated.length === 0) {
-    return { baselineLanguage: null, rows: [] as CaptionComparisonRow[] }
+    return { baselineTrackId: null, rows: [] as CaptionComparisonRow[] }
   }
 
   const baseline =
@@ -83,7 +83,7 @@ export function alignCaptionTracks(
 
   const rowOccurrences = new Map<string, number>()
   const rows = baseline.cues.map((cue) => {
-    const timingId = `${baseline.code}:${cue.start.toFixed(3)}:${cue.end.toFixed(3)}`
+    const timingId = `${baseline.id}:${cue.start.toFixed(3)}:${cue.end.toFixed(3)}`
     const occurrence = rowOccurrences.get(timingId) ?? 0
     rowOccurrences.set(timingId, occurrence + 1)
     return {
@@ -116,9 +116,9 @@ export function alignCaptionTracks(
           texts.add(candidate.text)
         }
       }
-      row.cues[track.code] = [...texts].join(" ")
+      row.cues[track.id] = [...texts].join(" ")
     }
   }
 
-  return { baselineLanguage: baseline.code, rows }
+  return { baselineTrackId: baseline.id, rows }
 }

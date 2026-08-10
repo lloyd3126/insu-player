@@ -1,4 +1,12 @@
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core"
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core"
 
 export const jobs = sqliteTable(
   "jobs",
@@ -61,42 +69,206 @@ export const jobAssets = sqliteTable(
   (table) => [index("job_assets_video_idx").on(table.videoId, table.kind)],
 )
 
-export const subtitleTracks = sqliteTable(
-  "subtitle_tracks",
+export const mediaRenditions = sqliteTable(
+  "media_renditions",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: text("id").notNull(),
+    videoId: text("video_id")
+      .notNull()
+      .references(() => jobs.videoId, { onDelete: "cascade" }),
+    requestedHeight: integer("requested_height").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    container: text("container").notNull(),
+    videoCodec: text("video_codec"),
+    audioCodec: text("audio_codec"),
+    relativePath: text("relative_path").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    checksum: text("checksum").notNull(),
+    active: integer("active", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.videoId, table.id] }),
+    index("media_renditions_video_height_idx").on(
+      table.videoId,
+      table.height,
+    ),
+  ],
+)
+
+export const mediaDownloadRuns = sqliteTable(
+  "media_download_runs",
+  {
+    id: text("id").notNull(),
+    videoId: text("video_id")
+      .notNull()
+      .references(() => jobs.videoId, { onDelete: "cascade" }),
+    requestedHeight: integer("requested_height"),
+    state: text("state").notNull(),
+    stage: text("stage").notNull(),
+    progress: real("progress").notNull().default(0),
+    message: text("message").notNull().default(""),
+    error: text("error"),
+    startedAt: text("started_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.videoId, table.id] }),
+    index("media_download_runs_video_idx").on(table.videoId),
+  ],
+)
+
+export const subtitlePipelines = sqliteTable("subtitle_pipelines", {
+  videoId: text("video_id")
+    .primaryKey()
+    .references(() => jobs.videoId, { onDelete: "cascade" }),
+  mode: text("mode").notNull(),
+  stage: text("stage").notNull(),
+  sourceLanguage: text("source_language").notNull(),
+  outputLanguage: text("output_language").notNull(),
+  timingProvider: text("timing_provider"),
+  timingModel: text("timing_model"),
+  contentProvider: text("content_provider"),
+  contentModel: text("content_model"),
+  manualReferenceArtifactIds: text("manual_reference_artifact_ids", {
+    mode: "json",
+  }).$type<string[]>().notNull(),
+  updatedAt: text("updated_at"),
+})
+
+export const subtitleArtifacts = sqliteTable(
+  "subtitle_artifacts",
+  {
+    id: text("id").primaryKey(),
+    videoId: text("video_id")
+      .notNull()
+      .references(() => jobs.videoId, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    revision: integer("revision").notNull().default(1),
+    lifecycleState: text("lifecycle_state").notNull().default("ready"),
+    validationState: text("validation_state").notNull().default("valid"),
+    freshnessState: text("freshness_state").notNull().default("current"),
+    sourceLanguage: text("source_language").notNull(),
+    outputLanguage: text("output_language"),
+    sourceType: text("source_type"),
+    provider: text("provider").notNull(),
+    model: text("model"),
+    timingUnitKind: text("timing_unit_kind"),
+    targetFrozen: integer("target_frozen", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    manifestPath: text("manifest_path"),
+    checksum: text("checksum").notNull(),
+    warningCount: integer("warning_count").notNull().default(0),
+    hardDefectCount: integer("hard_defect_count").notNull().default(0),
+    createdAt: text("created_at"),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    index("subtitle_artifacts_video_kind_idx").on(
+      table.videoId,
+      table.kind,
+    ),
+    uniqueIndex("subtitle_artifacts_revision_idx").on(
+      table.videoId,
+      table.kind,
+      table.sourceLanguage,
+      table.outputLanguage,
+      table.sourceType,
+      table.revision,
+    ),
+  ],
+)
+
+export const subtitleArtifactDependencies = sqliteTable(
+  "subtitle_artifact_dependencies",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => subtitleArtifacts.id, { onDelete: "cascade" }),
+    dependsOnArtifactId: text("depends_on_artifact_id")
+      .notNull()
+      .references(() => subtitleArtifacts.id, { onDelete: "cascade" }),
+    relation: text("relation").notNull().default("input"),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.artifactId, table.dependsOnArtifactId],
+    }),
+    index("subtitle_dependencies_parent_idx").on(table.dependsOnArtifactId),
+  ],
+)
+
+export const subtitleArtifactTracks = sqliteTable(
+  "subtitle_artifact_tracks",
+  {
+    id: text("id").primaryKey(),
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => subtitleArtifacts.id, { onDelete: "cascade" }),
     videoId: text("video_id")
       .notNull()
       .references(() => jobs.videoId, { onDelete: "cascade" }),
     languageCode: text("language_code").notNull(),
-    state: text("state"),
-    source: text("source"),
-    label: text("label"),
-    relativePath: text("relative_path"),
+    role: text("role").notNull(),
+    state: text("state").notNull().default("ready"),
+    relativePath: text("relative_path").notNull(),
     sizeBytes: integer("size_bytes"),
     cueCount: integer("cue_count").notNull().default(0),
+    checksum: text("checksum").notNull(),
     updatedAt: text("updated_at"),
   },
   (table) => [
-    index("subtitle_tracks_video_language_idx").on(
+    index("subtitle_artifact_tracks_artifact_idx").on(table.artifactId),
+    index("subtitle_artifact_tracks_video_language_idx").on(
       table.videoId,
       table.languageCode,
     ),
   ],
 )
 
-export const subtitleWorkflows = sqliteTable("subtitle_workflows", {
-  videoId: text("video_id")
-    .primaryKey()
-    .references(() => jobs.videoId, { onDelete: "cascade" }),
-  stage: text("stage"),
-  source: text("source"),
-  provider: text("provider"),
-  model: text("model"),
-  sourceLanguage: text("source_language"),
-  targetLanguage: text("target_language"),
-  updatedAt: text("updated_at"),
-})
+export const activeSubtitleTracks = sqliteTable(
+  "active_subtitle_tracks",
+  {
+    videoId: text("video_id")
+      .notNull()
+      .references(() => jobs.videoId, { onDelete: "cascade" }),
+    languageCode: text("language_code").notNull(),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => subtitleArtifactTracks.id, { onDelete: "cascade" }),
+    activatedAt: text("activated_at").notNull(),
+    reason: text("reason").notNull().default("resolver"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.videoId, table.languageCode] }),
+    uniqueIndex("active_subtitle_track_idx").on(table.trackId),
+  ],
+)
+
+export const subtitleRuns = sqliteTable(
+  "subtitle_runs",
+  {
+    id: text("id").primaryKey(),
+    videoId: text("video_id")
+      .notNull()
+      .references(() => jobs.videoId, { onDelete: "cascade" }),
+    artifactId: text("artifact_id").references(() => subtitleArtifacts.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind").notNull(),
+    state: text("state").notNull(),
+    stage: text("stage"),
+    provider: text("provider"),
+    model: text("model"),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    error: text("error"),
+  },
+  (table) => [index("subtitle_runs_video_idx").on(table.videoId)],
+)
 
 export const playbackStates = sqliteTable("playback_states", {
   videoId: text("video_id")
@@ -104,5 +276,6 @@ export const playbackStates = sqliteTable("playback_states", {
     .references(() => jobs.videoId, { onDelete: "cascade" }),
   time: real("time").notNull().default(0),
   duration: real("duration"),
+  captionLanguage: text("caption_language"),
   updatedAt: text("updated_at"),
 })

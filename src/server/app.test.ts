@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -8,6 +16,7 @@ import { openAppDatabase } from "@server/db/client"
 import { JobRepository } from "@server/repositories/job-repository"
 import type { RemovalOperations } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
+import type { MediaOperations } from "@server/services/media-service"
 import type { RemovalTarget } from "@shared/contracts/removal"
 
 const repositoryRoot = path.resolve(import.meta.dir, "../..")
@@ -45,24 +54,145 @@ const removals: RemovalOperations = {
   },
 }
 
+const media: MediaOperations = {
+  catalog(videoId) {
+    return {
+      schemaVersion: 1,
+      videoId,
+      revision: 1,
+      activeRenditionId: "720p-demo",
+      availableBytes: 10_000_000,
+      sourceRefreshedAt: "2026-08-08T00:00:00.000Z",
+      formats: [],
+      renditions: [],
+      operation: null,
+    }
+  },
+  async refresh(videoId) {
+    return this.catalog(videoId)
+  },
+  download(videoId, height) {
+    return {
+      accepted: true,
+      operation: {
+        id: `${videoId}-${height}`,
+        requestedHeight: height,
+        state: "downloading",
+        stage: "downloading",
+        progress: 0,
+        message: "正在下載",
+        error: null,
+        pid: 1,
+        startedAt: "2026-08-08T00:00:00.000Z",
+        updatedAt: "2026-08-08T00:00:00.000Z",
+        completedAt: null,
+      },
+    }
+  },
+  activate(videoId) {
+    return this.catalog(videoId)
+  },
+}
+
 function seedJob() {
   const job = path.join(workspace, "jobs", "demo-video")
-  mkdirSync(path.join(job, "source"), { recursive: true })
-  mkdirSync(path.join(job, "captions"), { recursive: true })
+  const renditionRoot = path.join(job, "source", "renditions")
+  mkdirSync(renditionRoot, { recursive: true })
   mkdirSync(path.join(job, "logs"), { recursive: true })
-  writeFileSync(path.join(job, "source", "video.mp4"), "fake-media-for-range-tests")
+  const mediaContents = "fake-media-for-range-tests"
+  const mediaChecksum = createHash("sha256").update(mediaContents).digest("hex")
+  writeFileSync(path.join(renditionRoot, "720p-demo.mp4"), mediaContents)
+  mkdirSync(path.join(job, "media-work"), { recursive: true })
   writeFileSync(
-    path.join(job, "captions", "en.vtt"),
-    "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nComplete sentence\n",
+    path.join(job, "media-work", "catalog.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      videoId: "demo-video",
+      revision: 1,
+      activeRenditionId: "720p-demo",
+      availability: { discoveredAt: null, formats: [] },
+      renditions: [
+        {
+          id: "720p-demo",
+          requestedHeight: 720,
+          width: 1280,
+          height: 720,
+          container: "mp4",
+          videoCodec: "avc1",
+          audioCodec: "aac",
+          sizeBytes: Buffer.byteLength(mediaContents),
+          checksum: mediaChecksum,
+          createdAt: "2026-08-08T00:00:00.000Z",
+          path: "source/renditions/720p-demo.mp4",
+        },
+      ],
+      operation: null,
+    })}\n`,
   )
-  writeFileSync(
-    path.join(job, "captions", "zh-TW.vtt"),
-    "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n完整句子\n",
-  )
+  const sourceId = "demo-video-source-model-transcript-en-r1"
+  const translationId = "demo-video-translation-en-zh-TW-r1"
+  const sourceRoot = path.join(job, "subtitle-work", "artifacts", sourceId)
+  const translationRoot = path.join(job, "subtitle-work", "artifacts", translationId)
+  mkdirSync(sourceRoot, { recursive: true })
+  mkdirSync(translationRoot, { recursive: true })
+  const english = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nComplete sentence\n"
+  const chinese = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n完整句子\n"
+  writeFileSync(path.join(sourceRoot, "source.vtt"), english)
+  writeFileSync(path.join(translationRoot, "input.vtt"), english)
+  writeFileSync(path.join(translationRoot, "output.vtt"), chinese)
+  writeFileSync(path.join(translationRoot, "manifest.json"), '{"schemaVersion":3}\n')
+  const digest = (contents: string) => createHash("sha256").update(contents).digest("hex")
+  const artifactDigest = (
+    tracks: Array<Record<string, unknown>>,
+    manifestContents?: string,
+  ) => {
+    const hasher = createHash("sha256")
+    for (const track of tracks) {
+      hasher.update(String(track.languageCode), "utf8")
+      hasher.update(String(track.checksum), "ascii")
+    }
+    if (manifestContents !== undefined) {
+      hasher.update(createHash("sha256").update(manifestContents).digest())
+    }
+    return hasher.digest("hex")
+  }
+  const artifact = (
+    id: string,
+    kind: "source" | "translation",
+    tracks: Array<Record<string, unknown>>,
+    overrides: Record<string, unknown> = {},
+  ) => {
+    const manifestContents = kind === "source" ? undefined : '{"schemaVersion":3}\n'
+    return {
+      id,
+      kind,
+      revision: 1,
+      lifecycleState: "ready",
+      validationState: "valid",
+      freshnessState: "current",
+      sourceLanguage: "en",
+      outputLanguage: null,
+      sourceType: kind === "source" ? "model-transcript" : null,
+      provider: "local",
+      model: "medium",
+      timingUnitKind: "word",
+      targetFrozen: false,
+      manifestPath: null,
+      checksum: artifactDigest(tracks, manifestContents),
+      warningCount: 0,
+      hardDefectCount: 0,
+      dependencies: [],
+      tracks,
+      createdAt: "2026-08-08T00:00:00.000Z",
+      completedAt: "2026-08-08T01:00:00.000Z",
+      ...overrides,
+    }
+  }
   writeFileSync(path.join(job, "logs", "workflow.log"), "downloaded\nreflowed\n")
   writeFileSync(
     path.join(job, "status.json"),
     `${JSON.stringify({
+      schemaVersion: 3,
       videoId: "demo-video",
       title: "雙語測試影音",
       sourceUrl: "https://example.test/video",
@@ -74,17 +204,37 @@ function seedJob() {
       createdAt: "2026-08-08T00:00:00.000Z",
       updatedAt: "2026-08-08T01:00:00.000Z",
       completedAt: "2026-08-08T01:00:00.000Z",
-      subtitleTracks: {
-        en: { state: "ready", source: "model-reflow", path: "captions/en.vtt" },
-        "zh-TW": { state: "ready", source: "model-reflow", path: "captions/zh-TW.vtt" },
-      },
-      subtitleWorkflow: {
-        stage: "subtitle_reflow",
-        source: "model",
-        provider: "local",
-        model: "medium",
+      subtitleArtifacts: [
+        artifact(sourceId, "source", [{
+          id: `${sourceId}-source_raw`, languageCode: "en", role: "source_raw", state: "ready",
+          path: `subtitle-work/artifacts/${sourceId}/source.vtt`, checksum: digest(english),
+        }]),
+        artifact(translationId, "translation", [
+          {
+            id: `${translationId}-input_sentence`, languageCode: "en", role: "input_sentence", state: "ready",
+            path: `subtitle-work/artifacts/${translationId}/input.vtt`, checksum: digest(english),
+          },
+          {
+            id: `${translationId}-output_sentence`, languageCode: "zh-TW", role: "output_sentence", state: "ready",
+            path: `subtitle-work/artifacts/${translationId}/output.vtt`, checksum: digest(chinese),
+          },
+        ], {
+          outputLanguage: "zh-TW",
+          dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+          manifestPath: `subtitle-work/artifacts/${translationId}/manifest.json`,
+        }),
+      ],
+      activeSubtitleTracks: {},
+      subtitlePipeline: {
+        mode: "translate",
+        stage: "content_complete",
         sourceLanguage: "en",
-        targetLanguage: "zh-TW",
+        outputLanguage: "zh-TW",
+        timingProvider: "local",
+        timingModel: "medium",
+        contentProvider: "local",
+        contentModel: "medium",
+        manualReferenceArtifactIds: [],
       },
       history: [
         { at: "2026-08-08T00:00:00.000Z", state: "downloading", message: "開始" },
@@ -104,6 +254,7 @@ beforeEach(() => {
   const jobs = new JobRepository(workspace, opened.db)
   app = createApplication({
     jobs,
+    media,
     removals,
     resources: new ResourceService(workspace),
     libraryAppRoot: path.join(
@@ -190,22 +341,124 @@ describe("Hono application", () => {
       .query("select video_id, effective_state from jobs")
       .get() as { video_id: string; effective_state: string }
     expect(projected).toEqual({ video_id: "demo-video", effective_state: "ready" })
-    const trackCount = sqlite.query("select count(*) as count from subtitle_tracks").get() as { count: number }
-    expect(trackCount.count).toBe(2)
+    const artifactCount = sqlite
+      .query("select count(*) as count from subtitle_artifacts")
+      .get() as { count: number }
+    expect(artifactCount.count).toBe(2)
+    const activeTrackCount = sqlite
+      .query("select count(*) as count from active_subtitle_tracks")
+      .get() as { count: number }
+    expect(activeTrackCount.count).toBe(2)
   })
 
-  test("returns normalized bilingual rows and byte ranges", async () => {
+  test("returns the subtitle catalog, artifact comparison, and active bilingual rows", async () => {
+    const catalogResponse = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video/subtitles",
+    )
+    expect(catalogResponse.status).toBe(200)
+    const catalog = (await catalogResponse.json()) as {
+      artifacts: Array<{ id: string; kind: string; tracks: unknown[] }>
+      activeTracks: Array<{ languageCode: string; artifactKind: string }>
+    }
+    expect(catalog.artifacts.map(({ kind }) => kind)).toEqual([
+      "source",
+      "translation",
+    ])
+    expect(catalog.activeTracks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          languageCode: "en",
+          artifactKind: "source",
+        }),
+        expect.objectContaining({
+          languageCode: "zh-TW",
+          artifactKind: "translation",
+        }),
+      ]),
+    )
+
+    const artifact = catalog.artifacts.find(
+      ({ kind }) => kind === "translation",
+    )
+    expect(artifact).toBeDefined()
+    const artifactCaptions = await app.request(
+      `http://127.0.0.1:4178/api/jobs/demo-video/subtitles/artifacts/${artifact?.id}/captions`,
+    )
+    expect(artifactCaptions.status).toBe(200)
+    expect(await artifactCaptions.json()).toMatchObject({
+      artifact: { kind: "translation" },
+      baselineTrackId: "demo-video-translation-en-zh-TW-r1-input_sentence",
+      rows: [
+        {
+          cues: {
+            "demo-video-translation-en-zh-TW-r1-input_sentence": "Complete sentence",
+            "demo-video-translation-en-zh-TW-r1-output_sentence": "完整句子",
+          },
+        },
+      ],
+    })
+
     const captions = await app.request(
       "http://127.0.0.1:4178/api/jobs/demo-video/captions",
     )
     const comparison = (await captions.json()) as {
-      baselineLanguage: string
+      baselineTrackId: string
       rows: Array<{ cues: Record<string, string> }>
     }
-    expect(comparison.baselineLanguage).toBe("en")
+    expect(comparison.baselineTrackId).toBe(
+      "demo-video-source-model-transcript-en-r1-source_raw",
+    )
     expect(comparison.rows[0].cues).toEqual({
-      en: "Complete sentence",
-      "zh-TW": "完整句子",
+      "demo-video-source-model-transcript-en-r1-source_raw": "Complete sentence",
+      "demo-video-translation-en-zh-TW-r1-output_sentence": "完整句子",
+    })
+
+    const forbiddenActivation = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video/subtitles/active",
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://untrusted.example",
+        },
+        body: JSON.stringify({
+          languageCode: "zh-TW",
+          trackId: "demo-video-translation-en-zh-TW-r1-output_sentence",
+        }),
+      },
+    )
+    expect(forbiddenActivation.status).toBe(403)
+
+    const activation = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video/subtitles/active",
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:4178",
+        },
+        body: JSON.stringify({
+          languageCode: "zh-TW",
+          trackId: "demo-video-translation-en-zh-TW-r1-output_sentence",
+        }),
+      },
+    )
+    expect(activation.status).toBe(200)
+    expect(await activation.json()).toMatchObject({
+      activeTracks: [
+        expect.anything(),
+        expect.objectContaining({
+          languageCode: "zh-TW",
+          reason: "explicit",
+        }),
+      ],
+    })
+    expect(
+      JSON.parse(
+        readFileSync(path.join(workspace, "jobs/demo-video/status.json"), "utf8"),
+      ).activeSubtitleTracks,
+    ).toEqual({
+      "zh-TW": "demo-video-translation-en-zh-TW-r1-output_sentence",
     })
 
     const media = await app.request(
@@ -215,6 +468,93 @@ describe("Hono application", () => {
     expect(media.status).toBe(206)
     expect(media.headers.get("content-range")).toBe("bytes 0-3/26")
     expect(await media.text()).toBe("fake")
+  })
+
+  test("serves media quality metadata and protects every media mutation by origin", async () => {
+    const catalog = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video/media",
+    )
+    expect(catalog.status).toBe(200)
+    expect(await catalog.json()).toMatchObject({
+      schemaVersion: 1,
+      videoId: "demo-video",
+      activeRenditionId: "720p-demo",
+    })
+
+    for (const [method, route, body] of [
+      ["POST", "/api/jobs/demo-video/media/refresh", undefined],
+      ["POST", "/api/jobs/demo-video/media/renditions", { height: 1080 }],
+      ["PUT", "/api/jobs/demo-video/media/active", { renditionId: "720p-demo" }],
+    ] as const) {
+      const forbidden = await app.request(`http://127.0.0.1:4178${route}`, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      expect(forbidden.status).toBe(403)
+    }
+
+    const accepted = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video/media/renditions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://127.0.0.1:4178",
+        },
+        body: JSON.stringify({ height: 1080 }),
+      },
+    )
+    expect(accepted.status).toBe(202)
+    expect(await accepted.json()).toMatchObject({
+      accepted: true,
+      operation: { requestedHeight: 1080, state: "downloading" },
+    })
+  })
+
+  test("serves language-code player tracks and persists the selected language", async () => {
+    const selected = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video/playback",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ captionLanguage: "en" }),
+      },
+    )
+    expect(selected.status).toBe(200)
+    expect(await selected.json()).toMatchObject({ captionLanguage: "en" })
+
+    const player = await app.request(
+      "http://127.0.0.1:4178/watch/demo-video/config.js",
+    )
+    expect(player.status).toBe(200)
+    const source = await player.text()
+    const config = JSON.parse(
+      source.replace(/^window\.INSU_PLAYER_CONFIG = /, "").replace(/;\s*$/, ""),
+    ) as {
+      defaultLanguage: string
+      captions: Array<{
+        code: string
+        label: string
+        artifactKind: string
+        src: string
+      }>
+    }
+    expect(config.defaultLanguage).toBe("en")
+    expect(config.captions.map(({ code, label }) => [code, label])).toEqual([
+      ["en", "en"],
+      ["zh-TW", "zh-TW"],
+    ])
+    expect(config.captions.map(({ artifactKind }) => artifactKind)).toEqual([
+      "source",
+      "translation",
+    ])
+    expect(config.captions.every(({ src }) => src.includes("?revision="))).toBe(true)
+
+    const stored = sqlite
+      .query("select caption_language from playback_states where video_id = ?")
+      .get("demo-video")
+    expect(stored).toEqual({ caption_language: "en" })
   })
 
   test("persists playback in both the job folder and app database", async () => {
@@ -277,6 +617,25 @@ describe("Hono application", () => {
     expect(execution.status).toBe(200)
     expect(await execution.json()).toMatchObject({ target, removed: true })
     expect(executedRemoval).toEqual({ target, planDigest: removalDigest })
+
+    const subtitleTarget = {
+      kind: "subtitle-artifact",
+      videoId: "demo-video",
+      artifactId: "demo-video-translation-en-zh-TW-r1",
+    } as const
+    const subtitlePreview = await app.request(
+      "http://127.0.0.1:4178/api/removals/preview",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://127.0.0.1:4178",
+        },
+        body: JSON.stringify({ target: subtitleTarget }),
+      },
+    )
+    expect(subtitlePreview.status).toBe(200)
+    expect(previewedTarget).toEqual(subtitleTarget)
   })
 
   test("rejects cross-origin environment mutation and path-shaped video IDs", async () => {

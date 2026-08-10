@@ -1,9 +1,98 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "2fd785b4-1aed-4265-a78d-1898fd0495a9",
+  "id": "83f9f86b-9837-4be4-be10-e0a09c716262",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
+    "active_subtitle_tracks": {
+      "name": "active_subtitle_tracks",
+      "columns": {
+        "video_id": {
+          "name": "video_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "language_code": {
+          "name": "language_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "track_id": {
+          "name": "track_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'resolver'"
+        }
+      },
+      "indexes": {
+        "active_subtitle_track_idx": {
+          "name": "active_subtitle_track_idx",
+          "columns": [
+            "track_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "active_subtitle_tracks_video_id_jobs_video_id_fk": {
+          "name": "active_subtitle_tracks_video_id_jobs_video_id_fk",
+          "tableFrom": "active_subtitle_tracks",
+          "tableTo": "jobs",
+          "columnsFrom": [
+            "video_id"
+          ],
+          "columnsTo": [
+            "video_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "active_subtitle_tracks_track_id_subtitle_artifact_tracks_id_fk": {
+          "name": "active_subtitle_tracks_track_id_subtitle_artifact_tracks_id_fk",
+          "tableFrom": "active_subtitle_tracks",
+          "tableTo": "subtitle_artifact_tracks",
+          "columnsFrom": [
+            "track_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "active_subtitle_tracks_video_id_language_code_pk": {
+          "columns": [
+            "video_id",
+            "language_code"
+          ],
+          "name": "active_subtitle_tracks_video_id_language_code_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "job_assets": {
       "name": "job_assets",
       "columns": {
@@ -334,6 +423,258 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "media_download_runs": {
+      "name": "media_download_runs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "video_id": {
+          "name": "video_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "requested_height": {
+          "name": "requested_height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "progress": {
+          "name": "progress",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "media_download_runs_video_idx": {
+          "name": "media_download_runs_video_idx",
+          "columns": [
+            "video_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "media_download_runs_video_id_jobs_video_id_fk": {
+          "name": "media_download_runs_video_id_jobs_video_id_fk",
+          "tableFrom": "media_download_runs",
+          "tableTo": "jobs",
+          "columnsFrom": [
+            "video_id"
+          ],
+          "columnsTo": [
+            "video_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "media_download_runs_video_id_id_pk": {
+          "columns": [
+            "video_id",
+            "id"
+          ],
+          "name": "media_download_runs_video_id_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "media_renditions": {
+      "name": "media_renditions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "video_id": {
+          "name": "video_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "requested_height": {
+          "name": "requested_height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "width": {
+          "name": "width",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "container": {
+          "name": "container",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "video_codec": {
+          "name": "video_codec",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "audio_codec": {
+          "name": "audio_codec",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "relative_path": {
+          "name": "relative_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "checksum": {
+          "name": "checksum",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "active": {
+          "name": "active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "media_renditions_video_height_idx": {
+          "name": "media_renditions_video_height_idx",
+          "columns": [
+            "video_id",
+            "height"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "media_renditions_video_id_jobs_video_id_fk": {
+          "name": "media_renditions_video_id_jobs_video_id_fk",
+          "tableFrom": "media_renditions",
+          "tableTo": "jobs",
+          "columnsFrom": [
+            "video_id"
+          ],
+          "columnsTo": [
+            "video_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "media_renditions_video_id_id_pk": {
+          "columns": [
+            "video_id",
+            "id"
+          ],
+          "name": "media_renditions_video_id_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "playback_states": {
       "name": "playback_states",
       "columns": {
@@ -355,6 +696,13 @@
         "duration": {
           "name": "duration",
           "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "caption_language": {
+          "name": "caption_language",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -387,15 +735,97 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "subtitle_tracks": {
-      "name": "subtitle_tracks",
+    "subtitle_artifact_dependencies": {
+      "name": "subtitle_artifact_dependencies",
+      "columns": {
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "depends_on_artifact_id": {
+          "name": "depends_on_artifact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "relation": {
+          "name": "relation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'input'"
+        }
+      },
+      "indexes": {
+        "subtitle_dependencies_parent_idx": {
+          "name": "subtitle_dependencies_parent_idx",
+          "columns": [
+            "depends_on_artifact_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "subtitle_artifact_dependencies_artifact_id_subtitle_artifacts_id_fk": {
+          "name": "subtitle_artifact_dependencies_artifact_id_subtitle_artifacts_id_fk",
+          "tableFrom": "subtitle_artifact_dependencies",
+          "tableTo": "subtitle_artifacts",
+          "columnsFrom": [
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "subtitle_artifact_dependencies_depends_on_artifact_id_subtitle_artifacts_id_fk": {
+          "name": "subtitle_artifact_dependencies_depends_on_artifact_id_subtitle_artifacts_id_fk",
+          "tableFrom": "subtitle_artifact_dependencies",
+          "tableTo": "subtitle_artifacts",
+          "columnsFrom": [
+            "depends_on_artifact_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "subtitle_artifact_dependencies_artifact_id_depends_on_artifact_id_pk": {
+          "columns": [
+            "artifact_id",
+            "depends_on_artifact_id"
+          ],
+          "name": "subtitle_artifact_dependencies_artifact_id_depends_on_artifact_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "subtitle_artifact_tracks": {
+      "name": "subtitle_artifact_tracks",
       "columns": {
         "id": {
           "name": "id",
-          "type": "integer",
+          "type": "text",
           "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "autoincrement": false
+        },
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
         },
         "video_id": {
           "name": "video_id",
@@ -411,32 +841,26 @@
           "notNull": true,
           "autoincrement": false
         },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "state": {
           "name": "state",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "label": {
-          "name": "label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'ready'"
         },
         "relative_path": {
           "name": "relative_path",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "size_bytes": {
@@ -454,6 +878,13 @@
           "autoincrement": false,
           "default": 0
         },
+        "checksum": {
+          "name": "checksum",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "text",
@@ -463,8 +894,15 @@
         }
       },
       "indexes": {
-        "subtitle_tracks_video_language_idx": {
-          "name": "subtitle_tracks_video_language_idx",
+        "subtitle_artifact_tracks_artifact_idx": {
+          "name": "subtitle_artifact_tracks_artifact_idx",
+          "columns": [
+            "artifact_id"
+          ],
+          "isUnique": false
+        },
+        "subtitle_artifact_tracks_video_language_idx": {
+          "name": "subtitle_artifact_tracks_video_language_idx",
           "columns": [
             "video_id",
             "language_code"
@@ -473,9 +911,22 @@
         }
       },
       "foreignKeys": {
-        "subtitle_tracks_video_id_jobs_video_id_fk": {
-          "name": "subtitle_tracks_video_id_jobs_video_id_fk",
-          "tableFrom": "subtitle_tracks",
+        "subtitle_artifact_tracks_artifact_id_subtitle_artifacts_id_fk": {
+          "name": "subtitle_artifact_tracks_artifact_id_subtitle_artifacts_id_fk",
+          "tableFrom": "subtitle_artifact_tracks",
+          "tableTo": "subtitle_artifacts",
+          "columnsFrom": [
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "subtitle_artifact_tracks_video_id_jobs_video_id_fk": {
+          "name": "subtitle_artifact_tracks_video_id_jobs_video_id_fk",
+          "tableFrom": "subtitle_artifact_tracks",
           "tableTo": "jobs",
           "columnsFrom": [
             "video_id"
@@ -491,8 +942,200 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "subtitle_workflows": {
-      "name": "subtitle_workflows",
+    "subtitle_artifacts": {
+      "name": "subtitle_artifacts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "video_id": {
+          "name": "video_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "lifecycle_state": {
+          "name": "lifecycle_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'ready'"
+        },
+        "validation_state": {
+          "name": "validation_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'valid'"
+        },
+        "freshness_state": {
+          "name": "freshness_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'current'"
+        },
+        "source_language": {
+          "name": "source_language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "output_language": {
+          "name": "output_language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "timing_unit_kind": {
+          "name": "timing_unit_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "target_frozen": {
+          "name": "target_frozen",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "manifest_path": {
+          "name": "manifest_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "checksum": {
+          "name": "checksum",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "warning_count": {
+          "name": "warning_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "hard_defect_count": {
+          "name": "hard_defect_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "subtitle_artifacts_video_kind_idx": {
+          "name": "subtitle_artifacts_video_kind_idx",
+          "columns": [
+            "video_id",
+            "kind"
+          ],
+          "isUnique": false
+        },
+        "subtitle_artifacts_revision_idx": {
+          "name": "subtitle_artifacts_revision_idx",
+          "columns": [
+            "video_id",
+            "kind",
+            "source_language",
+            "output_language",
+            "source_type",
+            "revision"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "subtitle_artifacts_video_id_jobs_video_id_fk": {
+          "name": "subtitle_artifacts_video_id_jobs_video_id_fk",
+          "tableFrom": "subtitle_artifacts",
+          "tableTo": "jobs",
+          "columnsFrom": [
+            "video_id"
+          ],
+          "columnsTo": [
+            "video_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "subtitle_pipelines": {
+      "name": "subtitle_pipelines",
       "columns": {
         "video_id": {
           "name": "video_id",
@@ -501,15 +1144,137 @@
           "notNull": true,
           "autoincrement": false
         },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "stage": {
           "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_language": {
+          "name": "source_language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "output_language": {
+          "name": "output_language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "timing_provider": {
+          "name": "timing_provider",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "source": {
-          "name": "source",
+        "timing_model": {
+          "name": "timing_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "content_provider": {
+          "name": "content_provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "content_model": {
+          "name": "content_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "manual_reference_artifact_ids": {
+          "name": "manual_reference_artifact_ids",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "subtitle_pipelines_video_id_jobs_video_id_fk": {
+          "name": "subtitle_pipelines_video_id_jobs_video_id_fk",
+          "tableFrom": "subtitle_pipelines",
+          "tableTo": "jobs",
+          "columnsFrom": [
+            "video_id"
+          ],
+          "columnsTo": [
+            "video_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "subtitle_runs": {
+      "name": "subtitle_runs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "video_id": {
+          "name": "video_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "stage": {
+          "name": "stage",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -529,33 +1294,41 @@
           "notNull": false,
           "autoincrement": false
         },
-        "source_language": {
-          "name": "source_language",
+        "started_at": {
+          "name": "started_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "target_language": {
-          "name": "target_language",
+        "completed_at": {
+          "name": "completed_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "updated_at": {
-          "name": "updated_at",
+        "error": {
+          "name": "error",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "subtitle_runs_video_idx": {
+          "name": "subtitle_runs_video_idx",
+          "columns": [
+            "video_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
-        "subtitle_workflows_video_id_jobs_video_id_fk": {
-          "name": "subtitle_workflows_video_id_jobs_video_id_fk",
-          "tableFrom": "subtitle_workflows",
+        "subtitle_runs_video_id_jobs_video_id_fk": {
+          "name": "subtitle_runs_video_id_jobs_video_id_fk",
+          "tableFrom": "subtitle_runs",
           "tableTo": "jobs",
           "columnsFrom": [
             "video_id"
@@ -564,6 +1337,19 @@
             "video_id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "subtitle_runs_artifact_id_subtitle_artifacts_id_fk": {
+          "name": "subtitle_runs_artifact_id_subtitle_artifacts_id_fk",
+          "tableFrom": "subtitle_runs",
+          "tableTo": "subtitle_artifacts",
+          "columnsFrom": [
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

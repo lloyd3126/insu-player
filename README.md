@@ -30,24 +30,25 @@ Agent 處理一支影音時會：
 1. 解析目前專案的 workspace，啟動或沿用它自己的服務。
 2. 先用 Codex 內建瀏覽器開啟首頁，讓後續進度持續可見。
 3. 確認使用者有權下載與處理該媒體。
-4. 在檢查或取得字幕前，先詢問是否需要翻譯及目標 BCP 47 語言。
-5. 根據翻譯決定選擇字幕來源與模型，並將處理狀態寫入 job 紀錄。
+4. 在檢查或取得字幕前，先詢問要做同語言校正或翻譯，確認來源 BCP 47 語言，翻譯時再確認輸出語言。
+5. 讓使用者選擇本機或 OpenAI 模型，並將字幕來源、細粒度 timing、完整句內容與切分 revision 寫入 job 紀錄。
 6. 完成後在影音中心開啟播放，後續可從原進度續播。
 
 ### 字幕來源決定
 
-| 需求 | 處理方式 |
+| 來源 | 處理方式 |
 | --- | --- |
-| 不需要翻譯 | 優先使用來源平台已有字幕；沒有可用字幕時才需要轉錄 |
-| 需要翻譯 | 指定目標 BCP 47 語言並明確選擇本機或 OpenAI 模型，且不檢查、不下載任何平台字幕；改由選定模型從原始音訊產生來源 timed units |
+| 創作者人工 CC | 可立即播放，也可作為拼字與術語參考，但 cue 邊界不能當作細粒度 timing |
+| 平台自動字幕 | 一律不下載、不匯入，也不作為模型參考 |
+| 模型轉錄 | 從原始音訊產生來源語言的 word、token 或 grapheme-group timing，校正、翻譯與切分都必須使用 |
 
-### 翻譯與字幕重排
+### 校正 翻譯與字幕切分
 
-翻譯不是只替換字幕文字。完整流程會：
+字幕製作不是逐 cue 置換文字。完整流程會：
 
 1. 以模型產生的來源詞級或 Token 時間軸重建完整句子。
-2. 由 `$translate-subtitles` 完成目標語初譯，再以完整句進行潤色。
-3. 由獨立的 `$segment-subtitles` 先依目標語切分並 freeze，再對齊來源 timed units。
+2. 不翻譯時由 `$proofread-subtitles` 完成同語言校正；翻譯時由 `$translate-subtitles` 完成目標語初譯與完整句潤色。
+3. 由獨立的 `$segment-subtitles` 先依定稿輸出語言切分並 freeze，翻譯路徑即採 target-first，再對齊來源 timed units。
 4. 依語言與輸出 profile 處理寬度、標點、閱讀節奏、required terms 與 bilingual anchors。
 5. 通過 paired timing 與 deterministic validation 後，依來源／目標語言碼成對匯入字幕軌。
 
@@ -72,27 +73,32 @@ Agent 處理一支影音時會：
 | 我的影音 | 只顯示全寬搜尋列與影音卡片；有影音時預設開啟，網格最多三欄 |
 | 詳細資訊 | 顯示摘要統計、狀態篩選與固定欄寬列表；空庫時預設開啟 |
 
-「詳細資訊」的列表會顯示影音、目前狀態、字幕語言碼與操作。每筆影音的詳情依序分為「關於影音」、「執行紀錄」、「原始字幕」、「影音摘要」、「翻譯字幕」、「切分字幕」與「影音筆記」tabs：
+「詳細資訊」的列表會顯示影音、字幕語言碼與操作。每筆影音的詳情依序分為「關於影音」、「畫質管理」、「字幕管理」、「影音摘要」、「影音筆記」與「執行紀錄」六個 tabs：
 
 - 「關於影音」顯示目前狀態、來源、時長、容量、影音 ID、建立、更新、完成時間與狀態歷程，頁面本身固定，只有狀態歷程表格獨立捲動。
+- 「畫質管理」顯示來源可下載畫質、已下載 rendition、目前播放畫質、可用空間及下載進度。使用者明確點選哪個高度，就只下載並驗證該高度；不會自動降級，也不會在下載完成後擅自切換目前播放畫質。
+- 「字幕管理」最上方固定顯示一張製作提示卡，讓使用者把固定提示交給 Agent；其下是每個語言的目前播放版本選單，再以內層 tabs 管理「原始字幕」、「校正字幕」、「翻譯字幕」與「切分字幕」。只有字幕表格捲動，提示、播放版本、tabs、revision 與工具列保持固定。
+- 「原始字幕」只包含創作者人工 CC 或本機、OpenAI 模型從音訊產生的原始語言字幕；「校正字幕」顯示同語言完整句校正；「翻譯字幕」顯示跨語言完整翻譯；「切分字幕」顯示 output-first／target-first 切分與 Source Alignment 結果。
+- 製作、校正、翻譯、切分及重試都透過提示交給 Agent。介面中只有切換目前播放版本與刪除 revision 是使用者可直接執行的傳統操作。
+- 「影音摘要」與「影音筆記」目前使用共用空狀態 panel 保留功能位置。
 - 「執行紀錄」提供可交給 Agent 的檢查提示與全寬 log 內容。
-- 「原始字幕」顯示由 yt-dlp 取得或由本機、雲端模型從音訊轉錄的原始語言字幕。
-- 「翻譯字幕」顯示翻譯後的目標語言字幕與工作流程。
-- 「影音摘要」、「切分字幕」與「影音筆記」目前使用共用空狀態 panel 保留功能位置。
 
-「關於影音」底部另有移除按鈕，點擊後會開啟共用的直接刪除確認 Modal。Modal 開啟時由同源 API 執行唯讀預覽，沒有 blocker 才會啟用刪除；確認後後端會以該次預覽的 plan digest 執行並驗證，完成後清除前端快取並返回影音中心。相同元件與協議可延伸到具穩定 ID 的字幕、摘要與筆記，不需要複製提示或請 Agent 協助。
+「關於影音」底部另有移除按鈕，點擊後會開啟共用的直接刪除確認 Modal。Modal 開啟時由同源 API 執行唯讀預覽，沒有 blocker 才會啟用刪除；確認後後端會以該次預覽的 plan digest 執行並驗證，完成後清除前端快取並返回影音中心。非 active 的本地畫質也共用相同協議直接移除，保留影音、字幕與其他畫質；active 畫質必須先切換才可移除。相同元件與協議可延伸到具穩定 ID 的摘要與筆記，不需要複製提示或請 Agent 協助。
 
-字幕內容與 log 只在第一次切到對應分頁時載入，開啟「關於影音」不會先抓取這兩份較大的資料。
+畫質、字幕 catalog、所選字幕版本內容與 log 只在第一次切到對應分頁時載入，開啟「關於影音」不會先抓取這些資料。字幕內層分頁與 revision 會映射到 `/jobs/<video-id>/subtitles/<source|proofread|translation|segmentation>?artifact=<artifact-id>`，因此重新整理後仍保留目前畫面。
 
-目前狀態欄使用簡明的影音進度，並在字幕處理時直接顯示「模型詞級轉錄」、「初次翻譯」、「完整句潤色」、「目標語字幕切分」、「來源時間對齊」與「雙語成對驗證」等實際階段。
+播放器以每個語言獨立解析版本，預設順序是「有效切分字幕 > 有效完整句校正或翻譯 > 人工 CC > 模型原始字幕」。使用者在字幕管理中明確選擇的有效版本會持續保留；處理中、invalid 或 stale 的新版不會蓋掉既有可播版本。
 
-## 六個產品 skills
+影音摘要與關於頁使用簡明的處理狀態，並在字幕處理時直接顯示「模型詞級轉錄」、「初次翻譯」、「完整句潤色」、「目標語字幕切分」、「來源時間對齊」與「雙語成對驗證」等實際階段。
+
+## 七個產品 skills
 
 | Skill | 用途 |
 | --- | --- |
 | `$watch-video` | 主要入口：開啟首頁，新增影音，並協調字幕、轉錄與翻譯 |
 | `$video-library` | 啟動、檢查、修復、安全整理影音庫，或依 preview／confirm／execute／verify 協議移除單一資源 |
 | `$transcribe-media` | 將本機音訊或影音轉成正規化 JSON、純文字與 WebVTT |
+| `$proofread-subtitles` | 在來源語言內校正 ASR、術語與完整句，不負責翻譯或顯示切分 |
 | `$translate-subtitles` | 以詞級或 Token 時間重建完整句子，產生任意模型支援語言組合的完整自然譯文 |
 | `$segment-subtitles` | 先依目標語自然切分，再將 frozen pieces 對齊連續來源時間並輸出同步字幕 |
 | `$player-manager` | 檢查安裝狀態、安全更新或完整移除 INSU Player |
@@ -114,7 +120,7 @@ Agent 處理一支影音時會：
 | 層級 | 技術 | 職責 |
 | --- | --- | --- |
 | 前端 | React、React Router、Vite、shadcn/ui、Lucide | 固定首頁、可重新整理的 modal/tab 路由、影音中心、字幕對照與同源播放器 |
-| API | Hono on Bun | localhost JSON API、媒體 Range request、WebVTT、播放進度與本次服務環境變數 |
+| API | Hono on Bun | localhost JSON API、exact-height 背景下載、active rendition 切換、媒體 Range request、WebVTT、播放進度與本次服務環境變數 |
 | 查詢投影 | Drizzle、Bun SQLite | 將工作流程資料投影到 workspace 的 `app.db`，供首頁快速查詢 |
 | 工作流程 | `status.json`、history、log | 作為中斷復原與 job 狀態的事實來源，不被 `app.db` 反向覆寫 |
 | 執行環境 | project-local workspace | 保存 runtime、媒體、字幕、模型、cache 與播放進度 |
@@ -152,7 +158,7 @@ INSU_BUN="$INSU_BUN" "$INSU_BUN" run test:e2e --workers=1
 python3 -m unittest discover -s tests -v
 ```
 
-程式修改完成後，還需通過六個 skill validator 與 plugin validator。介面圖示統一使用 [Lucide](https://lucide.dev/)，執行時不載入圖示 CDN。
+程式修改完成後，還需通過七個 skill validator 與 plugin validator。介面圖示統一使用 [Lucide](https://lucide.dev/)，執行時不載入圖示 CDN。
 
 ## 更新與移除
 

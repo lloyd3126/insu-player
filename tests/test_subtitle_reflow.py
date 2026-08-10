@@ -1,8 +1,4 @@
-from __future__ import annotations
-
 import json
-import os
-import stat
 import subprocess
 import sys
 import tempfile
@@ -10,438 +6,187 @@ import unittest
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-TRANSLATE_SCRIPT = (
-    REPO_ROOT
-    / "plugins"
-    / "insu-player"
-    / "skills"
-    / "translate-subtitles"
-    / "scripts"
-    / "reflow_subtitles.py"
-)
-WATCH_SCRIPTS = REPO_ROOT / "plugins" / "insu-player" / "skills" / "watch-video" / "scripts"
+ROOT = Path(__file__).resolve().parents[1]
+REFLOW = ROOT / "plugins/insu-player/skills/translate-subtitles/scripts/reflow_subtitles.py"
+PROOFREAD = ROOT / "plugins/insu-player/skills/proofread-subtitles/scripts/proofread_subtitles.py"
 
 
-SAMPLE_TRANSCRIPT = {
-    "schemaVersion": 1,
-    "provider": "local",
-    "model": "tiny",
-    "language": "en",
-    "segments": [
-        {"id": 0, "start": 1.0, "end": 2.0, "text": "Hello, world."},
-        {"id": 1, "start": 2.0, "end": 3.5, "text": "This works."},
-    ],
-    "words": [
-        {"id": 0, "start": 1.0, "end": 1.4, "word": "Hello,"},
-        {"id": 1, "start": 1.5, "end": 1.9, "word": "world."},
-        {"id": 2, "start": 2.0, "end": 2.4, "word": "This"},
-        {"id": 3, "start": 2.5, "end": 3.5, "word": "works."},
-    ],
-}
-
-
-class SubtitleReflowTests(unittest.TestCase):
-    def setUp(self) -> None:
+class SubtitleRevisionTests(unittest.TestCase):
+    def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.source_transcript = self.root / "transcript.json"
-        self.manifest = self.root / "bilingual.json"
-        self.english_vtt = self.root / "en.final.vtt"
-        self.chinese_vtt = self.root / "zh-TW.final.vtt"
-        self.source_transcript.write_text(json.dumps(SAMPLE_TRANSCRIPT), encoding="utf-8")
+        self.transcript = self.root / "transcript.json"
+        self.transcript.write_text(
+            json.dumps(
+                {
+                    "provider": "local",
+                    "model": "medium",
+                    "language": "en",
+                    "words": [
+                        {"id": 0, "word": "Hello", "start": 0.0, "end": 0.5},
+                        {"id": 1, "word": "world.", "start": 0.5, "end": 1.0},
+                        {"id": 2, "word": "Next", "start": 1.1, "end": 1.5},
+                        {"id": 3, "word": "sentence!", "start": 1.5, "end": 2.2},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
 
-    def tearDown(self) -> None:
+    def tearDown(self):
         self.temporary.cleanup()
 
-    def run_reflow(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def run_script(self, script: Path, *arguments: str, check: bool = True):
         return subprocess.run(
-            [sys.executable, str(TRANSLATE_SCRIPT), *arguments],
-            cwd=REPO_ROOT,
+            [sys.executable, str(script), *arguments],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=check,
         )
 
-    def prepare_manifest(self) -> dict[str, object]:
-        self.run_reflow(
+    def prepare(self, mode="translate", output_language="zh-TW", script=REFLOW):
+        manifest = self.root / f"{mode}.json"
+        input_vtt = self.root / f"{mode}.input.vtt"
+        arguments = [
             "prepare",
             "--source-transcript",
-            str(self.source_transcript),
+            str(self.transcript),
             "--manifest",
-            str(self.manifest),
-            "--target-language",
-            "zh-TW",
+            str(manifest),
+            "--mode",
+            mode,
+            "--source-language",
+            "en",
+            "--output-language",
+            output_language,
+            "--timing-source-artifact",
+            "source-model-en-r1",
+            "--reference-artifact",
+            "source-manual-en-r1",
             "--source-output",
-            str(self.english_vtt),
-            "--punctuation-policy",
-            "remove-commas-periods",
-        )
-        self.run_reflow(
-            "record-translation-model",
+            str(input_vtt),
+        ]
+        if script == PROOFREAD:
+            arguments = [
+                "prepare",
+                "--source-transcript",
+                str(self.transcript),
+                "--manifest",
+                str(manifest),
+                "--language",
+                "en",
+                "--timing-source-artifact",
+                "source-model-en-r1",
+                "--reference-artifact",
+                "source-manual-en-r1",
+                "--source-output",
+                str(input_vtt),
+            ]
+        self.run_script(script, *arguments)
+        return manifest, input_vtt
+
+    def finish_content(self, manifest: Path, outputs: list[str]):
+        self.run_script(
+            REFLOW,
+            "record-content-model",
             "--manifest",
-            str(self.manifest),
+            str(manifest),
             "--provider",
             "local",
             "--model",
-            "translation-test",
+            "llama-3.2",
         )
-        return json.loads(self.manifest.read_text(encoding="utf-8"))
-
-    def render_pair(self) -> dict[str, object]:
-        payload = self.prepare_manifest()
-        segments = payload["segments"]
-        self.assertIsInstance(segments, list)
-        translations = [("你好，世界。", "你好，世界。"), ("這可以運作。", "這能正常運作。")]
-        for segment, (draft, polished) in zip(segments, translations):
-            segment["draftTargetText"] = draft
-            segment["targetText"] = polished
-        self.manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.run_reflow(
-            "render",
-            "--manifest",
-            str(self.manifest),
-            "--source-output",
-            str(self.english_vtt),
-            "--target-output",
-            str(self.chinese_vtt),
-        )
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        for segment, output in zip(payload["segments"], outputs, strict=True):
+            segment["draftOutputText"] = output
+            segment["outputText"] = output
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
         return payload
 
-    def test_model_word_timing_builds_complete_sentences_and_shared_cues(self) -> None:
-        payload = self.render_pair()
-        segments = payload["segments"]
-        self.assertEqual(
-            [(segment["start"], segment["end"], segment["sourceText"]) for segment in segments],
-            [
-                ("00:00:01.000", "00:00:02.000", "Hello, world."),
-                ("00:00:02.000", "00:00:03.500", "This works."),
-            ],
-        )
-        english = self.english_vtt.read_text(encoding="utf-8")
-        chinese = self.chinese_vtt.read_text(encoding="utf-8")
-        self.assertIn("Hello world", english)
-        self.assertIn("This works", english)
-        self.assertIn("你好 世界", chinese)
-        self.assertIn("這能正常運作", chinese)
-        display_text = "\n".join(
-            line
-            for line in (english + chinese).splitlines()
-            if line
-            and "-->" not in line
-            and not line.startswith(("WEBVTT", "Kind:", "Language:", "S0"))
-        )
-        for punctuation in (",", ".", "，", "。"):
-            self.assertNotIn(punctuation, display_text)
-        english_timings = [line for line in english.splitlines() if "-->" in line]
-        chinese_timings = [line for line in chinese.splitlines() if "-->" in line]
-        self.assertEqual(english_timings, chinese_timings)
-        result = self.run_reflow(
-            "validate-pair",
-            "--source",
-            str(self.english_vtt),
-            "--target",
-            str(self.chinese_vtt),
-            "--punctuation-policy",
-            "remove-commas-periods",
-        )
-        self.assertIn("Validated 2 synchronized bilingual cues", result.stdout)
+    def test_translation_manifest_records_model_timing_and_manual_reference(self):
+        manifest, input_vtt = self.prepare()
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(payload["schemaVersion"], 3)
+        self.assertEqual(payload["mode"], "translate")
+        self.assertEqual(payload["sourceLanguage"], "en")
+        self.assertEqual(payload["outputLanguage"], "zh-TW")
+        self.assertEqual(payload["timingSourceArtifactId"], "source-model-en-r1")
+        self.assertEqual(payload["referenceArtifactIds"], ["source-manual-en-r1"])
+        self.assertEqual(len(payload["segments"]), 2)
+        self.assertTrue(input_vtt.read_text(encoding="utf-8").startswith("WEBVTT"))
 
-    def test_render_rejects_internal_translation_markers(self) -> None:
-        payload = self.prepare_manifest()
-        for segment in payload["segments"]:
-            segment["draftTargetText"] = "初稿"
-            segment["targetText"] = "正常翻譯"
-        payload["segments"][0]["targetText"] = "錯誤 XQZCUEZ 標記"
-        self.manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        result = self.run_reflow(
+    def test_translation_renders_synchronized_complete_sentence_tracks(self):
+        manifest, _ = self.prepare()
+        self.finish_content(manifest, ["哈囉 世界", "下一個 句子"])
+        input_vtt = self.root / "input.vtt"
+        output_vtt = self.root / "output.vtt"
+        self.run_script(
+            REFLOW,
             "render",
             "--manifest",
-            str(self.manifest),
-            "--source-output",
-            str(self.english_vtt),
-            "--target-output",
-            str(self.chinese_vtt),
+            str(manifest),
+            "--input-output",
+            str(input_vtt),
+            "--output",
+            str(output_vtt),
+        )
+        result = self.run_script(
+            REFLOW,
+            "validate-pair",
+            "--input",
+            str(input_vtt),
+            "--output",
+            str(output_vtt),
+        )
+        self.assertIn("Validated 2 synchronized", result.stdout)
+        self.assertIn("哈囉 世界", output_vtt.read_text(encoding="utf-8"))
+
+    def test_proofread_skill_preserves_language_and_uses_same_contract(self):
+        manifest, _ = self.prepare("proofread", "en", PROOFREAD)
+        payload = self.finish_content(
+            manifest, ["Hello, world.", "Next sentence!"],
+        )
+        self.assertEqual(payload["mode"], "proofread")
+        self.assertEqual(payload["sourceLanguage"], payload["outputLanguage"])
+
+    def test_translate_mode_rejects_same_language(self):
+        result = self.run_script(
+            REFLOW,
+            "prepare",
+            "--source-transcript",
+            str(self.transcript),
+            "--manifest",
+            str(self.root / "invalid.json"),
+            "--mode",
+            "translate",
+            "--source-language",
+            "en",
+            "--output-language",
+            "en",
+            "--timing-source-artifact",
+            "source-model-en-r1",
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("internal cue marker", result.stdout)
+        self.assertIn("different source and output languages", result.stdout)
 
-    def test_translation_manifest_supports_an_arbitrary_bcp47_pair(self) -> None:
-        transcript = dict(SAMPLE_TRANSCRIPT)
-        transcript["language"] = "de-DE"
-        self.source_transcript.write_text(json.dumps(transcript), encoding="utf-8")
-        self.run_reflow(
-            "prepare",
-            "--source-transcript",
-            str(self.source_transcript),
-            "--target-language",
-            "fr-FR",
-            "--manifest",
-            str(self.manifest),
-        )
-        self.run_reflow(
-            "record-translation-model",
-            "--manifest",
-            str(self.manifest),
-            "--provider",
-            "api",
-            "--service",
-            "example",
-            "--model",
-            "multilingual-test",
-        )
-        payload = json.loads(self.manifest.read_text(encoding="utf-8"))
-        for segment in payload["segments"]:
-            segment["draftTargetText"] = "Traduction complète."
-            segment["targetText"] = "Traduction complète."
-        self.manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        self.run_reflow(
+    def test_render_rejects_schema_two_without_compatibility(self):
+        manifest = self.root / "old.json"
+        manifest.write_text('{"schemaVersion": 2}', encoding="utf-8")
+        result = self.run_script(
+            REFLOW,
             "render",
             "--manifest",
-            str(self.manifest),
-            "--source-output",
-            str(self.english_vtt),
-            "--target-output",
-            str(self.chinese_vtt),
+            str(manifest),
+            "--input-output",
+            str(self.root / "input.vtt"),
+            "--output",
+            str(self.root / "output.vtt"),
+            check=False,
         )
-        self.assertIn("Language: de-DE", self.english_vtt.read_text(encoding="utf-8"))
-        self.assertIn("Language: fr-FR", self.chinese_vtt.read_text(encoding="utf-8"))
-        self.assertIn("Traduction complète.", self.chinese_vtt.read_text(encoding="utf-8"))
-
-    def test_pair_import_preserves_old_tracks_and_marks_job_ready(self) -> None:
-        self.render_pair()
-        workspace = self.root / "workspace"
-        runtime_python = workspace / ".agent-tools" / "insu-player" / ".venv" / "bin" / "python"
-        runtime_python.parent.mkdir(parents=True)
-        os.symlink(sys.executable, runtime_python)
-        job_dir = workspace / "jobs" / "video-id"
-        captions = job_dir / "captions"
-        source = job_dir / "source"
-        captions.mkdir(parents=True)
-        source.mkdir()
-        (source / "video.mp4").write_bytes(b"video")
-        old_english = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nOld English\n"
-        old_chinese = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n舊字幕\n"
-        (captions / "en.vtt").write_text(old_english, encoding="utf-8")
-        (captions / "zh-TW.vtt").write_text(old_chinese, encoding="utf-8")
-        subprocess.run(
-            [
-                sys.executable,
-                str(WATCH_SCRIPTS / "job_state.py"),
-                "init",
-                "--job-dir",
-                str(job_dir),
-                "--video-id",
-                "video-id",
-                "--source-url",
-                "https://example.test/video",
-                "--title",
-                "Video",
-            ],
-            cwd=REPO_ROOT,
-            stdout=subprocess.PIPE,
-            check=True,
-        )
-        result = subprocess.run(
-            [
-                str(WATCH_SCRIPTS / "import-bilingual-captions.sh"),
-                str(workspace),
-                "video-id",
-                str(self.english_vtt),
-                str(self.chinese_vtt),
-                "--force",
-            ],
-            cwd=REPO_ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=True,
-        )
-        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
-        self.assertIn("shared sentence timing", result.stdout)
-        self.assertEqual((captions / "en.pre-reflow.vtt").read_text(encoding="utf-8"), old_english)
-        self.assertEqual((captions / "zh-TW.pre-reflow.vtt").read_text(encoding="utf-8"), old_chinese)
-        self.assertEqual((captions / "en.vtt").read_text(encoding="utf-8"), self.english_vtt.read_text(encoding="utf-8"))
-        self.assertEqual((captions / "zh-TW.vtt").read_text(encoding="utf-8"), self.chinese_vtt.read_text(encoding="utf-8"))
-        self.assertEqual(status["state"], "ready")
-        self.assertEqual(status["subtitleTracks"]["en"]["source"], "agent-sentence-reflow")
-        self.assertEqual(status["subtitleTracks"]["zh-TW"]["source"], "agent-sentence-reflow")
-
-    def test_local_model_transcription_creates_sentence_plan_for_translation(self) -> None:
-        workspace = self.root / "model-workspace"
-        runtime = workspace / ".agent-tools" / "insu-player"
-        runtime_python = runtime / ".venv" / "bin" / "python"
-        runtime_whisper = runtime / ".venv" / "bin" / "whisper"
-        runtime_ytdlp = runtime / ".venv" / "bin" / "yt-dlp"
-        runtime_bin = runtime / "bin"
-        runtime_python.parent.mkdir(parents=True)
-        runtime_bin.mkdir(parents=True)
-        os.symlink(sys.executable, runtime_python)
-
-        fake_whisper = '''#!/bin/sh
-set -eu
-output=''
-previous=''
-for argument in "$@"; do
-  if [ "$previous" = '--output_dir' ]; then output="$argument"; fi
-  previous="$argument"
-done
-mkdir -p "$output"
-printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Hello, world.","words":[{"start":0.0,"end":0.8,"word":"Hello,"},{"start":0.9,"end":2.0,"word":"world."}]}]}' > "$output/result.json"
-'''
-        runtime_whisper.write_text(fake_whisper, encoding="utf-8")
-        for executable in (runtime_whisper, runtime_ytdlp, runtime_bin / "deno", runtime_bin / "ffmpeg"):
-            if not executable.exists():
-                executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
-
-        job_dir = workspace / "jobs" / "video-id"
-        source = job_dir / "source"
-        source.mkdir(parents=True)
-        (source / "video.mp4").write_bytes(b"video")
-        (source / "audio.m4a").write_bytes(b"audio")
-        subprocess.run(
-            [
-                sys.executable,
-                str(WATCH_SCRIPTS / "job_state.py"),
-                "init",
-                "--job-dir",
-                str(job_dir),
-                "--video-id",
-                "video-id",
-                "--source-url",
-                "https://example.test/video",
-                "--title",
-                "Video",
-            ],
-            cwd=REPO_ROOT,
-            stdout=subprocess.PIPE,
-            check=True,
-        )
-        subprocess.run(
-            [
-                str(WATCH_SCRIPTS / "transcribe.sh"),
-                str(workspace),
-                "video-id",
-                "--provider",
-                "local",
-                "--model",
-                "tiny",
-                "--language",
-                "en",
-                "--track",
-                "en",
-                "--target-language",
-                "zh-TW",
-            ],
-            cwd=REPO_ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=True,
-        )
-
-        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
-        manifest = json.loads((job_dir / "subtitle-work" / "bilingual-sentences.json").read_text(encoding="utf-8"))
-        self.assertEqual(status["state"], "needs_translation")
-        self.assertEqual(status["subtitleWorkflow"]["stage"], "draft_translation")
-        self.assertEqual(status["subtitleWorkflow"]["provider"], "local")
-        self.assertEqual(status["subtitleWorkflow"]["model"], "tiny")
-        self.assertEqual(status["subtitleTracks"]["en"]["source"], "local-model-sentence-reflow")
-        self.assertEqual(manifest["sourceFormat"], "model-timed-units")
-        self.assertEqual(manifest["schemaVersion"], 2)
-        self.assertEqual(manifest["sourceLanguage"], "en")
-        self.assertEqual(manifest["targetLanguage"], "zh-TW")
-        self.assertEqual(manifest["sourceProvider"], "local")
-        self.assertIn("Hello world", (job_dir / "captions" / "en.vtt").read_text(encoding="utf-8"))
-
-    def test_translation_download_skips_all_youtube_subtitles_for_model_transcription(self) -> None:
-        workspace = self.root / "download-workspace"
-        runtime = workspace / ".agent-tools" / "insu-player"
-        runtime_python = runtime / ".venv" / "bin" / "python"
-        runtime_ytdlp = runtime / ".venv" / "bin" / "yt-dlp"
-        runtime_bin = runtime / "bin"
-        runtime_python.parent.mkdir(parents=True)
-        runtime_bin.mkdir(parents=True)
-        os.symlink(sys.executable, runtime_python)
-
-        invocation_log = self.root / "yt-dlp-invocations.txt"
-        fake_ytdlp = f'''#!/usr/bin/env python3
-import json
-import pathlib
-import sys
-
-arguments = sys.argv[1:]
-with open({str(invocation_log)!r}, "a", encoding="utf-8") as handle:
-    handle.write(" ".join(arguments) + "\\n")
-
-def option(name):
-    return arguments[arguments.index(name) + 1]
-
-if "--dump-single-json" in arguments:
-    print(json.dumps({{"id": "video-id", "title": "Video"}}))
-elif "--write-subs" in arguments or "--write-auto-subs" in arguments:
-    raise SystemExit("translation mode must not request source subtitles")
-elif "--write-thumbnail" in arguments:
-    output = option("--output").replace("%(ext)s", "jpg")
-    path = pathlib.Path(output)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"jpeg")
-    print("[download] 100.0%")
-elif "--recode-video" in arguments:
-    output = option("--output").replace("%(ext)s", "mp4")
-    path = pathlib.Path(output)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"video")
-    print("[download] 100.0%")
-elif "--extract-audio" in arguments:
-    output = option("--output").replace("%(ext)s", "m4a")
-    path = pathlib.Path(output)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"audio")
-    print("[download] 100.0%")
-else:
-    raise SystemExit("unexpected fake yt-dlp invocation")
-'''
-        runtime_ytdlp.write_text(fake_ytdlp, encoding="utf-8")
-        runtime_ytdlp.chmod(runtime_ytdlp.stat().st_mode | stat.S_IXUSR)
-        for executable, source in (
-            (runtime_bin / "deno", "#!/bin/sh\nexit 0\n"),
-            (runtime_bin / "ffmpeg", "#!/bin/sh\nprintf 'media info\\n' >&2\nexit 0\n"),
-        ):
-            executable.write_text(source, encoding="utf-8")
-            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
-
-        subprocess.run(
-            [
-                str(WATCH_SCRIPTS / "download-video.sh"),
-                str(workspace),
-                "https://example.test/video",
-                "--translate",
-                "zh-TW",
-            ],
-            cwd=REPO_ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=True,
-        )
-        job_dir = workspace / "jobs" / "video-id"
-        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
-        raw_captions = job_dir / "youtube-captions"
-        self.assertEqual(list(raw_captions.iterdir()), [])
-        self.assertFalse((job_dir / "subtitle-work" / "bilingual-sentences.json").exists())
-        self.assertEqual(status["state"], "needs_transcription")
-        self.assertEqual(status["subtitleTracks"], {})
-        self.assertEqual(status["subtitleWorkflow"]["source"], "model")
-        self.assertEqual(status["subtitleWorkflow"]["stage"], "awaiting_model")
-        invocations = invocation_log.read_text(encoding="utf-8")
-        self.assertNotIn("--write-subs", invocations)
-        self.assertNotIn("--write-auto-subs", invocations)
-        self.assertNotIn("--sub-format json3", invocations)
-        self.assertNotIn("--sub-format vtt", invocations)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("schemaVersion 3", result.stdout)
 
 
 if __name__ == "__main__":

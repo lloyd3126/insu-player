@@ -14,6 +14,7 @@ EXPECTED_SKILLS = {
     "video-library",
     "transcribe-media",
     "translate-subtitles",
+    "proofread-subtitles",
     "segment-subtitles",
     "player-manager",
 }
@@ -134,21 +135,29 @@ class ProductBoundaryTests(unittest.TestCase):
         portable_add = (REPO_ROOT / "scripts" / "portable" / "add-video.sh").read_text(encoding="utf-8")
         reflow = PLUGIN_ROOT / "skills" / "translate-subtitles" / "scripts" / "reflow_subtitles.py"
         segmentation = PLUGIN_ROOT / "skills" / "segment-subtitles" / "scripts" / "segment_subtitles.py"
-        pair_import = PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "import-bilingual-captions.sh"
+        revision_import = PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "import-subtitle-revision.sh"
 
         self.assertIn("Before inspecting or downloading subtitles, ask", watch_skill)
-        self.assertIn("must not inspect or download platform captions", translate_skill)
-        self.assertIn("local or API", translate_skill)
-        self.assertIn("skipping all source subtitles", download)
+        self.assertIn("Never inspect, download, import, or reference platform automatic captions", translate_skill)
+        self.assertIn("local or explicitly authorized OpenAI", translate_skill)
+        self.assertIn("--write-subs", download)
+        self.assertNotIn("--write-auto-subs", download)
+        self.assertIn("automatic captions are intentionally excluded", download)
         self.assertNotIn("json3", download.lower())
+        self.assertIn("--allow-low-quality", download)
+        self.assertIn("fresh", download)
+        self.assertIn("media-work/catalog.json", watch_skill)
+        self.assertIn("exact-height", watch_skill)
+        self.assertIn("single HTTP 403", watch_skill)
+        self.assertIn("separately prepared audio track", watch_skill)
         self.assertIn('"timestamp_granularities": ["segment", "word"]', transcriber)
-        self.assertIn("--translate TARGET or --no-translate", portable_add)
-        self.assertIn("translation requires asking the user to choose --provider", portable_add)
+        self.assertIn("--proofread or --translate TARGET_BCP47", portable_add)
+        self.assertIn("subtitle production requires asking the user to choose --provider", portable_add)
         self.assertTrue(reflow.is_file())
         self.assertTrue(segmentation.is_file())
-        self.assertTrue(pair_import.is_file())
+        self.assertTrue(revision_import.is_file())
         self.assertIn("BCP 47", translate_skill)
-        self.assertIn("leave target-first display segmentation", translate_skill)
+        self.assertIn("separately owns display cuts and Source Alignment", translate_skill)
         self.assertIn("freeze-target", segment_skill)
         self.assertIn("Source Alignment", segment_skill)
 
@@ -204,7 +213,7 @@ class ProductBoundaryTests(unittest.TestCase):
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobAboutPanel.tsx"
         ).read_text(encoding="utf-8")
         detail_subtitle_component = (
-            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobSubtitlePanel.tsx"
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "SubtitleArtifactPanel.tsx"
         ).read_text(encoding="utf-8")
         detail_activity_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobActivityPanel.tsx"
@@ -257,16 +266,14 @@ class ProductBoundaryTests(unittest.TestCase):
         serve_script = (
             PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "serve-library.sh"
         ).read_text(encoding="utf-8")
-        python_server = (
-            PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "library_server.py"
-        ).read_text(encoding="utf-8")
+        python_server = PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "library_server.py"
         package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
 
         self.assertTrue(all(not path.exists() for path in legacy_assets))
         self.assertNotIn("legacyLibraryRoot", server_app + server_entry)
         self.assertNotIn("legacy-library-template", server_entry + serve_script)
         self.assertIn('path.join(options.libraryAppRoot, "assets")', server_app)
-        self.assertIn('"assets" / "library" / "app"', python_server)
+        self.assertFalse(python_server.exists())
         self.assertTrue(built_home.is_file())
         self.assertIn('id="root"', built_home.read_text(encoding="utf-8"))
         self.assertTrue(app_icon.is_file())
@@ -324,12 +331,21 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("實際下載大小", models_component)
 
         self.assertIn('value="about"', detail_component)
-        self.assertIn('value="activity"', detail_component)
-        self.assertIn('value="source-subtitle"', detail_component)
+        self.assertIn('value="quality"', detail_component)
+        self.assertIn('value="subtitles"', detail_component)
         self.assertIn('value="summary"', detail_component)
-        self.assertIn('value="translated-subtitle"', detail_component)
-        self.assertIn('value="segmentation"', detail_component)
         self.assertIn('value="notes"', detail_component)
+        self.assertIn('value="activity"', detail_component)
+        self.assertIn("字幕管理", detail_component)
+        self.assertNotIn('value="source-subtitle"', detail_component)
+        self.assertNotIn('value="translated-subtitle"', detail_component)
+        self.assertIn("SubtitleManagementPanel", detail_component)
+        self.assertIn('"source",', detail_subtitle_component)
+        self.assertIn('"proofread",', detail_subtitle_component)
+        self.assertIn('"translation",', detail_subtitle_component)
+        self.assertIn('"segmentation",', detail_subtitle_component)
+        self.assertIn("SubtitleManagementProvider", detail_subtitle_component)
+        self.assertIn('aria-label="字幕類型"', detail_subtitle_component)
         self.assertIn("JobHistoryCard", detail_about_component)
         self.assertIn("VideoRemovalDialog", detail_about_component)
         self.assertIn("ScrollArea", detail_history_component)
@@ -356,7 +372,8 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("ON DELETE CASCADE", removal_protocol)
         self.assertIn("No removal prompt or Agent handoff", removal_protocol)
         self.assertIn("ResourceRemovalDialog", removal_protocol)
-        self.assertIn("useJobCaptions", detail_subtitle_component)
+        self.assertIn("useSubtitleCatalog", detail_subtitle_component)
+        self.assertIn("useSubtitleArtifactCaptions", detail_subtitle_component)
         self.assertIn("useJobLog", detail_activity_component)
         self.assertNotIn("狀態歷程", detail_activity_component)
         self.assertNotIn("CardHeader", detail_activity_component)

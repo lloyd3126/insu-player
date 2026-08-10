@@ -24,8 +24,9 @@
 - `$watch-video` 是對使用者的主要入口。
 - 固定首頁是唯一觀看入口；播放器在同源 iframe modal 內開啟。
 - `status.json`、job history 與 log 是中斷復原的事實來源。
-- 不需要翻譯時優先使用來源既有字幕；沒有字幕才轉錄。
-- 取得字幕前先確認是否需要翻譯與目標 BCP 47 語言。需要翻譯時再要求選擇本機或 OpenAI 模型，且禁止取得任何平台字幕；模型從原始音訊產生來源語言的詞級或 Token 時間，`translate-subtitles` 重建完整句並完成初譯與潤色，`segment-subtitles` 再以 target-first 固定目標語切分並對齊連續來源時間，驗證後成對匯入兩軌。
-- 程式修改後執行全部測試、六個 skill validator、plugin validator 與 release 建置測試。
+- 來源字幕只接受創作者人工 CC 或由模型從原始音訊產生的轉錄；平台自動字幕一律不得下載、匯入或作為參考。人工 CC 可立即播放，也可作為文字與術語參考，但不能作為細粒度 timing。
+- 取得字幕前先確認要同語言校正或翻譯，並確認來源 BCP 47 語言；翻譯時再確認輸出語言。兩條路徑都要讓使用者選擇本機或 OpenAI 模型，並從音訊建立詞、Token 或 grapheme-group 時間。`proofread-subtitles` 負責同語言完整句校正，`translate-subtitles` 負責跨語言完整句初譯與潤色，`segment-subtitles` 再獨立以 output-first／target-first 固定切分並對齊連續來源時間。
+- 字幕管理介面只允許使用者直接切換目前播放版本與刪除字幕；製作、校正、翻譯、切分及重試都由固定提示交給 Agent 與對應 skill 執行。
+- 程式修改後執行全部測試、七個 skill validator、plugin validator 與 release 建置測試。
 
 完整 skill 的唯一來源位於 `plugins/insu-player/skills/`；`.agents/skills/` 只做 repository discovery bridge，不要複製業務邏輯。

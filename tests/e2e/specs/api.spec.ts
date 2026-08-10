@@ -26,7 +26,6 @@ test.describe("Hono API contracts @api", () => {
     const captions = await request.get("/api/jobs/demo-video/captions")
     await expect(captions).toBeOK()
     expect(await captions.json()).toMatchObject({
-      baselineLanguage: "en",
       tracks: [{ code: "en" }, { code: "zh-TW" }],
     })
 

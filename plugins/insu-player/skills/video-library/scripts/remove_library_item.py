@@ -18,6 +18,8 @@ from typing import Any, Protocol
 
 SCHEMA_VERSION = 1
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
+RENDITION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
 SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 class RemovalError(RuntimeError):
     pass
@@ -57,6 +59,32 @@ def validate_video_id(video_id: str) -> str:
     if not VIDEO_ID_PATTERN.fullmatch(video_id):
         raise RemovalError("video ID may contain only letters, numbers, underscore, and hyphen")
     return video_id
+
+
+def validate_artifact_id(artifact_id: str) -> str:
+    if not ARTIFACT_ID_PATTERN.fullmatch(artifact_id):
+        raise RemovalError("subtitle artifact ID contains unsupported characters")
+    return artifact_id
+
+
+def validate_rendition_id(rendition_id: str) -> str:
+    if not RENDITION_ID_PATTERN.fullmatch(rendition_id):
+        raise RemovalError("media rendition ID contains unsupported characters")
+    return rendition_id
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def process_is_alive(pid: object) -> bool:
@@ -463,7 +491,745 @@ class VideoRemovalHandler:
         }
 
 
-HANDLERS: dict[str, RemovalHandler] = {"video": VideoRemovalHandler()}
+class SubtitleArtifactRemovalHandler:
+    kind = "subtitle-artifact"
+
+    def parse_resource_id(self, resource_id: str) -> tuple[str, str]:
+        video_id, separator, artifact_id = resource_id.partition(":")
+        if not separator:
+            raise RemovalError("subtitle artifact target is incomplete")
+        return validate_video_id(video_id), validate_artifact_id(artifact_id)
+
+    def job_directory(self, workspace: Path, video_id: str) -> Path:
+        directory = workspace / "jobs" / video_id
+        if directory.parent != workspace / "jobs":
+            raise RemovalError("resolved subtitle job escaped the workspace")
+        if not directory.is_dir() or directory.is_symlink():
+            raise RemovalError(f"video job not found: {directory}")
+        return directory
+
+    def artifacts(self, job_directory: Path, status: dict[str, Any]) -> list[dict[str, Any]]:
+        if status.get("schemaVersion") != 3:
+            raise RemovalError("subtitle status must use schemaVersion 3")
+        raw = status.get("subtitleArtifacts")
+        if not isinstance(raw, list) or not all(isinstance(artifact, dict) for artifact in raw):
+            raise RemovalError("subtitle status must contain subtitleArtifacts")
+        return raw
+
+    def cascade_ids(
+        self, artifacts: list[dict[str, Any]], artifact_id: str
+    ) -> set[str]:
+        ids = {
+            str(artifact.get("id"))
+            for artifact in artifacts
+            if isinstance(artifact.get("id"), str)
+        }
+        if artifact_id not in ids:
+            raise RemovalError(f"subtitle artifact not found: {artifact_id}")
+        removed = {artifact_id}
+        changed = True
+        while changed:
+            changed = False
+            for artifact in artifacts:
+                candidate_id = artifact.get("id")
+                dependencies = artifact.get("dependencies")
+                if not isinstance(candidate_id, str) or candidate_id in removed:
+                    continue
+                dependency_ids = {
+                    dependency.get("artifactId")
+                    for dependency in dependencies
+                    if isinstance(dependency, dict)
+                    and isinstance(dependency.get("artifactId"), str)
+                } if isinstance(dependencies, list) else set()
+                if dependency_ids.intersection(removed):
+                    removed.add(candidate_id)
+                    changed = True
+        return removed
+
+    def owned_paths(
+        self,
+        job_directory: Path,
+        artifacts: list[dict[str, Any]],
+        removed_ids: set[str],
+    ) -> tuple[list[Path], list[dict[str, str]]]:
+        survivor_paths: set[str] = set()
+        removed_paths: set[str] = set()
+        blocked: list[dict[str, str]] = []
+        for artifact in artifacts:
+            artifact_id = artifact.get("id")
+            paths: list[tuple[str, str]] = []
+            raw_manifest = artifact.get("manifestPath")
+            if isinstance(raw_manifest, str):
+                paths.append((raw_manifest, "manifest"))
+            raw_tracks = artifact.get("tracks")
+            if isinstance(raw_tracks, list):
+                for raw_track in raw_tracks:
+                    if not isinstance(raw_track, dict):
+                        continue
+                    raw_path = raw_track.get("path")
+                    if isinstance(raw_path, str):
+                        paths.append((raw_path, "track"))
+            target = removed_paths if artifact_id in removed_ids else survivor_paths
+            for raw_path, path_kind in paths:
+                candidate = (job_directory / raw_path).resolve()
+                try:
+                    relative = candidate.relative_to(job_directory.resolve())
+                except ValueError:
+                    blocked.append(
+                        {
+                            "code": "unsafe-subtitle-path",
+                            "message": "subtitle artifact path escaped its job directory",
+                        }
+                    )
+                    continue
+                permitted = (
+                    path_kind == "track"
+                    and candidate.suffix == ".vtt"
+                    and len(relative.parts) >= 4
+                    and relative.parts[:3] == ("subtitle-work", "artifacts", str(artifact_id))
+                ) or (
+                    path_kind == "manifest"
+                    and candidate.suffix == ".json"
+                    and len(relative.parts) >= 4
+                    and relative.parts[:3] == ("subtitle-work", "artifacts", str(artifact_id))
+                )
+                if not permitted:
+                    blocked.append(
+                        {
+                            "code": "unsafe-subtitle-path",
+                            "message": "subtitle artifact owns an unsupported path",
+                        }
+                    )
+                    continue
+                target.add(relative.as_posix())
+        paths = []
+        for relative in sorted(removed_paths - survivor_paths):
+            candidate = job_directory / relative
+            if candidate.exists():
+                if candidate.is_symlink() or not candidate.is_file():
+                    blocked.append(
+                        {
+                            "code": "unsafe-subtitle-path",
+                            "message": "subtitle artifact contains a non-regular file",
+                        }
+                    )
+                else:
+                    paths.append(candidate)
+        registered_removed_paths = {
+            candidate.relative_to(job_directory).as_posix() for candidate in paths
+        }
+        for artifact_id in sorted(removed_ids):
+            artifact_directory = (
+                job_directory / "subtitle-work" / "artifacts" / artifact_id
+            )
+            if not artifact_directory.exists():
+                continue
+            if artifact_directory.is_symlink() or not artifact_directory.is_dir():
+                blocked.append(
+                    {
+                        "code": "unsafe-subtitle-directory",
+                        "message": "subtitle artifact directory is not a regular directory",
+                    }
+                )
+                continue
+            for candidate in artifact_directory.rglob("*"):
+                if candidate.is_symlink():
+                    blocked.append(
+                        {
+                            "code": "unsafe-subtitle-path",
+                            "message": "subtitle artifact directory contains a symlink",
+                        }
+                    )
+                    continue
+                if candidate.is_file():
+                    relative = candidate.relative_to(job_directory).as_posix()
+                    if relative not in registered_removed_paths:
+                        blocked.append(
+                            {
+                                "code": "unregistered-subtitle-file",
+                                "message": "subtitle artifact directory contains an unregistered file",
+                            }
+                        )
+        return paths, blocked
+
+    def preview(self, workspace: Path, resource_id: str) -> dict[str, Any]:
+        video_id, artifact_id = self.parse_resource_id(resource_id)
+        job_directory = self.job_directory(workspace, video_id)
+        status, status_error = read_status(job_directory)
+        if status_error:
+            raise RemovalError(f"subtitle status is unreadable: {status_error}")
+        artifacts = self.artifacts(job_directory, status)
+        removed_ids = self.cascade_ids(artifacts, artifact_id)
+        owned_paths, blocked = self.owned_paths(
+            job_directory, artifacts, removed_ids
+        )
+        process = status.get("process") if isinstance(status.get("process"), dict) else {}
+        pid = process.get("pid") if isinstance(process, dict) else None
+        if process_is_alive(pid):
+            blocked.append(
+                {
+                    "code": "active-process",
+                    "message": "the job has a live processing command",
+                }
+            )
+        path_inventory = [
+            {
+                "path": candidate.relative_to(workspace).as_posix(),
+                "bytes": candidate.stat().st_size,
+                "mtimeNs": candidate.stat().st_mtime_ns,
+            }
+            for candidate in owned_paths
+        ]
+        status_path = job_directory / "status.json"
+        plan: dict[str, Any] = {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "remove",
+            "target": {
+                "kind": self.kind,
+                "videoId": video_id,
+                "artifactId": artifact_id,
+            },
+            "workspace": str(workspace),
+            "generatedAt": utc_now(),
+            "statusFingerprint": hashlib.sha256(
+                status_path.read_bytes()
+            ).hexdigest(),
+            "removedArtifactIds": sorted(removed_ids),
+            "files": path_inventory,
+            "dependencyPolicy": "cascade-dependent-subtitle-artifacts",
+            "blocked": blocked,
+            "warnings": [],
+        }
+        plan["digest"] = plan_digest(plan)
+        return plan
+
+    def clear_projection(self, workspace: Path, video_id: str) -> None:
+        database_path = workspace / "app.db"
+        if not database_path.exists():
+            return
+        connection = sqlite3.connect(database_path, timeout=10)
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            connection.execute("BEGIN IMMEDIATE")
+            for table in (
+                "active_subtitle_tracks",
+                "subtitle_runs",
+                "subtitle_artifact_tracks",
+                "subtitle_artifacts",
+            ):
+                if table in tables:
+                    connection.execute(
+                        f'DELETE FROM {safe_identifier(table)} WHERE "video_id" = ?',
+                        (video_id,),
+                    )
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def execute(
+        self, workspace: Path, resource_id: str, expected_digest: str
+    ) -> dict[str, Any]:
+        video_id, artifact_id = self.parse_resource_id(resource_id)
+        plan = self.preview(workspace, resource_id)
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+            raise RemovalError("plan digest must be a lowercase SHA-256 value")
+        if expected_digest != plan["digest"]:
+            raise RemovalError("removal plan is stale; preview again")
+        if plan["blocked"]:
+            raise RemovalError("removal plan is blocked")
+
+        job_directory = self.job_directory(workspace, video_id)
+        status_path = job_directory / "status.json"
+        original_status = status_path.read_bytes()
+        status = json.loads(original_status)
+        artifacts = self.artifacts(job_directory, status)
+        removed_ids = set(plan["removedArtifactIds"])
+        survivors = [
+            artifact
+            for artifact in artifacts
+            if artifact.get("id") not in removed_ids
+        ]
+        removed_track_ids = {
+            track.get("id")
+            for artifact in artifacts
+            if artifact.get("id") in removed_ids
+            for track in artifact.get("tracks", [])
+            if isinstance(track, dict) and isinstance(track.get("id"), str)
+        }
+        active = status.get("activeSubtitleTracks")
+        if isinstance(active, dict):
+            status["activeSubtitleTracks"] = {
+                language: track_id
+                for language, track_id in active.items()
+                if track_id not in removed_track_ids
+            }
+        status["subtitleArtifacts"] = survivors
+        removed_relative_paths = {
+            (workspace / str(raw_file["path"])).relative_to(job_directory).as_posix()
+            for raw_file in plan["files"]
+        }
+        assets = status.get("assets")
+        if isinstance(assets, dict):
+            status["assets"] = {
+                name: metadata
+                for name, metadata in assets.items()
+                if not (
+                    isinstance(metadata, dict)
+                    and metadata.get("path") in removed_relative_paths
+                )
+            }
+
+        survivor_kinds = {
+            artifact.get("kind")
+            for artifact in survivors
+            if isinstance(artifact.get("kind"), str)
+        }
+        pipeline = status.get("subtitlePipeline")
+        pipeline_mode = (
+            str(pipeline.get("mode"))
+            if isinstance(pipeline, dict)
+            else "proofread"
+        )
+        if "segmentation" in survivor_kinds:
+            state, stage, message = "ready", "complete", "切分字幕已完成"
+            if isinstance(pipeline, dict):
+                pipeline["stage"] = "complete"
+        elif survivor_kinds.intersection({"proofread", "translation"}):
+            state, stage, message = (
+                "needs_segmentation",
+                "target_segmentation",
+                "完整句字幕可觀看，等待重新建立切分字幕",
+            )
+            if isinstance(pipeline, dict):
+                pipeline["stage"] = "content_complete"
+        elif "source" in survivor_kinds:
+            has_model_source = any(
+                artifact.get("kind") == "source"
+                and artifact.get("sourceType") == "model-transcript"
+                for artifact in survivors
+            )
+            if has_model_source:
+                state = "needs_translation" if pipeline_mode == "translate" else "needs_proofreading"
+                state_label = "翻譯" if pipeline_mode == "translate" else "校正"
+                stage, message = "content_revision", f"等待重新建立{state_label}字幕"
+                if isinstance(pipeline, dict):
+                    pipeline["stage"] = "content_revision"
+            else:
+                state, stage, message = (
+                    "needs_transcription",
+                    "model_transcription",
+                    "人工 CC 可觀看，等待重新建立模型時間軸",
+                )
+                if isinstance(pipeline, dict):
+                    pipeline["stage"] = "awaiting_model"
+        else:
+            state, stage, message = (
+                "needs_transcription",
+                "awaiting_model",
+                "字幕已移除，可重新轉錄",
+            )
+            if isinstance(pipeline, dict):
+                pipeline["stage"] = "awaiting_model"
+        now = utc_now()
+        status.update(
+            {
+                "state": state,
+                "stage": stage,
+                "message": message,
+                "completedAt": now if state == "ready" else None,
+                "updatedAt": now,
+            }
+        )
+        history = status.setdefault("history", [])
+        if isinstance(history, list):
+            history.append(
+                {
+                    "at": now,
+                    "state": state,
+                    "stage": stage,
+                    "message": message,
+                }
+            )
+
+        staging = job_directory / f".removing-subtitle-{expected_digest[:12]}"
+        if staging.exists() or staging.is_symlink():
+            raise RemovalError("subtitle removal staging directory already exists")
+        staging.mkdir()
+        moved: list[tuple[Path, Path]] = []
+        try:
+            for raw_file in plan["files"]:
+                candidate = workspace / str(raw_file["path"])
+                relative = candidate.relative_to(job_directory)
+                staged = staging / relative
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(candidate, staged)
+                moved.append((staged, candidate))
+            for removed_id in sorted(removed_ids):
+                artifact_directory = (
+                    job_directory / "subtitle-work" / "artifacts" / removed_id
+                )
+                if not artifact_directory.exists():
+                    continue
+                nested_directories = sorted(
+                    (
+                        candidate
+                        for candidate in artifact_directory.rglob("*")
+                        if candidate.is_dir()
+                    ),
+                    key=lambda candidate: len(candidate.parts),
+                    reverse=True,
+                )
+                for directory in nested_directories:
+                    directory.rmdir()
+                artifact_directory.rmdir()
+            atomic_write_json(status_path, status)
+            self.clear_projection(workspace, video_id)
+            shutil.rmtree(staging)
+        except Exception:
+            status_path.write_bytes(original_status)
+            for staged, original in reversed(moved):
+                if staged.exists():
+                    original.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(staged, original)
+            if staging.exists():
+                shutil.rmtree(staging)
+            raise
+
+        verification = self.verify(workspace, resource_id)
+        retained_artifact_directories = [
+            removed_id
+            for removed_id in removed_ids
+            if (
+                job_directory
+                / "subtitle-work"
+                / "artifacts"
+                / removed_id
+            ).exists()
+        ]
+        if retained_artifact_directories:
+            raise RemovalError("subtitle artifact directories were not removed")
+        if not verification["removed"]:
+            raise RemovalError("subtitle artifact removal verification failed")
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "remove",
+            "target": plan["target"],
+            "workspace": str(workspace),
+            "planDigest": expected_digest,
+            "executedAt": utc_now(),
+            "verification": verification,
+        }
+
+    def verify(self, workspace: Path, resource_id: str) -> dict[str, Any]:
+        video_id, artifact_id = self.parse_resource_id(resource_id)
+        job_directory = self.job_directory(workspace, video_id)
+        status, status_error = read_status(job_directory)
+        artifacts = status.get("subtitleArtifacts") if not status_error else None
+        artifact_ids = {
+            artifact.get("id")
+            for artifact in artifacts
+            if isinstance(artifact, dict)
+        } if isinstance(artifacts, list) else set()
+        staging = list(job_directory.glob(".removing-subtitle-*"))
+        artifact_directory = (
+            job_directory / "subtitle-work" / "artifacts" / artifact_id
+        )
+        database_rows = 0
+        database_path = workspace / "app.db"
+        if database_path.exists():
+            connection = database_connection_readonly(database_path)
+            try:
+                tables = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                if "subtitle_artifacts" in tables:
+                    database_rows = int(
+                        connection.execute(
+                            'SELECT COUNT(*) FROM "subtitle_artifacts" WHERE "id" = ?',
+                            (f"{video_id}:{artifact_id}",),
+                        ).fetchone()[0]
+                    )
+            finally:
+                connection.close()
+        removed = (
+            status_error is None
+            and artifact_id not in artifact_ids
+            and not artifact_directory.exists()
+            and not staging
+            and database_rows == 0
+        )
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "verify-removal",
+            "target": {
+                "kind": self.kind,
+                "videoId": video_id,
+                "artifactId": artifact_id,
+            },
+            "checkedAt": utc_now(),
+            "statusError": status_error,
+            "stagingDirectories": [candidate.name for candidate in staging],
+            "artifactDirectoryExists": artifact_directory.exists(),
+            "databaseRows": database_rows,
+            "removed": removed,
+        }
+
+
+class MediaRenditionRemovalHandler:
+    kind = "media-rendition"
+
+    def parse_resource_id(self, resource_id: str) -> tuple[str, str]:
+        video_id, separator, rendition_id = resource_id.partition(":")
+        if not separator:
+            raise RemovalError("media rendition target is incomplete")
+        return validate_video_id(video_id), validate_rendition_id(rendition_id)
+
+    def job_directory(self, workspace: Path, video_id: str) -> Path:
+        directory = workspace / "jobs" / video_id
+        if directory.parent != workspace / "jobs":
+            raise RemovalError("resolved media job escaped the workspace")
+        if not directory.is_dir() or directory.is_symlink():
+            raise RemovalError(f"video job not found: {directory}")
+        return directory
+
+    def read_catalog(self, job_directory: Path, video_id: str) -> tuple[Path, dict[str, Any]]:
+        catalog_path = job_directory / "media-work" / "catalog.json"
+        if not catalog_path.is_file() or catalog_path.is_symlink():
+            raise RemovalError("media catalog is unavailable")
+        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schemaVersion") != 1
+            or payload.get("videoId") != video_id
+            or not isinstance(payload.get("renditions"), list)
+        ):
+            raise RemovalError("media catalog is invalid")
+        return catalog_path, payload
+
+    def rendition_file(
+        self, job_directory: Path, rendition_id: str, rendition: dict[str, Any]
+    ) -> Path:
+        raw_path = rendition.get("path")
+        if not isinstance(raw_path, str):
+            raise RemovalError("media rendition path is invalid")
+        relative = Path(raw_path)
+        expected = Path("source") / "renditions" / f"{rendition_id}.mp4"
+        if relative != expected or relative.is_absolute() or ".." in relative.parts:
+            raise RemovalError("media rendition path is outside its owned location")
+        candidate = job_directory / relative
+        if not candidate.is_file() or candidate.is_symlink():
+            raise RemovalError("media rendition file is unavailable or unsafe")
+        return candidate
+
+    def database_rows(self, workspace: Path, video_id: str, rendition_id: str) -> int:
+        database_path = workspace / "app.db"
+        if not database_path.exists():
+            return 0
+        connection = database_connection_readonly(database_path)
+        try:
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            if "media_renditions" not in tables:
+                return 0
+            return int(
+                connection.execute(
+                    'SELECT COUNT(*) FROM "media_renditions" WHERE "video_id" = ? AND "id" = ?',
+                    (video_id, rendition_id),
+                ).fetchone()[0]
+            )
+        finally:
+            connection.close()
+
+    def preview(self, workspace: Path, resource_id: str) -> dict[str, Any]:
+        video_id, rendition_id = self.parse_resource_id(resource_id)
+        job_directory = self.job_directory(workspace, video_id)
+        _, catalog = self.read_catalog(job_directory, video_id)
+        rendition = next(
+            (
+                item
+                for item in catalog["renditions"]
+                if isinstance(item, dict) and item.get("id") == rendition_id
+            ),
+            None,
+        )
+        if not isinstance(rendition, dict):
+            raise RemovalError("media rendition not found")
+        candidate = self.rendition_file(job_directory, rendition_id, rendition)
+        metadata = candidate.stat(follow_symlinks=False)
+        blocked: list[dict[str, object]] = []
+        operation = catalog.get("operation")
+        if catalog.get("activeRenditionId") == rendition_id:
+            blocked.append(
+                {
+                    "code": "active-rendition",
+                    "message": "switch to another downloaded quality before removing the active rendition",
+                }
+            )
+        if isinstance(operation, dict) and operation.get("state") in {
+            "discovering",
+            "probing",
+            "downloading",
+            "merging",
+            "validating",
+        } and process_is_alive(operation.get("pid")):
+            blocked.append(
+                {
+                    "code": "active-process",
+                    "message": "a media quality operation is still active",
+                    "pid": operation.get("pid"),
+                }
+            )
+        plan: dict[str, Any] = {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "remove",
+            "target": {
+                "kind": self.kind,
+                "videoId": video_id,
+                "renditionId": rendition_id,
+                "height": rendition.get("height"),
+            },
+            "workspace": str(workspace),
+            "generatedAt": utc_now(),
+            "file": {
+                "path": candidate.relative_to(workspace).as_posix(),
+                "bytes": metadata.st_size,
+                "mtimeNs": metadata.st_mtime_ns,
+                "checksum": rendition.get("checksum"),
+            },
+            "catalogRevision": catalog.get("revision"),
+            "databaseRows": self.database_rows(workspace, video_id, rendition_id),
+            "dependencyPolicy": "preserve-video-and-other-renditions",
+            "blocked": blocked,
+            "warnings": [],
+        }
+        plan["digest"] = plan_digest(plan)
+        return plan
+
+    def execute(
+        self, workspace: Path, resource_id: str, expected_digest: str
+    ) -> dict[str, Any]:
+        video_id, rendition_id = self.parse_resource_id(resource_id)
+        plan = self.preview(workspace, resource_id)
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+            raise RemovalError("plan digest must be a 64-character lowercase SHA-256 value")
+        if plan["digest"] != expected_digest:
+            raise RemovalError("removal plan is stale; preview again")
+        if plan["blocked"]:
+            raise RemovalError("removal plan is blocked; resolve every blocker and preview again")
+
+        job_directory = self.job_directory(workspace, video_id)
+        catalog_path, catalog = self.read_catalog(job_directory, video_id)
+        rendition = next(
+            item
+            for item in catalog["renditions"]
+            if isinstance(item, dict) and item.get("id") == rendition_id
+        )
+        candidate = self.rendition_file(job_directory, rendition_id, rendition)
+        staging = job_directory / "media-work" / f".removing-rendition-{expected_digest[:12]}.mp4"
+        if staging.exists() or staging.is_symlink():
+            raise RemovalError("media rendition removal staging file already exists")
+        original_catalog = catalog_path.read_bytes()
+        connection: sqlite3.Connection | None = None
+        os.replace(candidate, staging)
+        try:
+            catalog["renditions"] = [
+                item
+                for item in catalog["renditions"]
+                if not isinstance(item, dict) or item.get("id") != rendition_id
+            ]
+            catalog["revision"] = int(catalog.get("revision") or 0) + 1
+            atomic_write_json(catalog_path, catalog)
+            database_path = workspace / "app.db"
+            if database_path.exists():
+                connection = sqlite3.connect(database_path, timeout=10)
+                tables = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                if "media_renditions" in tables:
+                    connection.execute(
+                        'DELETE FROM "media_renditions" WHERE "video_id" = ? AND "id" = ?',
+                        (video_id, rendition_id),
+                    )
+                    connection.commit()
+            staging.unlink()
+        except Exception:
+            if connection is not None and connection.in_transaction:
+                connection.rollback()
+            catalog_path.write_bytes(original_catalog)
+            if staging.exists() and not candidate.exists():
+                os.replace(staging, candidate)
+            raise
+        finally:
+            if connection is not None:
+                connection.close()
+
+        verification = self.verify(workspace, resource_id)
+        if not verification["removed"]:
+            raise RemovalError("media rendition removal verification failed")
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "remove",
+            "target": plan["target"],
+            "workspace": str(workspace),
+            "planDigest": expected_digest,
+            "executedAt": utc_now(),
+            "verification": verification,
+        }
+
+    def verify(self, workspace: Path, resource_id: str) -> dict[str, Any]:
+        video_id, rendition_id = self.parse_resource_id(resource_id)
+        job_directory = self.job_directory(workspace, video_id)
+        _, catalog = self.read_catalog(job_directory, video_id)
+        registered = any(
+            isinstance(item, dict) and item.get("id") == rendition_id
+            for item in catalog["renditions"]
+        )
+        candidate = job_directory / "source" / "renditions" / f"{rendition_id}.mp4"
+        staging = list((job_directory / "media-work").glob(".removing-rendition-*.mp4"))
+        database_rows = self.database_rows(workspace, video_id, rendition_id)
+        removed = not registered and not candidate.exists() and not staging and database_rows == 0
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "verify-removal",
+            "target": {
+                "kind": self.kind,
+                "videoId": video_id,
+                "renditionId": rendition_id,
+            },
+            "checkedAt": utc_now(),
+            "registered": registered,
+            "fileExists": candidate.exists(),
+            "stagingFiles": [item.name for item in staging],
+            "databaseRows": database_rows,
+            "removed": removed,
+        }
+
+
+HANDLERS: dict[str, RemovalHandler] = {
+    "video": VideoRemovalHandler(),
+    "subtitle-artifact": SubtitleArtifactRemovalHandler(),
+    "media-rendition": MediaRenditionRemovalHandler(),
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -477,6 +1243,8 @@ def build_parser() -> argparse.ArgumentParser:
         subparser.add_argument("workspace")
         subparser.add_argument("--kind", choices=sorted(HANDLERS), required=True)
         subparser.add_argument("--video-id", required=True)
+        subparser.add_argument("--artifact-id")
+        subparser.add_argument("--rendition-id")
         return subparser
 
     add_target("preview")
@@ -492,18 +1260,34 @@ def main(argv: list[str] | None = None) -> int:
     try:
         workspace = resolve_workspace(args.workspace)
         handler = HANDLERS[args.kind]
+        if args.kind == "subtitle-artifact":
+            if not args.artifact_id:
+                raise RemovalError("subtitle artifact removal requires --artifact-id")
+            if args.rendition_id:
+                raise RemovalError("--rendition-id is not valid for subtitle artifacts")
+            resource_id = f"{args.video_id}:{args.artifact_id}"
+        elif args.kind == "media-rendition":
+            if not args.rendition_id:
+                raise RemovalError("media rendition removal requires --rendition-id")
+            if args.artifact_id:
+                raise RemovalError("--artifact-id is not valid for media renditions")
+            resource_id = f"{args.video_id}:{args.rendition_id}"
+        else:
+            if args.artifact_id or args.rendition_id:
+                raise RemovalError("resource-specific IDs are not valid for video removal")
+            resource_id = args.video_id
         if args.command == "preview":
-            print_json(handler.preview(workspace, args.video_id))
+            print_json(handler.preview(workspace, resource_id))
         elif args.command == "execute":
             if not args.yes:
                 raise RemovalError(
                     "execute requires --yes after the user explicitly confirms the current plan digest"
                 )
             print_json(
-                handler.execute(workspace, args.video_id, str(args.plan_digest))
+                handler.execute(workspace, resource_id, str(args.plan_digest))
             )
         elif args.command == "verify":
-            verification = handler.verify(workspace, args.video_id)
+            verification = handler.verify(workspace, resource_id)
             print_json(verification)
             return 0 if verification["removed"] else 1
         return 0

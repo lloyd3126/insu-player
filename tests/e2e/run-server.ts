@@ -4,6 +4,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
+import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -11,25 +12,90 @@ import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { JobRepository } from "@server/repositories/job-repository"
 import type { RemovalOperations } from "@server/services/removal-service"
+import type { MediaOperations } from "@server/services/media-service"
 import { ResourceService } from "@server/services/resource-service"
+import type { MediaOperation } from "@shared/contracts/media"
 
 const root = path.resolve(import.meta.dir, "../..")
 const workspace = mkdtempSync(path.join(tmpdir(), "insu-player-e2e-"))
 const job = path.join(workspace, "jobs", "demo-video")
 const port = Number(process.env.INSU_E2E_PORT ?? 42871)
 
-mkdirSync(path.join(job, "source"), { recursive: true })
-mkdirSync(path.join(job, "captions"), { recursive: true })
+const renditionRoot = path.join(job, "source", "renditions")
+mkdirSync(renditionRoot, { recursive: true })
 mkdirSync(path.join(job, "logs"), { recursive: true })
-writeFileSync(path.join(job, "source", "video.mp4"), "fake media payload")
+const mediaContents = "fake media payload"
+const mediaChecksum = createHash("sha256").update(mediaContents).digest("hex")
+writeFileSync(path.join(renditionRoot, "720p-demo.mp4"), mediaContents)
+mkdirSync(path.join(job, "media-work"), { recursive: true })
 writeFileSync(
-  path.join(job, "captions", "en.vtt"),
-  "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nFor the last month I have been experimenting with vibe coding and collecting the practices that produce measurably better results\n\n00:00:03.000 --> 00:00:06.000\nThe second English sentence\n",
+  path.join(job, "media-work", "catalog.json"),
+  `${JSON.stringify({
+    schemaVersion: 1,
+    videoId: "demo-video",
+    revision: 1,
+    activeRenditionId: "720p-demo",
+    availability: {
+      discoveredAt: "2026-08-08T00:00:00.000Z",
+      formats: [
+        { height: 720, width: 1280, fps: 30, estimatedBytes: 18, container: "mp4", videoCodec: "avc1" },
+        { height: 1080, width: 1920, fps: 30, estimatedBytes: 40, container: "mp4", videoCodec: "avc1" },
+      ],
+    },
+    renditions: [
+      {
+        id: "720p-demo",
+        requestedHeight: 720,
+        width: 1280,
+        height: 720,
+        container: "mp4",
+        videoCodec: "avc1",
+        audioCodec: "aac",
+        sizeBytes: Buffer.byteLength(mediaContents),
+        checksum: mediaChecksum,
+        createdAt: "2026-08-08T00:00:00.000Z",
+        path: "source/renditions/720p-demo.mp4",
+      },
+    ],
+    operation: null,
+  })}\n`,
 )
-writeFileSync(
-  path.join(job, "captions", "zh-TW.vtt"),
-  "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\n過去一個月我一直在嘗試 Vibe Coding 並整理能帶來明顯更好成果的實作方式\n\n00:00:03.000 --> 00:00:06.000\n第二個繁體中文句子\n",
-)
+const english = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nFor the last month I have been experimenting with vibe coding and collecting the practices that produce measurably better results\n\n00:00:03.000 --> 00:00:06.000\nThe second English sentence\n"
+const chinese = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\n過去一個月我一直在嘗試 Vibe Coding 並整理能帶來明顯更好成果的實作方式\n\n00:00:03.000 --> 00:00:06.000\n第二個繁體中文句子\n"
+const sourceId = "demo-video-source-model-transcript-en-r1"
+const proofreadId = "demo-video-proofread-en-en-r1"
+const translationId = "demo-video-translation-en-zh-TW-r1"
+const segmentationId = "demo-video-segmentation-en-zh-TW-r1"
+for (const artifactId of [sourceId, proofreadId, translationId, segmentationId]) {
+  const artifactRoot = path.join(job, "subtitle-work", "artifacts", artifactId)
+  mkdirSync(artifactRoot, { recursive: true })
+  if (artifactId === sourceId) {
+    writeFileSync(path.join(artifactRoot, "source.vtt"), english)
+  } else {
+    writeFileSync(path.join(artifactRoot, "input.vtt"), english)
+    writeFileSync(
+      path.join(artifactRoot, "output.vtt"),
+      artifactId === proofreadId ? english : chinese,
+    )
+    writeFileSync(path.join(artifactRoot, "manifest.json"), '{"schemaVersion":3}\n')
+  }
+}
+const digest = (contents: string) => createHash("sha256").update(contents).digest("hex")
+const artifactDigest = (
+  tracks: Array<[string, string]>,
+  manifestContents?: string,
+) => {
+  const hasher = createHash("sha256")
+  for (const [language, trackChecksum] of tracks) {
+    hasher.update(language, "utf8")
+    hasher.update(trackChecksum, "ascii")
+  }
+  if (manifestContents !== undefined) {
+    hasher.update(createHash("sha256").update(manifestContents).digest())
+  }
+  return hasher.digest("hex")
+}
+const artifactManifest = '{"schemaVersion":3}\n'
 writeFileSync(
   path.join(job, "logs", "workflow.log"),
   "download complete\ntranscription complete\nsubtitle reflow complete\n",
@@ -37,6 +103,7 @@ writeFileSync(
 writeFileSync(
   path.join(job, "status.json"),
   `${JSON.stringify({
+    schemaVersion: 3,
     videoId: "demo-video",
     title: "雙語測試影音",
     sourceUrl: "https://example.test/demo",
@@ -49,32 +116,184 @@ writeFileSync(
     updatedAt: "2026-08-08T02:30:00.000Z",
     completedAt: "2026-08-08T02:30:00.000Z",
     assets: {
-      video: { path: "source/video.mp4", bytes: 18 },
-      captions: { path: "captions/zh-TW.vtt" },
+      mediaCatalog: { path: "media-work/catalog.json" },
     },
-    subtitleTracks: {
-      en: {
-        state: "ready",
-        source: "model-reflow",
-        label: "English",
-        path: "captions/en.vtt",
-      },
-      "zh-TW": {
-        state: "ready",
-        source: "model-reflow",
-        label: "繁體中文",
-        path: "captions/zh-TW.vtt",
-      },
-    },
-    subtitleWorkflow: {
-      stage: "subtitle_reflow",
-      source: "model",
-      provider: "local",
-      model: "medium",
+    subtitlePipeline: {
+      mode: "translate",
+      stage: "complete",
       sourceLanguage: "en",
-      targetLanguage: "zh-TW",
-      updatedAt: "2026-08-08T02:30:00.000Z",
+      outputLanguage: "zh-TW",
+      timingProvider: "local",
+      timingModel: "medium",
+      contentProvider: "local",
+      contentModel: "medium",
+      manualReferenceArtifactIds: [],
     },
+    subtitleArtifacts: [
+      {
+        id: sourceId,
+        kind: "source",
+        revision: 1,
+        lifecycleState: "ready",
+        validationState: "valid",
+        freshnessState: "current",
+        sourceLanguage: "en",
+        outputLanguage: null,
+        sourceType: "model-transcript",
+        provider: "local",
+        model: "medium",
+        timingUnitKind: "word",
+        targetFrozen: false,
+        manifestPath: null,
+        checksum: artifactDigest([["en", digest(english)]]),
+        warningCount: 0,
+        hardDefectCount: 0,
+        dependencies: [],
+        createdAt: "2026-08-08T00:30:00.000Z",
+        completedAt: "2026-08-08T00:45:00.000Z",
+        tracks: [
+          {
+            id: `${sourceId}-source_raw`,
+            languageCode: "en",
+            role: "source_raw",
+            state: "ready",
+            path: `subtitle-work/artifacts/${sourceId}/source.vtt`,
+            checksum: digest(english),
+          },
+        ],
+      },
+      {
+        id: proofreadId,
+        kind: "proofread",
+        revision: 1,
+        lifecycleState: "ready",
+        validationState: "valid",
+        freshnessState: "current",
+        sourceLanguage: "en",
+        outputLanguage: "en",
+        sourceType: null,
+        provider: "local",
+        model: "medium",
+        timingUnitKind: "word",
+        targetFrozen: false,
+        manifestPath: `subtitle-work/artifacts/${proofreadId}/manifest.json`,
+        checksum: artifactDigest(
+          [["en", digest(english)], ["en", digest(english)]],
+          artifactManifest,
+        ),
+        warningCount: 0,
+        hardDefectCount: 0,
+        dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+        createdAt: "2026-08-08T00:50:00.000Z",
+        completedAt: "2026-08-08T01:00:00.000Z",
+        tracks: [
+          {
+            id: `${proofreadId}-input_sentence`,
+            languageCode: "en",
+            role: "input_sentence",
+            state: "ready",
+            path: `subtitle-work/artifacts/${proofreadId}/input.vtt`,
+            checksum: digest(english),
+          },
+          {
+            id: `${proofreadId}-output_sentence`,
+            languageCode: "en",
+            role: "output_sentence",
+            state: "ready",
+            path: `subtitle-work/artifacts/${proofreadId}/output.vtt`,
+            checksum: digest(english),
+          },
+        ],
+      },
+      {
+        id: translationId,
+        kind: "translation",
+        revision: 1,
+        lifecycleState: "ready",
+        validationState: "valid",
+        freshnessState: "current",
+        sourceLanguage: "en",
+        outputLanguage: "zh-TW",
+        sourceType: null,
+        provider: "local",
+        model: "medium",
+        targetFrozen: false,
+        manifestPath: `subtitle-work/artifacts/${translationId}/manifest.json`,
+        checksum: artifactDigest(
+          [["en", digest(english)], ["zh-TW", digest(chinese)]],
+          artifactManifest,
+        ),
+        warningCount: 0,
+        hardDefectCount: 0,
+        dependencies: [{ artifactId: sourceId, relation: "timing-source" }],
+        createdAt: "2026-08-08T01:00:00.000Z",
+        completedAt: "2026-08-08T01:30:00.000Z",
+        tracks: [
+          {
+            id: `${translationId}-input_sentence`,
+            languageCode: "en",
+            role: "input_sentence",
+            state: "ready",
+            path: `subtitle-work/artifacts/${translationId}/input.vtt`,
+            checksum: digest(english),
+          },
+          {
+            id: `${translationId}-output_sentence`,
+            languageCode: "zh-TW",
+            role: "output_sentence",
+            state: "ready",
+            path: `subtitle-work/artifacts/${translationId}/output.vtt`,
+            checksum: digest(chinese),
+          },
+        ],
+      },
+      {
+        id: segmentationId,
+        kind: "segmentation",
+        revision: 1,
+        lifecycleState: "ready",
+        validationState: "warning",
+        freshnessState: "current",
+        sourceLanguage: "en",
+        outputLanguage: "zh-TW",
+        sourceType: null,
+        provider: "local",
+        model: "medium",
+        targetFrozen: true,
+        manifestPath: `subtitle-work/artifacts/${segmentationId}/manifest.json`,
+        checksum: artifactDigest(
+          [["en", digest(english)], ["zh-TW", digest(chinese)]],
+          artifactManifest,
+        ),
+        warningCount: 1,
+        hardDefectCount: 0,
+        dependencies: [
+          { artifactId: sourceId, relation: "timing-source" },
+          { artifactId: translationId, relation: "content-parent" },
+        ],
+        createdAt: "2026-08-08T02:00:00.000Z",
+        completedAt: "2026-08-08T02:30:00.000Z",
+        tracks: [
+          {
+            id: `${segmentationId}-input_segmented`,
+            languageCode: "en",
+            role: "input_segmented",
+            state: "ready",
+            path: `subtitle-work/artifacts/${segmentationId}/input.vtt`,
+            checksum: digest(english),
+          },
+          {
+            id: `${segmentationId}-output_segmented`,
+            languageCode: "zh-TW",
+            role: "output_segmented",
+            state: "ready",
+            path: `subtitle-work/artifacts/${segmentationId}/output.vtt`,
+            checksum: digest(chinese),
+          },
+        ],
+      },
+    ],
+    activeSubtitleTracks: {},
     transcription: { provider: "local", model: "medium" },
     history: [
       {
@@ -120,8 +339,101 @@ const removals: RemovalOperations = {
     }
   },
 }
+let mediaOperation: MediaOperation | null = null
+let mediaOperationPolls = 0
+let downloadedMediaHeight: number | null = null
+const media: MediaOperations = {
+  catalog(videoId) {
+    if (mediaOperation?.state === "downloading") {
+      mediaOperationPolls += 1
+      if (mediaOperationPolls >= 2) {
+        downloadedMediaHeight = mediaOperation.requestedHeight
+        mediaOperation = {
+          ...mediaOperation,
+          state: "ready",
+          stage: "ready",
+          progress: 100,
+          message: `${downloadedMediaHeight}p 畫質已下載`,
+          pid: null,
+          updatedAt: "2026-08-08T00:00:02.000Z",
+          completedAt: "2026-08-08T00:00:02.000Z",
+        }
+      }
+    }
+    return {
+      schemaVersion: 1,
+      videoId,
+      revision: 1,
+      activeRenditionId: "720p-demo",
+      availableBytes: 10_000_000,
+      sourceRefreshedAt: "2026-08-08T00:00:00.000Z",
+      formats: [
+        { height: 720, width: 1280, fps: 30, estimatedBytes: 18, container: "mp4", videoCodec: "avc1" },
+        { height: 1080, width: 1920, fps: 30, estimatedBytes: 40, container: "mp4", videoCodec: "avc1" },
+      ],
+      renditions: [
+        {
+          id: "720p-demo",
+          requestedHeight: 720,
+          width: 1280,
+          height: 720,
+          container: "mp4",
+          videoCodec: "avc1",
+          audioCodec: "aac",
+          sizeBytes: 18,
+          checksum: "a".repeat(64),
+          createdAt: "2026-08-08T00:00:00.000Z",
+          active: true,
+        },
+        ...(downloadedMediaHeight
+          ? [
+              {
+                id: `${downloadedMediaHeight}p-demo`,
+                requestedHeight: downloadedMediaHeight,
+                width: downloadedMediaHeight === 1080 ? 1920 : 426,
+                height: downloadedMediaHeight,
+                container: "mp4",
+                videoCodec: "avc1",
+                audioCodec: "aac",
+                sizeBytes: 40,
+                checksum: "b".repeat(64),
+                createdAt: "2026-08-08T00:00:02.000Z",
+                active: false,
+              },
+            ]
+          : []),
+      ],
+      operation: mediaOperation,
+    }
+  },
+  async refresh(videoId) {
+    return this.catalog(videoId)
+  },
+  download(videoId, height) {
+    mediaOperationPolls = 0
+    downloadedMediaHeight = null
+    mediaOperation = {
+      id: `${videoId}-${height}`,
+      requestedHeight: height,
+      state: "downloading",
+      stage: "downloading",
+      progress: 0,
+      message: "正在下載",
+      error: null,
+      pid: 1,
+      startedAt: "2026-08-08T00:00:00.000Z",
+      updatedAt: "2026-08-08T00:00:00.000Z",
+      completedAt: null,
+    }
+    return { accepted: true, operation: mediaOperation }
+  },
+  activate(videoId) {
+    return this.catalog(videoId)
+  },
+}
 const app = createApplication({
   jobs: new JobRepository(workspace, opened.db),
+  media,
   removals,
   resources: new ResourceService(workspace),
   libraryAppRoot: path.join(

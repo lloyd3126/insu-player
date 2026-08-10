@@ -12,12 +12,18 @@ import { eq } from "drizzle-orm"
 
 import type { AppDatabase } from "@server/db/client"
 import {
+  activeSubtitleTracks,
   jobAssets,
   jobHistory,
   jobs,
+  mediaDownloadRuns,
+  mediaRenditions,
   playbackStates,
-  subtitleTracks,
-  subtitleWorkflows,
+  subtitleArtifactDependencies,
+  subtitleArtifacts,
+  subtitleArtifactTracks,
+  subtitleRuns,
+  subtitlePipelines,
 } from "@server/db/schema"
 import {
   atomicWriteJson,
@@ -25,34 +31,53 @@ import {
   readJsonFile,
   safeContainedFile,
 } from "@server/lib/files"
-import type {
+import {
+  activeMediaPath,
+  mediaCatalogPath,
+  publicMediaCatalog,
+} from "@server/services/media-catalog-service"
+import {
+  isSelectableSubtitleTrack,
+  publicSubtitleCatalog,
+  resolveSubtitleCatalog,
+  type ResolvedSubtitleCatalog,
+} from "@server/services/subtitle-catalog-service"
+import {
+  JOB_STATES,
+  SUBTITLE_PIPELINE_STAGES,
+  type JobState,
   JobDetail,
   JobHistoryEntry,
   JobSummary,
   PlaybackState,
-  SubtitleTrackState,
-  SubtitleWorkflow,
+  SubtitlePipeline,
   TranscriptionSummary,
 } from "@shared/contracts/job"
-import { parseWebVtt } from "@shared/domain/subtitle"
+import type { SubtitleCatalogResponse } from "@shared/contracts/subtitle-catalog"
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]+$/
-const LANGUAGE_PATTERN = /^[A-Za-z0-9_-]+$/
+const LANGUAGE_PATTERN = /^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/
+const STATUS_SCHEMA_VERSION = 3
+const JOB_STATE_SET = new Set<string>(JOB_STATES)
+const SUBTITLE_PIPELINE_STAGE_SET = new Set<string>(SUBTITLE_PIPELINE_STAGES)
 const ACTIVE_STATES = new Set([
   "checking",
   "downloading",
   "transcribing",
+  "proofreading",
   "translating",
+  "segmenting",
   "preparing_player",
 ])
 
 interface RawStatus {
-  videoId?: string
+  schemaVersion: number
+  videoId: string
   title?: string
   sourceUrl?: string
-  state?: string
-  stage?: string
-  progress?: number
+  state: JobState
+  stage: string
+  progress: number
   message?: string
   createdAt?: string | null
   updatedAt?: string | null
@@ -60,8 +85,9 @@ interface RawStatus {
   lastError?: string | null
   process?: { pid?: number } | null
   assets?: Record<string, unknown>
-  subtitleTracks?: Record<string, SubtitleTrackState>
-  subtitleWorkflow?: SubtitleWorkflow | null
+  subtitlePipeline?: SubtitlePipeline | null
+  subtitleArtifacts: unknown[]
+  activeSubtitleTracks: Record<string, unknown>
   transcription?: TranscriptionSummary | null
   durationSeconds?: number | null
   history?: Array<Omit<JobHistoryEntry, "sequence">>
@@ -105,7 +131,7 @@ export class JobRepository {
 
   videoPath(videoId: string) {
     const directory = this.jobDirectory(videoId)
-    return this.safeJobFile(directory, path.join(directory, "source", "video.mp4"))
+    return activeMediaPath(directory, videoId)
   }
 
   thumbnailPath(videoId: string) {
@@ -118,28 +144,6 @@ export class JobRepository {
       if (candidate) return candidate
     }
     return null
-  }
-
-  captionPaths(videoId: string) {
-    const directory = this.jobDirectory(videoId)
-    const captionsDirectory = path.join(directory, "captions")
-    if (!existsSync(captionsDirectory) || lstatSync(captionsDirectory).isSymbolicLink()) {
-      return new Map<string, string>()
-    }
-    const tracks = new Map<string, string>()
-    for (const entry of readdirSync(captionsDirectory, { withFileTypes: true })) {
-      if (!entry.isFile() || entry.isSymbolicLink() || path.extname(entry.name) !== ".vtt") {
-        continue
-      }
-      const code = path.basename(entry.name, ".vtt")
-      if (!LANGUAGE_PATTERN.test(code)) continue
-      const candidate = this.safeJobFile(
-        directory,
-        path.join(captionsDirectory, entry.name),
-      )
-      if (candidate) tracks.set(code, candidate)
-    }
-    return new Map([...tracks].sort(([left], [right]) => left.localeCompare(right)))
   }
 
   private jobSize(directory: string) {
@@ -165,7 +169,12 @@ export class JobRepository {
   playbackState(videoId: string): PlaybackState {
     const statePath = path.join(this.jobDirectory(videoId), "ui-state.json")
     if (!isRegularFile(statePath)) {
-      return { time: 0, duration: null, updatedAt: null }
+      return {
+        time: 0,
+        duration: null,
+        captionLanguage: null,
+        updatedAt: null,
+      }
     }
     try {
       const payload = readJsonFile<Record<string, unknown>>(statePath)
@@ -174,23 +183,47 @@ export class JobRepository {
       return {
         time: time >= 0 ? time : 0,
         duration: Number.isFinite(duration) && duration > 0 ? duration : null,
+        captionLanguage:
+          typeof payload.captionLanguage === "string"
+            ? payload.captionLanguage
+            : null,
         updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
       }
     } catch {
-      return { time: 0, duration: null, updatedAt: null }
+      return {
+        time: 0,
+        duration: null,
+        captionLanguage: null,
+        updatedAt: null,
+      }
     }
   }
 
   savePlaybackState(
     videoId: string,
-    payload: { time: number; duration?: number | null },
+    payload: {
+      time?: number
+      duration?: number | null
+      captionLanguage?: string | null
+    },
   ) {
     const directory = this.jobDirectory(videoId)
     if (!existsSync(directory)) throw new Error("job not found")
     // Ensure the filesystem fact source is projected before the foreign-keyed UI state.
     this.summarize(videoId)
-    const time = payload.time
-    const duration = payload.duration ?? null
+    if (
+      payload.captionLanguage !== undefined &&
+      payload.captionLanguage !== null &&
+      !this.resolvedSubtitleCatalog(videoId).availableLanguageCodes.includes(
+        payload.captionLanguage,
+      )
+    ) {
+      throw new Error("caption language is unavailable")
+    }
+    const current = this.playbackState(videoId)
+    const time = payload.time ?? current.time
+    const duration =
+      payload.duration === undefined ? current.duration : payload.duration
     if (!Number.isFinite(time) || time < 0) {
       throw new Error("time must be a non-negative finite number")
     }
@@ -204,6 +237,10 @@ export class JobRepository {
       time: Math.round(time * 1000) / 1000,
       duration:
         duration === null ? null : Math.round(Number(duration) * 1000) / 1000,
+      captionLanguage:
+        payload.captionLanguage === undefined
+          ? (current.captionLanguage ?? null)
+          : payload.captionLanguage,
       updatedAt: new Date().toISOString(),
     }
     atomicWriteJson(path.join(directory, "ui-state.json"), normalized)
@@ -220,10 +257,155 @@ export class JobRepository {
 
   private loadRawStatus(videoId: string) {
     const statusPath = path.join(this.jobDirectory(videoId), "status.json")
+    const status = readJsonFile<Record<string, unknown>>(statusPath)
+    if (status.schemaVersion !== STATUS_SCHEMA_VERSION) {
+      throw new Error(`status.json must use schemaVersion ${STATUS_SCHEMA_VERSION}`)
+    }
+    if (!Array.isArray(status.subtitleArtifacts)) {
+      throw new Error("status.json must contain subtitleArtifacts")
+    }
+    if (
+      !status.activeSubtitleTracks ||
+      typeof status.activeSubtitleTracks !== "object" ||
+      Array.isArray(status.activeSubtitleTracks)
+    ) {
+      throw new Error("status.json must contain activeSubtitleTracks")
+    }
+    if (status.videoId !== videoId) {
+      throw new Error("status.json videoId must match its directory")
+    }
+    if (typeof status.state !== "string" || !JOB_STATE_SET.has(status.state)) {
+      throw new Error("status.json contains an unsupported state")
+    }
+    if (typeof status.stage !== "string" || !status.stage.trim()) {
+      throw new Error("status.json must contain a non-empty stage")
+    }
+    if (
+      typeof status.progress !== "number" ||
+      !Number.isFinite(status.progress) ||
+      status.progress < 0 ||
+      status.progress > 100
+    ) {
+      throw new Error("status.json progress must be between 0 and 100")
+    }
+    if (status.subtitlePipeline !== null && status.subtitlePipeline !== undefined) {
+      if (
+        typeof status.subtitlePipeline !== "object" ||
+        !["proofread", "translate"].includes(
+          String((status.subtitlePipeline as Record<string, unknown>).mode),
+        ) ||
+        !SUBTITLE_PIPELINE_STAGE_SET.has(
+          String((status.subtitlePipeline as Record<string, unknown>).stage),
+        ) ||
+        !Array.isArray(
+          (status.subtitlePipeline as Record<string, unknown>)
+            .manualReferenceArtifactIds,
+        )
+      ) {
+        throw new Error("status.json contains an invalid subtitlePipeline")
+      }
+    }
+    if (Array.isArray(status.history)) {
+      for (const entry of status.history) {
+        if (
+          !entry ||
+          typeof entry !== "object" ||
+          (entry.state !== undefined && !JOB_STATE_SET.has(String(entry.state)))
+        ) {
+          throw new Error("status.json contains an invalid history entry")
+        }
+      }
+    }
     return {
-      status: readJsonFile<RawStatus>(statusPath),
+      status: status as unknown as RawStatus,
       modifiedAt: statSync(statusPath).mtimeMs,
     }
+  }
+
+  private resolvedSubtitleCatalog(
+    videoId: string,
+    status?: RawStatus,
+  ): ResolvedSubtitleCatalog {
+    const resolvedStatus = status ?? this.loadRawStatus(videoId).status
+    return resolveSubtitleCatalog({
+      videoId,
+      jobDirectory: this.jobDirectory(videoId),
+      rawArtifacts: resolvedStatus.subtitleArtifacts,
+      explicitActiveTracks: resolvedStatus.activeSubtitleTracks,
+    })
+  }
+
+  subtitleCatalog(videoId: string): SubtitleCatalogResponse {
+    return publicSubtitleCatalog(this.resolvedSubtitleCatalog(videoId))
+  }
+
+  setActiveSubtitleTrack(
+    videoId: string,
+    languageCode: string,
+    trackId: string,
+  ): SubtitleCatalogResponse {
+    if (!LANGUAGE_PATTERN.test(languageCode)) {
+      throw new Error("invalid subtitle language code")
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(trackId)) {
+      throw new Error("invalid subtitle track ID")
+    }
+    const loaded = this.loadRawStatus(videoId)
+    const catalog = this.resolvedSubtitleCatalog(videoId, loaded.status)
+    if (!isSelectableSubtitleTrack(catalog, languageCode, trackId)) {
+      throw new Error("subtitle track is unavailable for playback")
+    }
+    loaded.status.activeSubtitleTracks = {
+      ...loaded.status.activeSubtitleTracks,
+      [languageCode]: trackId,
+    }
+    atomicWriteJson(
+      path.join(this.jobDirectory(videoId), "status.json"),
+      loaded.status,
+    )
+    return this.subtitleCatalog(videoId)
+  }
+
+  artifactCaptionPaths(videoId: string, artifactId: string) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(artifactId)) {
+      throw new Error("invalid subtitle artifact ID")
+    }
+    const artifact = this.resolvedSubtitleCatalog(videoId).artifacts.find(
+      (candidate) => candidate.id === artifactId,
+    )
+    if (!artifact) throw new Error("subtitle artifact not found")
+    const roleLabels: Record<string, string> = {
+      source_raw: "原始字幕",
+      input_sentence: "輸入字幕",
+      output_sentence: "輸出字幕",
+      input_segmented: "來源時間軸",
+      output_segmented: "切分字幕",
+    }
+    return artifact.tracks.map((track) => ({
+      id: track.id,
+      code: track.languageCode,
+      label: `${track.languageCode} · ${roleLabels[track.role] ?? track.role}`,
+      path: track.absolutePath,
+    }))
+  }
+
+  activeCaptionPaths(videoId: string) {
+    const catalog = this.resolvedSubtitleCatalog(videoId)
+    return catalog.activeTracks.map((track) => ({
+      id: track.id,
+      code: track.languageCode,
+      label: track.languageCode,
+      path: track.absolutePath,
+    }))
+  }
+
+  activeCaptionPath(videoId: string, languageCode: string) {
+    if (!LANGUAGE_PATTERN.test(languageCode)) return null
+    return (
+      this.activeCaptionPaths(videoId).find(
+        (track) => track.code === languageCode,
+      )?.path ?? null
+    )
   }
 
   summarize(videoId: string, includeHistory = false): JobSummary | JobDetail {
@@ -240,6 +422,7 @@ export class JobRepository {
       statusModifiedAt = loaded.modifiedAt
     } catch (error) {
       status = {
+        schemaVersion: STATUS_SCHEMA_VERSION,
         videoId,
         title: videoId,
         sourceUrl: "",
@@ -250,23 +433,29 @@ export class JobRepository {
         updatedAt: null,
         lastError: error instanceof Error ? error.message : String(error),
         history: [],
-        subtitleTracks: {},
-        subtitleWorkflow: null,
+        subtitlePipeline: null,
+        subtitleArtifacts: [],
+        activeSubtitleTracks: {},
       }
     }
 
     const video = this.videoPath(videoId)
-    const captions = this.captionPaths(videoId)
+    let mediaCatalog: ReturnType<typeof publicMediaCatalog> | null = null
+    try {
+      mediaCatalog = publicMediaCatalog(directory, videoId)
+    } catch {
+      mediaCatalog = null
+    }
+    const activeRendition = mediaCatalog?.renditions.find(
+      (rendition) => rendition.active,
+    )
+    const subtitleCatalog = this.resolvedSubtitleCatalog(videoId, status)
     const thumbnail = this.thumbnailPath(videoId)
-    const state = String(status.state || "queued")
-    let effectiveState = state
+    const state = status.state
+    let effectiveState: JobState = state
     let message = String(status.message || "")
 
-    if (status.videoId && status.videoId !== videoId) {
-      effectiveState = "failed"
-      message = "status.json 的 videoId 與資料夾名稱不一致"
-      status.lastError = `expected ${videoId}, got ${status.videoId}`
-    } else if (ACTIVE_STATES.has(state)) {
+    if (ACTIVE_STATES.has(state)) {
       const updated = status.updatedAt ? Date.parse(status.updatedAt) : Number.NaN
       const stale = Number.isFinite(updated) ? Date.now() - updated > 45_000 : true
       if (!processIsAlive(status.process?.pid) && stale) {
@@ -277,7 +466,7 @@ export class JobRepository {
 
     if (state === "ready" && !video) {
       effectiveState = "failed"
-      message = "狀態顯示完成，但找不到 video.mp4"
+      message = "狀態顯示完成，但找不到可播放的媒體 rendition"
     }
 
     const playback = this.playbackState(videoId)
@@ -300,19 +489,50 @@ export class JobRepository {
       completedAt: status.completedAt ?? null,
       lastError: status.lastError ?? null,
       watchable: Boolean(video),
-      captionCodes: [...captions.keys()],
-      subtitleTracks: status.subtitleTracks ?? {},
-      subtitleWorkflow: status.subtitleWorkflow ?? null,
+      captionCodes: subtitleCatalog.availableLanguageCodes,
+      activeSubtitleKinds: Object.fromEntries(
+        subtitleCatalog.activeTracks.map((track) => [
+          track.languageCode,
+          track.artifactKind,
+        ]),
+      ),
+      activeSubtitleVersions: Object.fromEntries(
+        subtitleCatalog.activeTracks.map((track) => [
+          track.languageCode,
+          `${track.artifactKind}:${track.revision}:${track.checksum}`,
+        ]),
+      ),
+      subtitlePipeline: status.subtitlePipeline ?? null,
       transcription: status.transcription ?? null,
       sizeBytes: this.jobSize(directory),
       thumbnailUrl: thumbnail ? `/thumbnails/${videoId}` : null,
       watchUrl: video ? `/watch/${videoId}/?embed=1` : null,
       hasLog: isRegularFile(path.join(directory, "logs", "workflow.log")),
       durationSeconds,
+      activeMedia:
+        activeRendition
+          ? {
+              id: activeRendition.id,
+              width: activeRendition.width,
+              height: activeRendition.height,
+              container: activeRendition.container,
+              videoCodec: activeRendition.videoCodec,
+              audioCodec: activeRendition.audioCodec,
+              sizeBytes: activeRendition.sizeBytes,
+              checksum: activeRendition.checksum,
+            }
+          : null,
+      renditionCount: mediaCatalog?.renditions.length ?? 0,
+      mediaRevision: mediaCatalog?.revision ?? 0,
       playback,
     }
 
-    this.project(summary, status, captions, statusModifiedAt)
+    this.project(
+      summary,
+      status,
+      subtitleCatalog,
+      statusModifiedAt,
+    )
 
     if (!includeHistory) return summary
     return {
@@ -351,30 +571,28 @@ export class JobRepository {
   playerConfig(videoId: string) {
     const summary = this.summarize(videoId) as JobSummary
     if (!summary.watchable) throw new Error("video not found")
-    const captions = this.captionPaths(videoId)
-    const labels: Record<string, string> = {
-      "zh-TW": "繁體中文",
-      "zh-Hant": "繁體中文",
-      en: "English",
-      ja: "日本語",
-      ko: "한국어",
-      source: "原文",
-    }
-    const tracks = [...captions.keys()].map((code) => ({
-      code,
-      label: labels[code] ?? code,
-      src: `/captions/${videoId}/${code}.vtt`,
+    const catalog = this.resolvedSubtitleCatalog(videoId)
+    const tracks = catalog.activeTracks.map((track) => ({
+      code: track.languageCode,
+      label: track.languageCode,
+      src: `/captions/${videoId}/${track.languageCode}.vtt?revision=${track.checksum}`,
+      artifactKind: track.artifactKind,
+      revision: track.revision,
     }))
-    const defaultLanguage = captions.has("zh-TW")
-      ? "zh-TW"
-      : captions.has("en")
-        ? "en"
-        : tracks[0]?.code ?? "off"
+    const preferred = [
+      summary.playback.captionLanguage,
+      summary.subtitlePipeline?.outputLanguage,
+      summary.subtitlePipeline?.sourceLanguage,
+    ].find((code) => code && catalog.availableLanguageCodes.includes(code))
+    const defaultLanguage = preferred ?? tracks[0]?.code ?? "off"
     return {
       videoId,
       title: summary.title,
       kicker: "Local library · iframe screening",
-      video: { src: `/media/${videoId}/video`, type: "video/mp4" },
+      video: {
+        src: `/media/${videoId}/video?revision=${summary.mediaRevision}`,
+        type: "video/mp4",
+      },
       defaultLanguage,
       captions: tracks,
       playback: summary.playback,
@@ -384,10 +602,13 @@ export class JobRepository {
   private project(
     summary: JobSummary,
     status: RawStatus,
-    captionFiles: Map<string, string>,
+    subtitleCatalog: ResolvedSubtitleCatalog,
     statusModifiedAt: number,
   ) {
     const projectedAt = new Date().toISOString()
+    const databaseArtifactId = (artifactId: string) =>
+      `${summary.videoId}:${artifactId}`
+    const databaseTrackId = (trackId: string) => `${summary.videoId}:${trackId}`
     this.db.transaction((transaction) => {
       transaction
         .insert(jobs)
@@ -482,47 +703,211 @@ export class JobRepository {
       if (assetRows.length > 0) transaction.insert(jobAssets).values(assetRows).run()
 
       transaction
-        .delete(subtitleTracks)
-        .where(eq(subtitleTracks.videoId, summary.videoId))
+        .delete(mediaDownloadRuns)
+        .where(eq(mediaDownloadRuns.videoId, summary.videoId))
         .run()
-      const trackRows = summary.captionCodes.map((languageCode) => {
-        const metadata = summary.subtitleTracks[languageCode] ?? {}
-        const captionPath = captionFiles.get(languageCode)
-        let cueCount = 0
-        if (captionPath) {
-          try {
-            cueCount = parseWebVtt(readFileSync(captionPath, "utf8")).length
-          } catch {
-            cueCount = 0
-          }
-        }
-        return {
-          videoId: summary.videoId,
-          languageCode,
-          state: metadata.state ?? null,
-          source: metadata.source ?? null,
-          label: metadata.label ?? languageCode,
-          relativePath: metadata.path ?? `captions/${languageCode}.vtt`,
-          sizeBytes:
-            typeof metadata.bytes === "number"
-              ? Math.round(metadata.bytes)
-              : captionPath
-                ? statSync(captionPath).size
-                : null,
-          cueCount,
-          updatedAt: metadata.updatedAt ?? null,
-        }
-      })
-      if (trackRows.length > 0) transaction.insert(subtitleTracks).values(trackRows).run()
+      transaction
+        .delete(mediaRenditions)
+        .where(eq(mediaRenditions.videoId, summary.videoId))
+        .run()
+      let projectedMedia: ReturnType<typeof publicMediaCatalog> | null = null
+      try {
+        projectedMedia = publicMediaCatalog(
+          this.jobDirectory(summary.videoId),
+          summary.videoId,
+        )
+      } catch {
+        projectedMedia = null
+      }
+      if (projectedMedia?.renditions.length) {
+        const stored = readJsonFile<{
+          renditions: Array<{ id: string; path: string }>
+        }>(mediaCatalogPath(this.jobDirectory(summary.videoId)))
+        const paths = new Map(
+          stored.renditions.map((rendition) => [rendition.id, rendition.path]),
+        )
+        transaction
+          .insert(mediaRenditions)
+          .values(
+            projectedMedia.renditions.map((rendition) => ({
+              id: rendition.id,
+              videoId: summary.videoId,
+              requestedHeight: rendition.requestedHeight,
+              width: rendition.width,
+              height: rendition.height,
+              container: rendition.container,
+              videoCodec: rendition.videoCodec,
+              audioCodec: rendition.audioCodec,
+              relativePath: paths.get(rendition.id) ?? "",
+              sizeBytes: rendition.sizeBytes,
+              checksum: rendition.checksum,
+              active: rendition.active,
+              createdAt: rendition.createdAt,
+            })),
+          )
+          .run()
+      }
+      if (projectedMedia?.operation) {
+        transaction
+          .insert(mediaDownloadRuns)
+          .values({
+            id: projectedMedia.operation.id,
+            videoId: summary.videoId,
+            requestedHeight: projectedMedia.operation.requestedHeight,
+            state: projectedMedia.operation.state,
+            stage: projectedMedia.operation.stage,
+            progress: projectedMedia.operation.progress,
+            message: projectedMedia.operation.message,
+            error: projectedMedia.operation.error,
+            startedAt: projectedMedia.operation.startedAt,
+            updatedAt: projectedMedia.operation.updatedAt,
+            completedAt: projectedMedia.operation.completedAt,
+          })
+          .run()
+      }
 
       transaction
-        .delete(subtitleWorkflows)
-        .where(eq(subtitleWorkflows.videoId, summary.videoId))
+        .delete(activeSubtitleTracks)
+        .where(eq(activeSubtitleTracks.videoId, summary.videoId))
         .run()
-      if (summary.subtitleWorkflow) {
+      transaction
+        .delete(subtitleRuns)
+        .where(eq(subtitleRuns.videoId, summary.videoId))
+        .run()
+      transaction
+        .delete(subtitleArtifactTracks)
+        .where(eq(subtitleArtifactTracks.videoId, summary.videoId))
+        .run()
+      transaction
+        .delete(subtitleArtifacts)
+        .where(eq(subtitleArtifacts.videoId, summary.videoId))
+        .run()
+
+      if (subtitleCatalog.artifacts.length > 0) {
         transaction
-          .insert(subtitleWorkflows)
-          .values({ videoId: summary.videoId, ...summary.subtitleWorkflow })
+          .insert(subtitleArtifacts)
+          .values(
+            subtitleCatalog.artifacts.map((artifact) => ({
+              id: databaseArtifactId(artifact.id),
+              videoId: summary.videoId,
+              kind: artifact.kind,
+              revision: artifact.revision,
+              lifecycleState: artifact.lifecycleState,
+              validationState: artifact.validationState,
+              freshnessState: artifact.freshnessState,
+              sourceLanguage: artifact.sourceLanguage,
+              outputLanguage: artifact.outputLanguage,
+              sourceType: artifact.sourceType,
+              provider: artifact.provider,
+              model: artifact.model,
+              timingUnitKind: artifact.timingUnitKind,
+              targetFrozen: artifact.targetFrozen,
+              manifestPath: artifact.manifestPath
+                ? path.relative(
+                    this.jobDirectory(summary.videoId),
+                    artifact.manifestPath,
+                  )
+                : null,
+              checksum: artifact.checksum,
+              warningCount: artifact.warningCount,
+              hardDefectCount: artifact.hardDefectCount,
+              createdAt: artifact.createdAt,
+              completedAt: artifact.completedAt,
+            })),
+          )
+          .run()
+
+        const artifactTrackRows = subtitleCatalog.artifacts.flatMap((artifact) =>
+          artifact.tracks.map((track) => ({
+            id: databaseTrackId(track.id),
+            artifactId: databaseArtifactId(artifact.id),
+            videoId: summary.videoId,
+            languageCode: track.languageCode,
+            role: track.role,
+            state: track.state,
+            relativePath: track.relativePath,
+            sizeBytes: track.sizeBytes,
+            cueCount: track.cueCount,
+            checksum: track.checksum,
+            updatedAt: track.updatedAt,
+          })),
+        )
+        if (artifactTrackRows.length > 0) {
+          transaction.insert(subtitleArtifactTracks).values(artifactTrackRows).run()
+        }
+
+        const dependencyRows = subtitleCatalog.artifacts.flatMap((artifact) =>
+          artifact.dependencies.map((dependency) => ({
+              artifactId: databaseArtifactId(artifact.id),
+              dependsOnArtifactId: databaseArtifactId(dependency.artifactId),
+              relation: dependency.relation,
+            })),
+        )
+        if (dependencyRows.length > 0) {
+          transaction
+            .insert(subtitleArtifactDependencies)
+            .values(dependencyRows)
+            .run()
+        }
+
+        if (subtitleCatalog.activeTracks.length > 0) {
+          transaction
+            .insert(activeSubtitleTracks)
+            .values(
+              subtitleCatalog.activeTracks.map((track) => ({
+                videoId: summary.videoId,
+                languageCode: track.languageCode,
+                trackId: databaseTrackId(track.id),
+                activatedAt: projectedAt,
+                reason: track.reason,
+              })),
+            )
+            .run()
+        }
+      }
+
+      transaction
+        .delete(subtitlePipelines)
+        .where(eq(subtitlePipelines.videoId, summary.videoId))
+        .run()
+      if (summary.subtitlePipeline) {
+        transaction
+          .insert(subtitlePipelines)
+          .values({ videoId: summary.videoId, ...summary.subtitlePipeline })
+          .run()
+        const pipelineStage = summary.subtitlePipeline.stage ?? summary.stage
+        const runKind = /segment|alignment|frozen|validation/.test(pipelineStage)
+          ? "segmentation"
+          : /content/.test(pipelineStage)
+            ? summary.subtitlePipeline.mode === "translate"
+              ? "translation"
+              : "proofread"
+            : "source"
+        transaction
+          .insert(subtitleRuns)
+          .values({
+            id: `${summary.videoId}:current`,
+            videoId: summary.videoId,
+            kind: runKind,
+            state:
+              summary.effectiveState === "failed"
+                ? "failed"
+                : ACTIVE_STATES.has(summary.effectiveState)
+                  ? "processing"
+                  : "ready",
+            stage: pipelineStage,
+            provider:
+              summary.subtitlePipeline.contentProvider ??
+              summary.subtitlePipeline.timingProvider ??
+              null,
+            model:
+              summary.subtitlePipeline.contentModel ??
+              summary.subtitlePipeline.timingModel ??
+              null,
+            startedAt: summary.createdAt,
+            completedAt: summary.completedAt,
+            error: summary.lastError,
+          })
           .run()
       }
 

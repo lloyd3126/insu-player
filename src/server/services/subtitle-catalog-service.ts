@@ -1,0 +1,710 @@
+import { createHash } from "node:crypto"
+import { readFileSync, statSync } from "node:fs"
+import path from "node:path"
+
+import { safeContainedFile } from "@server/lib/files"
+import {
+  SUBTITLE_ARTIFACT_KINDS,
+  SUBTITLE_ARTIFACT_PROVIDERS,
+  SUBTITLE_DEPENDENCY_RELATIONS,
+  SUBTITLE_SOURCE_TYPES,
+  SUBTITLE_TIMING_UNIT_KINDS,
+  SUBTITLE_TRACK_ROLES,
+  type ActiveSubtitleTrack,
+  type SubtitleArtifact,
+  type SubtitleArtifactDependency,
+  type SubtitleArtifactKind,
+  type SubtitleArtifactTrack,
+  type SubtitleCatalogResponse,
+  type SubtitleFreshnessState,
+  type SubtitleLifecycleState,
+  type SubtitlePlaybackLanguage,
+  type SubtitleSourceType,
+  type SubtitleTrackRole,
+  type SubtitleValidationState,
+} from "@shared/contracts/subtitle-catalog"
+import { parseWebVtt } from "@shared/domain/subtitle"
+
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/
+const LANGUAGE_PATTERN = /^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
+const PLAYBACK_ROLES = new Set<SubtitleTrackRole>([
+  "source_raw",
+  "output_sentence",
+  "output_segmented",
+])
+
+interface ResolvedSubtitleArtifactTrack extends SubtitleArtifactTrack {
+  relativePath: string
+  absolutePath: string
+}
+
+interface ResolvedSubtitleArtifact extends Omit<SubtitleArtifact, "tracks"> {
+  manifestPath: string | null
+  tracks: ResolvedSubtitleArtifactTrack[]
+}
+
+interface SubtitleCandidate {
+  artifact: ResolvedSubtitleArtifact
+  track: ResolvedSubtitleArtifactTrack
+}
+
+export interface ResolvedSubtitleCatalog {
+  videoId: string
+  artifacts: ResolvedSubtitleArtifact[]
+  activeTracks: Array<
+    ActiveSubtitleTrack & { absolutePath: string; relativePath: string }
+  >
+  playbackLanguages: SubtitlePlaybackLanguage[]
+  availableLanguageCodes: string[]
+}
+
+export interface SubtitleCatalogInput {
+  videoId: string
+  jobDirectory: string
+  rawArtifacts: unknown
+  explicitActiveTracks: unknown
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function requiredString(value: unknown, label: string) {
+  const resolved = stringValue(value)
+  if (!resolved) throw new Error(`${label} must be non-empty text`)
+  return resolved
+}
+
+function requiredPositiveInteger(value: unknown, label: string) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer`)
+  }
+  return value
+}
+
+function requiredCount(value: unknown, label: string) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`)
+  }
+  return value
+}
+
+function requiredBoolean(value: unknown, label: string) {
+  if (typeof value !== "boolean") throw new Error(`${label} must be boolean`)
+  return value
+}
+
+function requiredEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  label: string,
+) {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new Error(`${label} is unsupported`)
+  }
+  return value as T
+}
+
+function requiredLanguage(value: unknown, label: string) {
+  const language = requiredString(value, label)
+  if (!LANGUAGE_PATTERN.test(language)) {
+    throw new Error(`${label} must be a BCP 47 language code`)
+  }
+  return language
+}
+
+function checksum(contents: string) {
+  return createHash("sha256").update(contents).digest("hex")
+}
+
+function resolvedTrack(
+  jobDirectory: string,
+  artifactId: string,
+  raw: Record<string, unknown>,
+): ResolvedSubtitleArtifactTrack {
+  const id = requiredString(raw.id, `${artifactId}.track.id`)
+  const languageCode = requiredLanguage(
+    raw.languageCode,
+    `${artifactId}.${id}.languageCode`,
+  )
+  const relativePath = requiredString(raw.path, `${artifactId}.${id}.path`)
+  if (!IDENTIFIER_PATTERN.test(id)) {
+    throw new Error(`invalid subtitle track ID: ${id}`)
+  }
+  const artifactRoot = `subtitle-work/artifacts/${artifactId}/`
+  if (!relativePath.startsWith(artifactRoot)) {
+    throw new Error(`subtitle track must stay inside ${artifactRoot}`)
+  }
+  const absolutePath = safeContainedFile(
+    jobDirectory,
+    path.join(jobDirectory, relativePath),
+  )
+  if (!absolutePath) {
+    throw new Error(`subtitle track is unavailable: ${relativePath}`)
+  }
+  let contents: string
+  let cueCount: number
+  try {
+    contents = readFileSync(absolutePath, "utf8")
+    cueCount = parseWebVtt(contents).length
+  } catch {
+    throw new Error(`subtitle track is not valid WebVTT: ${relativePath}`)
+  }
+  const actualChecksum = checksum(contents)
+  if (stringValue(raw.checksum) !== actualChecksum) {
+    throw new Error(`subtitle track checksum mismatch: ${relativePath}`)
+  }
+  const role = requiredEnum(
+    raw.role,
+    SUBTITLE_TRACK_ROLES,
+    `${artifactId}.${id}.role`,
+  )
+  const metadata = statSync(absolutePath)
+  return {
+    id,
+    artifactId,
+    languageCode,
+    role,
+    state: requiredString(raw.state, `${artifactId}.${id}.state`),
+    playbackEligible: PLAYBACK_ROLES.has(role),
+    relativePath,
+    absolutePath,
+    sizeBytes: metadata.size,
+    cueCount,
+    checksum: actualChecksum,
+    updatedAt: stringValue(raw.updatedAt) ?? metadata.mtime.toISOString(),
+  }
+}
+
+function dependencies(value: unknown, artifactId: string) {
+  if (!Array.isArray(value)) {
+    throw new Error(`${artifactId}.dependencies must be an array`)
+  }
+  const seen = new Set<string>()
+  return value.map((raw): SubtitleArtifactDependency => {
+    if (!raw || typeof raw !== "object") {
+      throw new Error(`${artifactId}.dependency must be an object`)
+    }
+    const candidate = raw as Record<string, unknown>
+    const dependency = {
+      artifactId: requiredString(
+        candidate.artifactId,
+        `${artifactId}.dependency.artifactId`,
+      ),
+      relation: requiredEnum(
+        candidate.relation,
+        SUBTITLE_DEPENDENCY_RELATIONS,
+        `${artifactId}.dependency.relation`,
+      ),
+    }
+    if (!IDENTIFIER_PATTERN.test(dependency.artifactId)) {
+      throw new Error(`invalid subtitle dependency ID: ${dependency.artifactId}`)
+    }
+    const key = `${dependency.relation}:${dependency.artifactId}`
+    if (seen.has(key)) throw new Error(`${artifactId} has a duplicate dependency`)
+    seen.add(key)
+    return dependency
+  })
+}
+
+function expectedRoles(kind: SubtitleArtifactKind): SubtitleTrackRole[] {
+  if (kind === "source") return ["source_raw"]
+  if (kind === "segmentation") {
+    return ["input_segmented", "output_segmented"]
+  }
+  return ["input_sentence", "output_sentence"]
+}
+
+function validateTrackContract(artifact: ResolvedSubtitleArtifact) {
+  const expected = expectedRoles(artifact.kind)
+  const byRole = new Map(artifact.tracks.map((track) => [track.role, track]))
+  if (artifact.lifecycleState === "ready") {
+    const actual = [...byRole.keys()].sort()
+    const required = [...expected].sort()
+    if (
+      artifact.tracks.length !== required.length ||
+      actual.some((role, index) => role !== required[index])
+    ) {
+      throw new Error(
+        `${artifact.id}.tracks do not match the ${artifact.kind} artifact contract`,
+      )
+    }
+  }
+  for (const track of artifact.tracks) {
+    if (!expected.includes(track.role)) {
+      throw new Error(`${artifact.id}.${track.role} is not valid for its kind`)
+    }
+    const expectedLanguage =
+      track.role === "source_raw" || track.role.startsWith("input_")
+        ? artifact.sourceLanguage
+        : artifact.outputLanguage
+    if (track.languageCode !== expectedLanguage) {
+      throw new Error(`${artifact.id}.${track.role} language does not match`)
+    }
+  }
+}
+
+function registeredArtifacts(input: SubtitleCatalogInput) {
+  if (!Array.isArray(input.rawArtifacts)) {
+    throw new Error("status.json must contain subtitleArtifacts")
+  }
+  const artifactIds = new Set<string>()
+  const trackIds = new Set<string>()
+  const artifacts = input.rawArtifacts.map((raw): ResolvedSubtitleArtifact => {
+    if (!raw || typeof raw !== "object") {
+      throw new Error("subtitle artifact must be an object")
+    }
+    const candidate = raw as Record<string, unknown>
+    const id = requiredString(candidate.id, "subtitle artifact id")
+    if (!IDENTIFIER_PATTERN.test(id) || artifactIds.has(id)) {
+      throw new Error(`invalid or duplicate subtitle artifact ID: ${id}`)
+    }
+    artifactIds.add(id)
+    const kind = requiredEnum(
+      candidate.kind,
+      SUBTITLE_ARTIFACT_KINDS,
+      `${id}.kind`,
+    )
+    const provider = requiredEnum(
+      candidate.provider,
+      SUBTITLE_ARTIFACT_PROVIDERS,
+      `${id}.provider`,
+    )
+    const lifecycleState = requiredEnum<SubtitleLifecycleState>(
+      candidate.lifecycleState,
+      ["draft", "processing", "ready", "failed", "archived"],
+      `${id}.lifecycleState`,
+    )
+    const sourceLanguage = requiredLanguage(
+      candidate.sourceLanguage,
+      `${id}.sourceLanguage`,
+    )
+    const outputLanguage =
+      kind === "source"
+        ? null
+        : requiredLanguage(candidate.outputLanguage, `${id}.outputLanguage`)
+    if (kind === "source" && stringValue(candidate.outputLanguage)) {
+      throw new Error(`${id}.outputLanguage must be null for a source artifact`)
+    }
+    if (kind === "proofread" && outputLanguage !== sourceLanguage) {
+      throw new Error(`${id} proofreading must preserve the source language`)
+    }
+    if (kind === "translation" && outputLanguage === sourceLanguage) {
+      throw new Error(`${id} translation output must use another language`)
+    }
+    const sourceType =
+      kind === "source"
+        ? requiredEnum(
+            candidate.sourceType,
+            SUBTITLE_SOURCE_TYPES,
+            `${id}.sourceType`,
+          )
+        : null
+    if (kind !== "source" && stringValue(candidate.sourceType)) {
+      throw new Error(`${id}.sourceType is only allowed on source artifacts`)
+    }
+    const model = stringValue(candidate.model)
+    const timingUnitKind =
+      candidate.timingUnitKind === null || candidate.timingUnitKind === undefined
+        ? null
+        : requiredEnum(
+            candidate.timingUnitKind,
+            SUBTITLE_TIMING_UNIT_KINDS,
+            `${id}.timingUnitKind`,
+          )
+    if (kind === "source" && sourceType === "manual-cc") {
+      if (provider !== "yt-dlp" || model || timingUnitKind !== "cue") {
+        throw new Error(`${id} manual CC must use yt-dlp cue timing`)
+      }
+    } else if (kind === "source") {
+      if (provider === "yt-dlp" || !model) {
+        throw new Error(`${id} model transcripts require a local or openai model`)
+      }
+      if (!timingUnitKind || timingUnitKind === "cue") {
+        throw new Error(`${id} model transcripts require fine-grained timing`)
+      }
+    } else if (provider === "yt-dlp" || !model) {
+      throw new Error(`${id} subtitle revisions require a content model`)
+    }
+    if (!Array.isArray(candidate.tracks)) {
+      throw new Error(`${id}.tracks must be an array`)
+    }
+    const tracks = candidate.tracks.map((track) => {
+      if (!track || typeof track !== "object") {
+        throw new Error(`${id}.track must be an object`)
+      }
+      const resolved = resolvedTrack(
+        input.jobDirectory,
+        id,
+        track as Record<string, unknown>,
+      )
+      if (trackIds.has(resolved.id)) {
+        throw new Error(`duplicate subtitle track ID: ${resolved.id}`)
+      }
+      trackIds.add(resolved.id)
+      return resolved
+    })
+    const manifestRelativePath = stringValue(candidate.manifestPath)
+    if (
+      manifestRelativePath &&
+      !manifestRelativePath.startsWith(`subtitle-work/artifacts/${id}/`)
+    ) {
+      throw new Error(`${id}.manifestPath must stay inside its artifact directory`)
+    }
+    const manifestPath = manifestRelativePath
+      ? safeContainedFile(
+          input.jobDirectory,
+          path.join(input.jobDirectory, manifestRelativePath),
+        )
+      : null
+    if (manifestRelativePath && !manifestPath) {
+      throw new Error(`${id}.manifestPath is unavailable`)
+    }
+    if (kind === "source" && manifestPath) {
+      throw new Error(`${id}.manifestPath is not allowed for source artifacts`)
+    }
+    if (kind !== "source" && !manifestPath) {
+      throw new Error(`${id}.manifestPath is required`)
+    }
+    const targetFrozen = requiredBoolean(candidate.targetFrozen, `${id}.targetFrozen`)
+    if ((kind === "segmentation") !== targetFrozen) {
+      throw new Error(`${id}.targetFrozen does not match the artifact kind`)
+    }
+    const registeredArtifactChecksum = requiredString(
+      candidate.checksum,
+      `${id}.checksum`,
+    )
+    if (!SHA256_PATTERN.test(registeredArtifactChecksum)) {
+      throw new Error(`${id}.checksum must be a lowercase SHA-256 value`)
+    }
+    const artifactHasher = createHash("sha256")
+    for (const track of tracks) {
+      artifactHasher.update(track.languageCode, "utf8")
+      artifactHasher.update(track.checksum, "ascii")
+    }
+    if (manifestPath) {
+      artifactHasher.update(
+        createHash("sha256").update(readFileSync(manifestPath)).digest(),
+      )
+    }
+    if (artifactHasher.digest("hex") !== registeredArtifactChecksum) {
+      throw new Error(`${id}.checksum does not match its registered files`)
+    }
+    const artifact: ResolvedSubtitleArtifact = {
+      id,
+      kind,
+      revision: requiredPositiveInteger(candidate.revision, `${id}.revision`),
+      lifecycleState,
+      validationState: requiredEnum<SubtitleValidationState>(
+        candidate.validationState,
+        ["pending", "valid", "warning", "invalid"],
+        `${id}.validationState`,
+      ),
+      freshnessState: requiredEnum<SubtitleFreshnessState>(
+        candidate.freshnessState,
+        ["current", "stale", "superseded"],
+        `${id}.freshnessState`,
+      ),
+      sourceLanguage,
+      outputLanguage,
+      sourceType,
+      provider,
+      model,
+      timingUnitKind,
+      targetFrozen,
+      manifestPath,
+      manifestAvailable: Boolean(manifestPath),
+      checksum: registeredArtifactChecksum,
+      warningCount: requiredCount(candidate.warningCount, `${id}.warningCount`),
+      hardDefectCount: requiredCount(
+        candidate.hardDefectCount,
+        `${id}.hardDefectCount`,
+      ),
+      dependencies: dependencies(candidate.dependencies, id),
+      tracks,
+      createdAt: stringValue(candidate.createdAt),
+      completedAt: stringValue(candidate.completedAt),
+    }
+    validateTrackContract(artifact)
+    return artifact
+  })
+
+  const byId = new Map(artifacts.map((artifact) => [artifact.id, artifact]))
+  for (const artifact of artifacts) validateDependencies(artifact, byId)
+  return artifacts
+}
+
+function related(
+  artifact: ResolvedSubtitleArtifact,
+  relation: SubtitleArtifactDependency["relation"],
+  byId: Map<string, ResolvedSubtitleArtifact>,
+) {
+  return artifact.dependencies
+    .filter((dependency) => dependency.relation === relation)
+    .map((dependency) => {
+      const parent = byId.get(dependency.artifactId)
+      if (!parent) throw new Error(`${artifact.id} references a missing dependency`)
+      return parent
+    })
+}
+
+function validateDependencies(
+  artifact: ResolvedSubtitleArtifact,
+  byId: Map<string, ResolvedSubtitleArtifact>,
+) {
+  if (artifact.kind === "source") {
+    if (artifact.dependencies.length !== 0) {
+      throw new Error(`${artifact.id} source artifacts cannot have dependencies`)
+    }
+    return
+  }
+  const timingSources = related(artifact, "timing-source", byId)
+  const references = related(artifact, "text-reference", byId)
+  const contentParents = related(artifact, "content-parent", byId)
+  if (
+    timingSources.length !== 1 ||
+    timingSources[0]?.kind !== "source" ||
+    timingSources[0]?.sourceType !== "model-transcript" ||
+    timingSources[0]?.sourceLanguage !== artifact.sourceLanguage
+  ) {
+    throw new Error(`${artifact.id} requires one model transcript timing source`)
+  }
+  if (
+    references.some(
+      (reference) =>
+        reference.kind !== "source" ||
+        reference.sourceType !== "manual-cc" ||
+        reference.sourceLanguage !== artifact.sourceLanguage,
+    )
+  ) {
+    throw new Error(`${artifact.id} text references must be same-language manual CC`)
+  }
+  if (artifact.kind === "proofread" || artifact.kind === "translation") {
+    if (contentParents.length !== 0) {
+      throw new Error(`${artifact.id} content revisions cannot have a content parent`)
+    }
+    return
+  }
+  if (references.length !== 0 || contentParents.length !== 1) {
+    throw new Error(`${artifact.id} segmentation requires one content parent`)
+  }
+  const contentParent = contentParents[0]
+  if (
+    (contentParent?.kind !== "proofread" &&
+      contentParent?.kind !== "translation") ||
+    contentParent.sourceLanguage !== artifact.sourceLanguage ||
+    contentParent.outputLanguage !== artifact.outputLanguage
+  ) {
+    throw new Error(`${artifact.id} content parent languages do not match`)
+  }
+}
+
+function resolverEligible(artifact: ResolvedSubtitleArtifact) {
+  return (
+    artifact.lifecycleState === "ready" &&
+    artifact.validationState !== "invalid" &&
+    artifact.hardDefectCount === 0
+  )
+}
+
+function playbackCandidates(artifacts: ResolvedSubtitleArtifact[]) {
+  return artifacts.flatMap((artifact): SubtitleCandidate[] =>
+    resolverEligible(artifact)
+      ? artifact.tracks
+          .filter(
+            (track) =>
+              track.playbackEligible &&
+              track.state === "ready" &&
+              track.cueCount > 0,
+          )
+          .map((track) => ({ artifact, track }))
+      : [],
+  )
+}
+
+function trackPriority({ artifact, track }: SubtitleCandidate) {
+  const roleScore =
+    track.role === "output_segmented"
+      ? 400
+      : track.role === "output_sentence"
+        ? 300
+        : artifact.sourceType === "manual-cc"
+          ? 200
+          : 100
+  const freshnessScore: Record<SubtitleFreshnessState, number> = {
+    current: 30,
+    stale: 10,
+    superseded: 0,
+  }
+  return (
+    roleScore * 1_000_000 +
+    freshnessScore[artifact.freshnessState] * 10_000 +
+    artifact.revision
+  )
+}
+
+function sortedCandidates(candidates: SubtitleCandidate[]) {
+  return [...candidates].sort(
+    (left, right) => trackPriority(right) - trackPriority(left),
+  )
+}
+
+function resolveActiveTracks(
+  candidates: SubtitleCandidate[],
+  explicit: unknown,
+) {
+  if (!explicit || typeof explicit !== "object" || Array.isArray(explicit)) {
+    throw new Error("status.json must contain activeSubtitleTracks")
+  }
+  const explicitMap = explicit as Record<string, unknown>
+  for (const [languageCode, trackId] of Object.entries(explicitMap)) {
+    if (!LANGUAGE_PATTERN.test(languageCode) || !stringValue(trackId)) {
+      throw new Error("activeSubtitleTracks must map language codes to track IDs")
+    }
+  }
+  const languages = [...new Set(candidates.map(({ track }) => track.languageCode))]
+    .sort((left, right) => left.localeCompare(right))
+  return languages.flatMap((languageCode) => {
+    const options = sortedCandidates(
+      candidates.filter(({ track }) => track.languageCode === languageCode),
+    )
+    const explicitTrackId = stringValue(explicitMap[languageCode])
+    const explicitlySelected = explicitTrackId
+      ? options.find(({ track }) => track.id === explicitTrackId)
+      : null
+    const selected = explicitlySelected ?? options[0]
+    if (!selected) return []
+    return [
+      {
+        ...selected.track,
+        artifactKind: selected.artifact.kind,
+        sourceType: selected.artifact.sourceType,
+        revision: selected.artifact.revision,
+        active: true as const,
+        reason: explicitlySelected ? ("explicit" as const) : ("resolver" as const),
+      },
+    ]
+  })
+}
+
+function publicTrack(track: ResolvedSubtitleArtifactTrack): SubtitleArtifactTrack {
+  return {
+    id: track.id,
+    artifactId: track.artifactId,
+    languageCode: track.languageCode,
+    role: track.role,
+    state: track.state,
+    playbackEligible: track.playbackEligible,
+    sizeBytes: track.sizeBytes,
+    cueCount: track.cueCount,
+    checksum: track.checksum,
+    updatedAt: track.updatedAt,
+  }
+}
+
+function playbackLabel(candidate: SubtitleCandidate) {
+  const { artifact } = candidate
+  if (artifact.kind === "source") {
+    return `${artifact.sourceType === "manual-cc" ? "人工 CC" : "模型轉錄"} · r${artifact.revision}`
+  }
+  const label =
+    artifact.kind === "proofread"
+      ? "校正字幕"
+      : artifact.kind === "translation"
+        ? "翻譯字幕"
+        : "切分字幕"
+  return `${label} · r${artifact.revision}`
+}
+
+function buildPlaybackLanguages(
+  candidates: SubtitleCandidate[],
+  activeTracks: ResolvedSubtitleCatalog["activeTracks"],
+) {
+  return activeTracks.map((active): SubtitlePlaybackLanguage => {
+    const options = sortedCandidates(
+      candidates.filter(({ track }) => track.languageCode === active.languageCode),
+    ).map(({ artifact, track }) => ({
+      ...publicTrack(track),
+      artifactKind: artifact.kind,
+      sourceType: artifact.sourceType,
+      revision: artifact.revision,
+      label: playbackLabel({ artifact, track }),
+      active: track.id === active.id,
+    }))
+    return {
+      languageCode: active.languageCode,
+      activeTrackId: active.id,
+      activeReason: active.reason,
+      options,
+    }
+  })
+}
+
+export function resolveSubtitleCatalog(
+  input: SubtitleCatalogInput,
+): ResolvedSubtitleCatalog {
+  const artifacts = registeredArtifacts(input)
+  const candidates = playbackCandidates(artifacts)
+  const activeTracks = resolveActiveTracks(candidates, input.explicitActiveTracks)
+  return {
+    videoId: input.videoId,
+    artifacts,
+    activeTracks,
+    playbackLanguages: buildPlaybackLanguages(candidates, activeTracks),
+    availableLanguageCodes: activeTracks.map((track) => track.languageCode),
+  }
+}
+
+export function publicSubtitleCatalog(
+  catalog: ResolvedSubtitleCatalog,
+): SubtitleCatalogResponse {
+  return {
+    videoId: catalog.videoId,
+    artifacts: catalog.artifacts.map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.kind,
+      revision: artifact.revision,
+      lifecycleState: artifact.lifecycleState,
+      validationState: artifact.validationState,
+      freshnessState: artifact.freshnessState,
+      sourceLanguage: artifact.sourceLanguage,
+      outputLanguage: artifact.outputLanguage,
+      sourceType: artifact.sourceType,
+      provider: artifact.provider,
+      model: artifact.model,
+      timingUnitKind: artifact.timingUnitKind,
+      targetFrozen: artifact.targetFrozen,
+      manifestAvailable: artifact.manifestAvailable,
+      checksum: artifact.checksum,
+      warningCount: artifact.warningCount,
+      hardDefectCount: artifact.hardDefectCount,
+      dependencies: artifact.dependencies,
+      tracks: artifact.tracks.map(publicTrack),
+      createdAt: artifact.createdAt,
+      completedAt: artifact.completedAt,
+    })),
+    activeTracks: catalog.activeTracks.map((track) => ({
+      ...publicTrack(track),
+      artifactKind: track.artifactKind,
+      sourceType: track.sourceType,
+      revision: track.revision,
+      active: true,
+      reason: track.reason,
+    })),
+    playbackLanguages: catalog.playbackLanguages,
+    availableLanguageCodes: catalog.availableLanguageCodes,
+  }
+}
+
+export function isSelectableSubtitleTrack(
+  catalog: ResolvedSubtitleCatalog,
+  languageCode: string,
+  trackId: string,
+) {
+  return catalog.playbackLanguages.some(
+    (language) =>
+      language.languageCode === languageCode &&
+      language.options.some((option) => option.id === trackId),
+  )
+}

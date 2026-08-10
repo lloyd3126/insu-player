@@ -2,6 +2,7 @@ import type {
   JobDetailTab,
   OverlayDestination,
   OverlayState,
+  SubtitleManagementView,
 } from "@/app/overlay-context"
 
 const USAGE_GUIDE_TABS = new Set([
@@ -17,13 +18,19 @@ const FEATURE_SETTINGS_TABS = new Set([
 const LIBRARY_VIEWS = new Set(["grid", "list"])
 const JOB_DETAIL_TABS = new Set([
   "about",
-  "activity",
-  "source-subtitle",
+  "quality",
+  "subtitles",
   "summary",
   "notes",
-  "translated-subtitle",
+  "activity",
+])
+const SUBTITLE_MANAGEMENT_VIEWS = new Set([
+  "source",
+  "proofread",
+  "translation",
   "segmentation",
 ])
+const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/
 
 function decodeSegment(segment: string) {
   try {
@@ -42,8 +49,16 @@ function setValue<T extends string>(values: Set<string>, value: string | undefin
 }
 
 function jobDetailTab(value: string | undefined) {
-  if (value === "subtitle") return "source-subtitle"
   return setValue<JobDetailTab>(JOB_DETAIL_TABS, value)
+}
+
+function subtitleManagementView(value: string | undefined) {
+  return setValue<SubtitleManagementView>(SUBTITLE_MANAGEMENT_VIEWS, value)
+}
+
+function artifactIdFromSearch(search: string) {
+  const value = new URLSearchParams(search).get("artifact")?.trim()
+  return value && ARTIFACT_ID_PATTERN.test(value) ? value : undefined
 }
 
 function overlayDestinationFromLocation(
@@ -73,11 +88,29 @@ function overlayDestinationFromLocation(
       view: setValue(LIBRARY_VIEWS, segments[1]),
     }
   }
-  if (segments[0] === "jobs" && segments[1] && segments.length <= 3) {
+  if (segments[0] === "jobs" && segments[1] && segments.length <= 4) {
+    const tab = segments.length === 2 ? "about" : jobDetailTab(segments[2])
+    if (!tab) return null
+    if (tab === "subtitles") {
+      const subtitleView =
+        segments.length === 3
+          ? "source"
+          : subtitleManagementView(segments[3])
+      if (!subtitleView) return null
+      const artifactId = artifactIdFromSearch(search)
+      return {
+        type: "detail",
+        videoId: segments[1],
+        tab,
+        subtitleView,
+        ...(artifactId ? { artifactId } : {}),
+      }
+    }
+    if (segments.length > 3) return null
     return {
       type: "detail",
       videoId: segments[1],
-      tab: jobDetailTab(segments[2]) ?? "about",
+      tab,
     }
   }
   if (segments[0] === "player" && segments[1] && segments.length === 2) {
@@ -140,7 +173,13 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
       path = overlay.view ? `/library/${overlay.view}` : "/library"
       break
     case "detail":
-      path = `/jobs/${encodeURIComponent(overlay.videoId)}/${overlay.tab}`
+      path =
+        overlay.tab === "subtitles"
+          ? `/jobs/${encodeURIComponent(overlay.videoId)}/subtitles/${overlay.subtitleView}`
+          : `/jobs/${encodeURIComponent(overlay.videoId)}/${overlay.tab}`
+      if (overlay.tab === "subtitles" && overlay.artifactId) {
+        search.set("artifact", overlay.artifactId)
+      }
       break
     case "player":
       path = `/player/${encodeURIComponent(overlay.videoId)}`

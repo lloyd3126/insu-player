@@ -12,10 +12,18 @@ import type {
   SupportedSitesResponse,
 } from "@shared/contracts/resources"
 import type {
+  SubtitleArtifactComparisonResponse,
+  SubtitleCatalogResponse,
+} from "@shared/contracts/subtitle-catalog"
+import type {
   RemovalExecutionResponse,
   RemovalPreviewResponse,
   RemovalTarget,
 } from "@shared/contracts/removal"
+import type {
+  MediaCatalogResponse,
+  MediaDownloadResponse,
+} from "@shared/contracts/media"
 
 async function fetchJson<T>(input: string, init?: RequestInit) {
   const response = await fetch(input, { cache: "no-store", ...init })
@@ -45,7 +53,60 @@ export const api = {
     fetchJson<CaptionComparisonResponse>(
       `/api/jobs/${encodeURIComponent(videoId)}/captions`,
     ),
-  savePlayback: (videoId: string, playback: Pick<PlaybackState, "time" | "duration">) =>
+  subtitles: (videoId: string) =>
+    fetchJson<SubtitleCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/subtitles`,
+    ),
+  activateSubtitle: (
+    videoId: string,
+    languageCode: string,
+    trackId: string,
+  ) =>
+    fetchJson<SubtitleCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/subtitles/active`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ languageCode, trackId }),
+      },
+    ),
+  media: (videoId: string) =>
+    fetchJson<MediaCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/media`,
+    ),
+  refreshMedia: (videoId: string) =>
+    fetchJson<MediaCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/media/refresh`,
+      { method: "POST" },
+    ),
+  downloadMedia: (videoId: string, height: number) =>
+    fetchJson<MediaDownloadResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/media/renditions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ height }),
+      },
+    ),
+  activateMedia: (videoId: string, renditionId: string) =>
+    fetchJson<MediaCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/media/active`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ renditionId }),
+      },
+    ),
+  subtitleArtifactCaptions: (videoId: string, artifactId: string) =>
+    fetchJson<SubtitleArtifactComparisonResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/subtitles/artifacts/${encodeURIComponent(artifactId)}/captions`,
+    ),
+  savePlayback: (
+    videoId: string,
+    playback: Partial<
+      Pick<PlaybackState, "time" | "duration" | "captionLanguage">
+    >,
+  ) =>
     fetchJson<PlaybackState>(
       `/api/jobs/${encodeURIComponent(videoId)}/playback`,
       {

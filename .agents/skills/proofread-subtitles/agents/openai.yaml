@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proofread Subtitles"
+  short_description: "Correct same-language subtitles using timed source evidence"
+  default_prompt: "Use $proofread-subtitles to correct a timed transcript in its original language without translating or changing meaning."

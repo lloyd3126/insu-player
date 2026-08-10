@@ -21,7 +21,7 @@ describe("overlay routes", () => {
     ).toBe("/library/grid")
   })
 
-  test("preserves the selected job detail tab", () => {
+  test("preserves standard job detail tabs", () => {
     const overlay = overlayFromLocation("/jobs/video%20id/activity")
     expect(overlay).toEqual({
       type: "detail",
@@ -30,24 +30,62 @@ describe("overlay routes", () => {
     })
     expect(pathForOverlay(overlay!)).toBe("/jobs/video%20id/activity")
 
-    const sourceSubtitles = overlayFromLocation(
-      "/jobs/video%20id/source-subtitle",
-    )
-    expect(sourceSubtitles).toMatchObject({
+    const quality = overlayFromLocation("/jobs/video%20id/quality")
+    expect(quality).toMatchObject({
       type: "detail",
       videoId: "video id",
-      tab: "source-subtitle",
+      tab: "quality",
     })
-    expect(pathForOverlay(sourceSubtitles!)).toBe(
-      "/jobs/video%20id/source-subtitle",
+    expect(pathForOverlay(quality!)).toBe("/jobs/video%20id/quality")
+  })
+
+  test("round trips nested subtitle views and the selected artifact", () => {
+    expect(overlayFromLocation("/jobs/video%20id/subtitles")).toEqual({
+      type: "detail",
+      videoId: "video id",
+      tab: "subtitles",
+      subtitleView: "source",
+    })
+
+    const translation = overlayFromLocation(
+      "/jobs/video%20id/subtitles/translation",
+      "?artifact=translation-en-zh-TW-r2&returnTo=%2Flibrary%2Flist",
+    )
+    expect(translation).toEqual({
+      type: "detail",
+      videoId: "video id",
+      tab: "subtitles",
+      subtitleView: "translation",
+      artifactId: "translation-en-zh-TW-r2",
+      returnTo: "/library/list",
+    })
+    expect(pathForOverlay(translation!)).toBe(
+      "/jobs/video%20id/subtitles/translation?artifact=translation-en-zh-TW-r2&returnTo=%2Flibrary%2Flist",
+    )
+
+    const segmentation = overlayFromLocation(
+      "/jobs/video%20id/subtitles/segmentation",
+    )
+    expect(pathForOverlay(segmentation!)).toBe(
+      "/jobs/video%20id/subtitles/segmentation",
     )
   })
 
-  test("keeps legacy subtitle links on the original subtitle tab", () => {
-    expect(overlayFromLocation("/jobs/demo-video/subtitle")).toMatchObject({
+  test("rejects legacy subtitle routes and invalid nested subtitle state", () => {
+    expect(overlayFromLocation("/jobs/demo-video/source-subtitle")).toBeNull()
+    expect(overlayFromLocation("/jobs/demo-video/translated-subtitle")).toBeNull()
+    expect(overlayFromLocation("/jobs/demo-video/segmentation")).toBeNull()
+    expect(overlayFromLocation("/jobs/demo-video/subtitles/unknown")).toBeNull()
+    expect(
+      overlayFromLocation(
+        "/jobs/demo-video/subtitles/source",
+        "?artifact=%2Fnot-safe",
+      ),
+    ).toEqual({
       type: "detail",
       videoId: "demo-video",
-      tab: "source-subtitle",
+      tab: "subtitles",
+      subtitleView: "source",
     })
   })
 
@@ -96,10 +134,8 @@ describe("overlay routes", () => {
       type: "usage-guide",
       tab: "getting-started",
     })
-    expect(overlayFromLocation("/jobs/demo-video/unknown")).toMatchObject({
-      type: "detail",
-      tab: "about",
-    })
+    expect(overlayFromLocation("/jobs/demo-video/unknown")).toBeNull()
+    expect(overlayFromLocation("/jobs/demo-video/subtitle")).toBeNull()
     expect(overlayFromLocation("/not-a-route")).toBeNull()
   })
 })

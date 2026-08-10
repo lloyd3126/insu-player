@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build complete-sentence translation manifests from model-timed source units."""
+"""Build complete-sentence subtitle revisions from model-timed source units."""
 
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 2
-LEGACY_SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 SEGMENT_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 SENTENCE_END_PATTERN = re.compile(r"[.!?。！？؟։।॥](?:[\"'”’\)\]\}]+)?$")
@@ -65,12 +64,13 @@ class Cue:
 
 @dataclass(frozen=True)
 class ManifestView:
+    mode: str
     source_language: str
-    target_language: str
+    output_language: str
     punctuation_policy: str
     segments: list[dict[str, object]]
     source_key: str
-    target_key: str
+    output_key: str
 
 
 def validate_language(value: object, label: str) -> str:
@@ -249,8 +249,8 @@ def sentence_segments(units: list[TimedUnit]) -> list[dict[str, object]]:
                 "sourceUnitStart": sentence_units[0].identifier,
                 "sourceUnitEnd": sentence_units[-1].identifier,
                 "sourceText": " ".join(unit.text for unit in sentence_units),
-                "draftTargetText": "",
-                "targetText": "",
+                "draftOutputText": "",
+                "outputText": "",
                 "requiredTerms": [],
             }
         )
@@ -278,11 +278,18 @@ def render_vtt(
 
 def manifest_view(payload: object) -> ManifestView:
     if not isinstance(payload, dict):
-        raise ValueError("translation manifest must be an object")
+        raise ValueError("subtitle revision manifest must be an object")
     schema_version = payload.get("schemaVersion")
     if schema_version == SCHEMA_VERSION:
+        mode = payload.get("mode")
+        if mode not in {"proofread", "translate"}:
+            raise ValueError("mode must be proofread or translate")
         source_language = validate_language(payload.get("sourceLanguage"), "sourceLanguage")
-        target_language = validate_language(payload.get("targetLanguage"), "targetLanguage")
+        output_language = validate_language(payload.get("outputLanguage"), "outputLanguage")
+        if mode == "proofread" and source_language != output_language:
+            raise ValueError("proofread revisions must preserve the source language")
+        if mode == "translate" and source_language == output_language:
+            raise ValueError("translate revisions require different source and output languages")
         output_profile = payload.get("outputProfile")
         punctuation_policy = "preserve"
         if isinstance(output_profile, dict):
@@ -291,25 +298,19 @@ def manifest_view(payload: object) -> ManifestView:
                 raise ValueError("outputProfile.punctuationPolicy is unsupported")
             punctuation_policy = str(raw_policy)
         source_key = "sourceText"
-        target_key = "targetText"
-        translation_model = payload.get("translationModel")
-        if not isinstance(translation_model, dict):
-            raise ValueError("translationModel must be recorded before rendering")
-        if translation_model.get("provider") not in {"local", "api"}:
-            raise ValueError("translationModel.provider must be local or api")
-        validate_content(translation_model.get("model"), "translationModel.model")
-    elif schema_version == LEGACY_SCHEMA_VERSION:
-        source_language = "en"
-        target_language = "zh-TW"
-        punctuation_policy = "remove-commas-periods"
-        source_key = "english"
-        target_key = "traditionalChinese"
+        output_key = "outputText"
+        content_model = payload.get("contentModel")
+        if not isinstance(content_model, dict):
+            raise ValueError("contentModel must be recorded before rendering")
+        if content_model.get("provider") not in {"local", "openai"}:
+            raise ValueError("contentModel.provider must be local or openai")
+        validate_content(content_model.get("model"), "contentModel.model")
     else:
-        raise ValueError("unsupported translation manifest")
+        raise ValueError(f"subtitle revision manifest must use schemaVersion {SCHEMA_VERSION}")
 
     raw_segments = payload.get("segments")
     if not isinstance(raw_segments, list) or not raw_segments:
-        raise ValueError("translation manifest has no segments")
+        raise ValueError("subtitle revision manifest has no segments")
     segments: list[dict[str, object]] = []
     previous_end = -1
     for index, raw_segment in enumerate(raw_segments, start=1):
@@ -327,16 +328,17 @@ def manifest_view(payload: object) -> ManifestView:
         if start_ms < previous_end or end_ms <= start_ms:
             raise ValueError(f"{identifier} has overlapping or invalid timestamps")
         validate_content(raw_segment.get(source_key), f"{identifier}.{source_key}")
-        validate_content(raw_segment.get(target_key), f"{identifier}.{target_key}")
+        validate_content(raw_segment.get(output_key), f"{identifier}.{output_key}")
         previous_end = end_ms
         segments.append(raw_segment)
     return ManifestView(
+        str(mode),
         source_language,
-        target_language,
+        output_language,
         punctuation_policy,
         segments,
         source_key,
-        target_key,
+        output_key,
     )
 
 
@@ -390,40 +392,46 @@ def validate_pair(source_path: Path, target_path: Path, punctuation_policy: str 
 def prepare(args: argparse.Namespace) -> int:
     units, provider, model, transcript_language = model_transcript_units(args.source_transcript)
     source_language = validate_language(args.source_language or transcript_language, "source language")
-    target_language = validate_language(args.target_language, "target language")
+    output_language = validate_language(args.output_language, "output language")
+    if args.mode == "proofread" and source_language != output_language:
+        raise ValueError("proofread mode requires matching source and output languages")
+    if args.mode == "translate" and source_language == output_language:
+        raise ValueError("translate mode requires different source and output languages")
     segments = sentence_segments(units)
     payload: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
+        "mode": args.mode,
         "sourceFormat": "model-timed-units",
-        "sourceProvider": provider,
-        "sourceModel": model,
         "sourceLanguage": source_language,
-        "targetLanguage": target_language,
+        "outputLanguage": output_language,
         "sourceTranscript": str(args.source_transcript),
-        "translationModel": None,
+        "timingSourceArtifactId": args.timing_source_artifact,
+        "referenceArtifactIds": args.reference_artifact,
+        "transcriptionModel": {"provider": provider, "model": model},
+        "contentModel": None,
         "outputProfile": {"punctuationPolicy": args.punctuation_policy},
         "rules": {
-            "translationUnit": "complete source sentence",
-            "targetSegmentation": "owned by segment-subtitles",
+            "contentUnit": "complete source sentence",
+            "outputSegmentation": "owned by segment-subtitles",
         },
         "segments": segments,
     }
     atomic_write_text(args.manifest, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    source_output = args.source_output or args.english_output
+    source_output = args.source_output
     if source_output is not None:
         atomic_write_text(
             source_output,
             render_vtt(segments, source_language, "sourceText", args.punctuation_policy),
         )
-    print(f"Prepared {len(segments)} complete-sentence translation units: {args.manifest}")
+    print(f"Prepared {len(segments)} complete-sentence {args.mode} units: {args.manifest}")
     return 0
 
 
-def record_translation_model(args: argparse.Namespace) -> int:
+def record_content_model(args: argparse.Namespace) -> int:
     payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
-        raise ValueError("translation model metadata requires a schemaVersion 2 manifest")
-    model = validate_content(args.model, "translation model")
+        raise ValueError(f"content model metadata requires a schemaVersion {SCHEMA_VERSION} manifest")
+    model = validate_content(args.model, "content model")
     metadata: dict[str, str] = {
         "provider": args.provider,
         "model": model,
@@ -431,9 +439,9 @@ def record_translation_model(args: argparse.Namespace) -> int:
     }
     if args.service:
         metadata["service"] = validate_content(args.service, "translation service")
-    payload["translationModel"] = metadata
+    payload["contentModel"] = metadata
     atomic_write_text(args.manifest, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    print(f"Recorded {args.provider} translation model {model}: {args.manifest}")
+    print(f"Recorded {args.provider} content model {model}: {args.manifest}")
     return 0
 
 
@@ -441,24 +449,22 @@ def render(args: argparse.Namespace) -> int:
     try:
         payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid translation manifest: {args.manifest}") from error
+        raise ValueError(f"invalid subtitle revision manifest: {args.manifest}") from error
     view = manifest_view(payload)
-    source_output = args.source_output or args.english_output
-    target_output = args.target_output or args.traditional_chinese_output
-    if source_output is None or target_output is None:
-        raise ValueError("render requires --source-output and --target-output")
+    source_output = args.input_output
+    output = args.output
     atomic_write_text(
         source_output,
         render_vtt(view.segments, view.source_language, view.source_key, view.punctuation_policy),
     )
     atomic_write_text(
-        target_output,
-        render_vtt(view.segments, view.target_language, view.target_key, view.punctuation_policy),
+        output,
+        render_vtt(view.segments, view.output_language, view.output_key, view.punctuation_policy),
     )
-    validate_pair(source_output, target_output, view.punctuation_policy)
+    validate_pair(source_output, output, view.punctuation_policy)
     print(
         f"Rendered {len(view.segments)} synchronized complete-sentence cues "
-        f"for {view.source_language} -> {view.target_language}."
+        f"for {view.source_language} -> {view.output_language}."
     )
     return 0
 
@@ -470,10 +476,12 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser = subparsers.add_parser("prepare")
     prepare_parser.add_argument("--source-transcript", required=True, type=Path)
     prepare_parser.add_argument("--manifest", required=True, type=Path)
+    prepare_parser.add_argument("--mode", required=True, choices=("proofread", "translate"))
     prepare_parser.add_argument("--source-language")
-    prepare_parser.add_argument("--target-language", required=True)
+    prepare_parser.add_argument("--output-language", required=True)
+    prepare_parser.add_argument("--timing-source-artifact", required=True)
+    prepare_parser.add_argument("--reference-artifact", action="append", default=[])
     prepare_parser.add_argument("--source-output", type=Path)
-    prepare_parser.add_argument("--english-output", type=Path, help=argparse.SUPPRESS)
     prepare_parser.add_argument(
         "--punctuation-policy",
         choices=("preserve", "remove-commas-periods"),
@@ -481,26 +489,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prepare_parser.set_defaults(handler=prepare)
 
-    model_parser = subparsers.add_parser("record-translation-model")
+    model_parser = subparsers.add_parser("record-content-model")
     model_parser.add_argument("--manifest", required=True, type=Path)
-    model_parser.add_argument("--provider", required=True, choices=("local", "api"))
+    model_parser.add_argument("--provider", required=True, choices=("local", "openai"))
     model_parser.add_argument("--service")
     model_parser.add_argument("--model", required=True)
-    model_parser.set_defaults(handler=record_translation_model)
+    model_parser.set_defaults(handler=record_content_model)
 
     render_parser = subparsers.add_parser("render")
     render_parser.add_argument("--manifest", required=True, type=Path)
-    render_parser.add_argument("--source-output", type=Path)
-    render_parser.add_argument("--target-output", type=Path)
-    render_parser.add_argument("--english-output", type=Path, help=argparse.SUPPRESS)
-    render_parser.add_argument("--traditional-chinese-output", type=Path, help=argparse.SUPPRESS)
+    render_parser.add_argument("--input-output", required=True, type=Path)
+    render_parser.add_argument("--output", required=True, type=Path)
     render_parser.set_defaults(handler=render)
 
     validate_parser = subparsers.add_parser("validate-pair")
-    validate_parser.add_argument("--source", type=Path)
-    validate_parser.add_argument("--target", type=Path)
-    validate_parser.add_argument("--english", type=Path, help=argparse.SUPPRESS)
-    validate_parser.add_argument("--traditional-chinese", type=Path, help=argparse.SUPPRESS)
+    validate_parser.add_argument("--input", required=True, type=Path)
+    validate_parser.add_argument("--output", required=True, type=Path)
     validate_parser.add_argument(
         "--punctuation-policy",
         choices=("preserve", "remove-commas-periods"),
@@ -508,12 +512,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     def validate_pair_command(args: argparse.Namespace) -> int:
-        source = args.source or args.english
-        target = args.target or args.traditional_chinese
-        if source is None or target is None:
-            raise ValueError("validate-pair requires --source and --target")
-        count = validate_pair(source, target, args.punctuation_policy)
-        print(f"Validated {count} synchronized bilingual cues.")
+        count = validate_pair(args.input, args.output, args.punctuation_policy)
+        print(f"Validated {count} synchronized subtitle cues.")
         return 0
 
     validate_parser.set_defaults(handler=validate_pair_command)

@@ -8,6 +8,10 @@ import { contentTypeFor, safeContainedFile } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
 import { CaptionService } from "@server/services/caption-service"
 import {
+  MediaOperationError,
+  type MediaOperations,
+} from "@server/services/media-service"
+import {
   RemovalOperationError,
   type RemovalOperations,
 } from "@server/services/removal-service"
@@ -15,26 +19,63 @@ import { ResourceService } from "@server/services/resource-service"
 
 export interface ApplicationOptions {
   jobs: JobRepository
+  media: MediaOperations
   removals: RemovalOperations
   resources: ResourceService
   libraryAppRoot: string
   playerRoot: string
 }
 
-const playbackSchema = z.object({
-  time: z.number().finite().nonnegative(),
-  duration: z.number().finite().positive().nullable().optional(),
-})
+const playbackSchema = z
+  .object({
+    time: z.number().finite().nonnegative().optional(),
+    duration: z.number().finite().positive().nullable().optional(),
+    captionLanguage: z
+      .string()
+      .regex(/^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/)
+      .nullable()
+      .optional(),
+  })
+  .refine(
+    (payload) =>
+      payload.time !== undefined || payload.captionLanguage !== undefined,
+    { message: "playback update is empty" },
+  )
 
 const environmentSchema = z.object({
   name: z.literal("OPENAI_API_KEY"),
   value: z.string().min(1).max(2048),
 })
 
+const mediaDownloadSchema = z.object({
+  height: z.number().int().positive().max(4320),
+})
+
+const mediaActivationSchema = z.object({
+  renditionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+})
+
+const subtitleActivationSchema = z.object({
+  languageCode: z
+    .string()
+    .regex(/^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/),
+  trackId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+})
+
 const removalTargetSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("video"),
     videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  }),
+  z.object({
+    kind: z.literal("subtitle-artifact"),
+    videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    artifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+  }),
+  z.object({
+    kind: z.literal("media-rendition"),
+    videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    renditionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
   }),
 ])
 
@@ -61,6 +102,17 @@ function removalErrorResponse(context: Context, error: unknown) {
     return context.json(payload, 500)
   }
   return context.json({ error: errorMessage(error), code: "removal-failed" }, 500)
+}
+
+function mediaErrorResponse(context: Context, error: unknown) {
+  if (error instanceof MediaOperationError) {
+    const payload = { error: error.message, code: error.code }
+    if (error.status === 400) return context.json(payload, 400)
+    if (error.status === 404) return context.json(payload, 404)
+    if (error.status === 409) return context.json(payload, 409)
+    return context.json(payload, 500)
+  }
+  return context.json({ error: errorMessage(error), code: "media-failed" }, 500)
 }
 
 function serveFile(
@@ -267,6 +319,103 @@ export function createApplication(options: ApplicationOptions) {
       return context.json({ error: errorMessage(error) }, 404)
     }
   })
+  app.get("/api/jobs/:videoId/subtitles", (context) => {
+    try {
+      return context.json(
+        options.jobs.subtitleCatalog(context.req.param("videoId")),
+      )
+    } catch (error) {
+      return context.json({ error: errorMessage(error) }, 404)
+    }
+  })
+  app.put(
+    "/api/jobs/:videoId/subtitles/active",
+    zValidator("json", subtitleActivationSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) {
+        return context.json({ error: "forbidden" }, 403)
+      }
+      try {
+        const payload = context.req.valid("json")
+        return context.json(
+          options.jobs.setActiveSubtitleTrack(
+            context.req.param("videoId"),
+            payload.languageCode,
+            payload.trackId,
+          ),
+        )
+      } catch (error) {
+        return context.json({ error: errorMessage(error) }, 400)
+      }
+    },
+  )
+  app.get("/api/jobs/:videoId/media", (context) => {
+    try {
+      return context.json(options.media.catalog(context.req.param("videoId")))
+    } catch (error) {
+      return mediaErrorResponse(context, error)
+    }
+  })
+  app.post("/api/jobs/:videoId/media/refresh", async (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      return context.json(
+        await options.media.refresh(context.req.param("videoId")),
+      )
+    } catch (error) {
+      return mediaErrorResponse(context, error)
+    }
+  })
+  app.post(
+    "/api/jobs/:videoId/media/renditions",
+    zValidator("json", mediaDownloadSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.media.download(
+            context.req.param("videoId"),
+            context.req.valid("json").height,
+          ),
+          202,
+        )
+      } catch (error) {
+        return mediaErrorResponse(context, error)
+      }
+    },
+  )
+  app.put(
+    "/api/jobs/:videoId/media/active",
+    zValidator("json", mediaActivationSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.media.activate(
+            context.req.param("videoId"),
+            context.req.valid("json").renditionId,
+          ),
+        )
+      } catch (error) {
+        return mediaErrorResponse(context, error)
+      }
+    },
+  )
+  app.get(
+    "/api/jobs/:videoId/subtitles/artifacts/:artifactId/captions",
+    (context) => {
+      try {
+        return context.json(
+          captions.artifactComparison(
+            context.req.param("videoId"),
+            context.req.param("artifactId"),
+          ),
+        )
+      } catch (error) {
+        return context.json({ error: errorMessage(error) }, 404)
+      }
+    },
+  )
   app.get("/api/jobs/:videoId/playback", (context) => {
     try {
       return context.json(options.jobs.playbackState(context.req.param("videoId")))
@@ -348,7 +497,10 @@ export function createApplication(options: ApplicationOptions) {
       const file = context.req.param("file")
       if (!file.endsWith(".vtt")) return context.notFound()
       const code = file.slice(0, -4)
-      const candidate = options.jobs.captionPaths(context.req.param("videoId")).get(code)
+      const candidate = options.jobs.activeCaptionPath(
+        context.req.param("videoId"),
+        code,
+      )
       return candidate
         ? serveFile(context.req.raw, candidate, { cache: "no-store" })
         : context.notFound()

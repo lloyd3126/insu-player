@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { JobSummary } from "@shared/contracts/job"
-import { phaseForJob, subtitleWorkflowLabel } from "./job-status"
+import { phaseForJob, subtitlePipelineLabel } from "./job-status"
 
 function job(overrides: Partial<JobSummary> = {}): JobSummary {
   return {
@@ -18,9 +18,13 @@ function job(overrides: Partial<JobSummary> = {}): JobSummary {
     completedAt: null,
     lastError: null,
     watchable: false,
+    activeMedia: null,
+    renditionCount: 0,
+    mediaRevision: 0,
     captionCodes: [],
-    subtitleTracks: {},
-    subtitleWorkflow: null,
+    activeSubtitleKinds: {},
+    activeSubtitleVersions: {},
+    subtitlePipeline: null,
     transcription: null,
     sizeBytes: 0,
     thumbnailUrl: null,
@@ -43,16 +47,19 @@ describe("job status presentation", () => {
 
   test("surfaces subtitle reflow stages in the same status column", () => {
     const summary = job({
-      subtitleWorkflow: {
-        stage: "subtitle_reflow",
-        source: "model",
-        provider: "local",
-        model: "medium",
+      subtitlePipeline: {
+        mode: "translate",
+        stage: "target_segmentation",
+        sourceLanguage: "en",
+        outputLanguage: "zh-TW",
+        timingProvider: "local",
+        timingModel: "medium",
+        manualReferenceArtifactIds: [],
       },
     })
-    expect(phaseForJob(summary)).toBe("字幕重排")
-    expect(subtitleWorkflowLabel(summary)).toEqual({
-      label: "字幕重排",
+    expect(phaseForJob(summary)).toBe("目標語字幕切分")
+    expect(subtitlePipelineLabel(summary)).toEqual({
+      label: "目標語字幕切分",
       detail: "本機 · medium",
     })
   })

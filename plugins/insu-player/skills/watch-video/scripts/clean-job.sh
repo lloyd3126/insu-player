@@ -57,7 +57,7 @@ printf 'Removal preview\n'
 printf '  intermediate audio: %s\n' "$job_dir/source/audio.m4a"
 printf '  raw YouTube captions: %s\n' "$job_dir/youtube-captions"
 printf '  Whisper working files: %s\n' "$job_dir/whisper"
-printf '  preserved: video.mp4, normalized captions, status, logs, thumbnail\n'
+printf '  preserved: media renditions, normalized captions, status, logs, thumbnail\n'
 [ "$confirmed" -eq 1 ] || { printf 'dry-run: nothing was removed; rerun with --yes after checking these exact paths\n'; exit 0; }
 
 rm -f -- "$job_dir/source/audio.m4a"

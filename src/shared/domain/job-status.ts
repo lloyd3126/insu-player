@@ -4,13 +4,17 @@ export const ACTIVE_STATES = new Set([
   "checking",
   "downloading",
   "transcribing",
+  "proofreading",
   "translating",
+  "segmenting",
   "preparing_player",
 ])
 
 export const ATTENTION_STATES = new Set([
   "needs_transcription",
+  "needs_proofreading",
   "needs_translation",
+  "needs_segmentation",
   "interrupted",
   "failed",
 ])
@@ -22,8 +26,12 @@ export const JOB_STATE_LABELS: Record<string, string> = {
   downloaded: "下載完成",
   needs_transcription: "待轉錄",
   transcribing: "轉錄中",
+  needs_proofreading: "待校正",
+  proofreading: "校正中",
   needs_translation: "待翻譯",
   translating: "翻譯中",
+  needs_segmentation: "待切分",
+  segmenting: "切分中",
   preparing_player: "整理媒體",
   ready: "已完成",
   interrupted: "已中斷",
@@ -31,19 +39,15 @@ export const JOB_STATE_LABELS: Record<string, string> = {
 }
 
 export const SUBTITLE_STAGE_LABELS: Record<string, string> = {
+  awaiting_choice: "等待選擇字幕流程",
   awaiting_model: "等待模型轉錄",
   model_transcription: "模型詞級轉錄",
-  source_caption: "來源字幕",
-  draft_translation: "初次翻譯",
-  sentence_polish: "完整句潤色",
-  translation_complete: "完整句翻譯完成",
+  content_revision: "完整句內容處理",
+  content_complete: "完整句內容完成",
   target_segmentation: "目標語字幕切分",
   target_frozen: "目標語切分已固定",
   source_alignment: "來源時間對齊",
-  segmentation_validation: "字幕切分驗證",
-  segmentation_complete: "字幕切分完成",
-  subtitle_reflow: "字幕重排",
-  pair_validation: "雙語成對驗證",
+  validation: "字幕產物驗證",
   complete: "字幕已完成",
 }
 
@@ -57,18 +61,21 @@ export type JobPhase =
 
 export function phaseForJob(job: JobSummary): JobPhase {
   const current = job.effectiveState || job.state
-  const workflowStage = job.subtitleWorkflow?.stage
+  const pipelineStage = job.subtitlePipeline?.stage
 
-  if (workflowStage === "source_caption") return "字幕已完成"
-  if (workflowStage && SUBTITLE_STAGE_LABELS[workflowStage]) {
-    return SUBTITLE_STAGE_LABELS[workflowStage]
+  if (pipelineStage && SUBTITLE_STAGE_LABELS[pipelineStage]) {
+    return SUBTITLE_STAGE_LABELS[pipelineStage]
   }
   if (
     [
       "transcribing",
+      "proofreading",
       "translating",
+      "segmenting",
       "needs_transcription",
+      "needs_proofreading",
       "needs_translation",
+      "needs_segmentation",
     ].includes(current)
   ) {
     return "字幕處理中"
@@ -100,37 +107,26 @@ export function statusTone(job: JobSummary) {
   return "neutral" as const
 }
 
-export function subtitleWorkflowLabel(job: JobSummary) {
-  const workflow = job.subtitleWorkflow
-  if (workflow) {
+export function subtitlePipelineLabel(job: JobSummary) {
+  const pipeline = job.subtitlePipeline
+  if (pipeline) {
     const label =
-      SUBTITLE_STAGE_LABELS[workflow.stage ?? ""] ??
-      workflow.stage ??
+      SUBTITLE_STAGE_LABELS[pipeline.stage ?? ""] ??
+      pipeline.stage ??
       "尚未開始"
     let detail = ""
-    if (workflow.provider) {
+    const providerValue = pipeline.contentProvider ?? pipeline.timingProvider
+    const model = pipeline.contentModel ?? pipeline.timingModel
+    if (providerValue) {
       const provider =
-        workflow.provider === "local"
+        providerValue === "local"
           ? "本機"
-          : workflow.provider === "openai"
+          : providerValue === "openai"
             ? "OpenAI API"
-            : workflow.provider
-      detail = workflow.model ? `${provider} · ${workflow.model}` : provider
-    } else if (workflow.source === "platform") {
-      detail = "來源平台"
-    } else if (workflow.source === "model") {
-      detail = "本機或 雲端模型"
-    } else if (workflow.source === "legacy") {
-      detail = "舊版工作流程"
+            : providerValue
+      detail = model ? `${provider} · ${model}` : provider
     }
     return { label, detail }
-  }
-
-  const sources = Object.values(job.subtitleTracks).map((track) =>
-    String(track.source ?? ""),
-  )
-  if (sources.some((source) => /reflow|resegment/i.test(source))) {
-    return { label: "重排完成", detail: "雙語共用同步時間軸" }
   }
   if (job.transcription) {
     const provider =
@@ -139,9 +135,6 @@ export function subtitleWorkflowLabel(job: JobSummary) {
       label: "模型轉錄",
       detail: `${provider} · ${job.transcription.model || "—"}`,
     }
-  }
-  if (job.captionCodes.length > 0) {
-    return { label: "來源字幕", detail: "舊版工作紀錄" }
   }
   return { label: "尚未開始", detail: "" }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze target-first subtitle pieces and align them to timed source units."""
+"""Freeze output-first subtitle pieces and align them to timed source units."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Any
 
 
 SCHEMA_VERSION = 1
-TRANSLATION_SCHEMA_VERSION = 2
+CONTENT_SCHEMA_VERSION = 3
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 UNIT_ID_PATTERN = re.compile(r"^U[0-9]{6,}$")
 SEGMENT_ID_PATTERN = re.compile(r"^S[0-9]{4,}$")
@@ -193,15 +193,15 @@ def display_units(value: str) -> int:
 
 def target_fingerprint(plan: dict[str, Any]) -> str:
     snapshot: list[dict[str, Any]] = []
-    for unit in plan.get("translationUnits", []):
+    for unit in plan.get("contentUnits", []):
         if not isinstance(unit, dict):
             continue
         snapshot.append(
             {
                 "id": unit.get("id"),
-                "targetFullText": unit.get("targetFullText"),
+                "outputFullText": unit.get("outputFullText"),
                 "pieces": [
-                    {"id": piece.get("id"), "targetText": piece.get("targetText")}
+                    {"id": piece.get("id"), "outputText": piece.get("outputText")}
                     for piece in unit.get("pieces", [])
                     if isinstance(piece, dict)
                 ],
@@ -229,29 +229,36 @@ def normalize_required_terms(raw_terms: object, label: str) -> list[str]:
 
 
 def prepare(args: argparse.Namespace) -> int:
-    translation = load_json(args.translation_manifest, "translation manifest")
-    if translation.get("schemaVersion") != TRANSLATION_SCHEMA_VERSION:
-        raise PlanError("segment-subtitles requires a schemaVersion 2 translation manifest")
-    source_language = validate_language(translation.get("sourceLanguage"), "sourceLanguage")
-    target_language = validate_language(translation.get("targetLanguage"), "targetLanguage")
-    language_model = translation.get("translationModel")
-    if not isinstance(language_model, dict) or language_model.get("provider") not in {"local", "api"}:
-        raise PlanError("translationModel must record a local or api language model")
-    require_text(language_model.get("model"), "translationModel.model")
+    content = load_json(args.content_manifest, "content manifest")
+    if content.get("schemaVersion") != CONTENT_SCHEMA_VERSION:
+        raise PlanError("segment-subtitles requires a schemaVersion 3 content manifest")
+    mode = content.get("mode")
+    if mode not in {"proofread", "translate"}:
+        raise PlanError("content manifest mode must be proofread or translate")
+    source_language = validate_language(content.get("sourceLanguage"), "sourceLanguage")
+    output_language = validate_language(content.get("outputLanguage"), "outputLanguage")
+    if mode == "proofread" and source_language != output_language:
+        raise PlanError("proofread content must preserve the source language")
+    if mode == "translate" and source_language == output_language:
+        raise PlanError("translated content requires a different output language")
+    language_model = content.get("contentModel")
+    if not isinstance(language_model, dict) or language_model.get("provider") not in {"local", "openai"}:
+        raise PlanError("contentModel must record a local or openai language model")
+    require_text(language_model.get("model"), "contentModel.model")
     transcript = load_json(args.source_transcript, "source transcript")
     units = timed_units(transcript)
     unit_positions = {str(unit["id"]): index for index, unit in enumerate(units)}
-    raw_segments = translation.get("segments")
+    raw_segments = content.get("segments")
     if not isinstance(raw_segments, list) or not raw_segments:
-        raise PlanError("translation manifest has no complete-sentence units")
+        raise PlanError("content manifest has no complete-sentence units")
 
-    translation_units: list[dict[str, Any]] = []
+    content_units: list[dict[str, Any]] = []
     for raw_segment in raw_segments:
         if not isinstance(raw_segment, dict):
-            raise PlanError("translation segment must be an object")
+            raise PlanError("content segment must be an object")
         identifier = raw_segment.get("id")
         if not isinstance(identifier, str) or not SEGMENT_ID_PATTERN.fullmatch(identifier):
-            raise PlanError("translation segment has an invalid ID")
+            raise PlanError("content segment has an invalid ID")
         source_start = raw_segment.get("sourceUnitStart")
         source_end = raw_segment.get("sourceUnitEnd")
         if source_start not in unit_positions or source_end not in unit_positions:
@@ -259,21 +266,21 @@ def prepare(args: argparse.Namespace) -> int:
         if unit_positions[str(source_start)] > unit_positions[str(source_end)]:
             raise PlanError(f"{identifier} source timed unit range is reversed")
         source_text = require_text(raw_segment.get("sourceText"), f"{identifier}.sourceText")
-        target_text = require_text(raw_segment.get("targetText"), f"{identifier}.targetText")
+        output_text = require_text(raw_segment.get("outputText"), f"{identifier}.outputText")
         required_terms = normalize_required_terms(raw_segment.get("requiredTerms"), f"{identifier}.requiredTerms")
-        translation_units.append(
+        content_units.append(
             {
                 "id": identifier,
                 "sourceUnitStart": source_start,
                 "sourceUnitEnd": source_end,
                 "sourceText": source_text,
-                "targetFullText": target_text,
+                "outputFullText": output_text,
                 "requiredTerms": required_terms,
                 "anchors": [],
                 "pieces": [
                     {
                         "id": f"{identifier}-P01",
-                        "targetText": target_text,
+                        "outputText": output_text,
                         "sourceSpan": None,
                         "allowShortTiming": False,
                     }
@@ -281,7 +288,7 @@ def prepare(args: argparse.Namespace) -> int:
             }
         )
 
-    profile_name = args.width_profile or language_profile(target_language)
+    profile_name = args.width_profile or language_profile(output_language)
     if profile_name not in PROFILE_DEFAULTS:
         raise PlanError(f"unsupported width profile: {profile_name}")
     profile = dict(PROFILE_DEFAULTS[profile_name])
@@ -291,17 +298,18 @@ def prepare(args: argparse.Namespace) -> int:
         profile["hardUnits"] = args.hard_units
     if int(profile["fitUnits"]) <= 0 or int(profile["hardUnits"]) <= int(profile["fitUnits"]):
         raise PlanError("hardUnits must be greater than fitUnits")
-    output_profile = translation.get("outputProfile")
+    output_profile = content.get("outputProfile")
     punctuation_policy = "preserve"
     if isinstance(output_profile, dict):
         punctuation_policy = str(output_profile.get("punctuationPolicy", "preserve"))
 
     plan: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
+        "contentMode": mode,
         "sourceLanguage": source_language,
-        "targetLanguage": target_language,
+        "outputLanguage": output_language,
         "sourceTranscript": str(args.source_transcript),
-        "translationManifest": str(args.translation_manifest),
+        "contentManifest": str(args.content_manifest),
         "languageModel": language_model,
         "targetRevision": 1,
         "targetFrozen": False,
@@ -311,10 +319,10 @@ def prepare(args: argparse.Namespace) -> int:
         "outputProfile": {"punctuationPolicy": punctuation_policy},
         "timedUnits": units,
         "boundaryHints": [],
-        "translationUnits": translation_units,
+        "contentUnits": content_units,
     }
     atomic_write_json(args.output, plan)
-    print(f"Prepared {len(translation_units)} target-first translation units: {args.output}")
+    print(f"Prepared {len(content_units)} target-first content units: {args.output}")
     return 0
 
 
@@ -322,18 +330,18 @@ def validate_target_structure(plan: dict[str, Any]) -> None:
     if plan.get("schemaVersion") != SCHEMA_VERSION:
         raise PlanError("unsupported segmentation plan")
     validate_language(plan.get("sourceLanguage"), "sourceLanguage")
-    validate_language(plan.get("targetLanguage"), "targetLanguage")
-    raw_units = plan.get("translationUnits")
+    validate_language(plan.get("outputLanguage"), "outputLanguage")
+    raw_units = plan.get("contentUnits")
     if not isinstance(raw_units, list) or not raw_units:
-        raise PlanError("segmentation plan has no translation units")
+        raise PlanError("segmentation plan has no content units")
     seen_piece_ids: set[str] = set()
     for raw_unit in raw_units:
         if not isinstance(raw_unit, dict):
-            raise PlanError("translation unit must be an object")
+            raise PlanError("content unit must be an object")
         identifier = raw_unit.get("id")
         if not isinstance(identifier, str) or not SEGMENT_ID_PATTERN.fullmatch(identifier):
-            raise PlanError("translation unit has an invalid ID")
-        target_full_text = require_text(raw_unit.get("targetFullText"), f"{identifier}.targetFullText")
+            raise PlanError("content unit has an invalid ID")
+        output_full_text = require_text(raw_unit.get("outputFullText"), f"{identifier}.outputFullText")
         raw_pieces = raw_unit.get("pieces")
         if not isinstance(raw_pieces, list) or not raw_pieces:
             raise PlanError(f"{identifier} has no target pieces")
@@ -347,12 +355,12 @@ def validate_target_structure(plan: dict[str, Any]) -> None:
             if piece_id in seen_piece_ids:
                 raise PlanError(f"duplicate target piece ID: {piece_id}")
             seen_piece_ids.add(piece_id)
-            piece_texts.append(require_text(raw_piece.get("targetText"), f"{piece_id}.targetText"))
-        if compact_text("".join(piece_texts)) != compact_text(target_full_text):
-            raise PlanError(f"{identifier} target pieces change the complete translation")
+            piece_texts.append(require_text(raw_piece.get("outputText"), f"{piece_id}.outputText"))
+        if compact_text("".join(piece_texts)) != compact_text(output_full_text):
+            raise PlanError(f"{identifier} output pieces change the complete content revision")
         for term in normalize_required_terms(raw_unit.get("requiredTerms"), f"{identifier}.requiredTerms"):
-            if term in target_full_text and not any(term in piece for piece in piece_texts):
-                raise PlanError(f"{identifier} splits required target term: {term}")
+            if term in output_full_text and not any(term in piece for piece in piece_texts):
+                raise PlanError(f"{identifier} splits required output term: {term}")
 
 
 def freeze_target(args: argparse.Namespace) -> int:
@@ -382,7 +390,7 @@ def revise_target(args: argparse.Namespace) -> int:
     plan["targetFrozen"] = False
     plan["targetFingerprint"] = None
     plan.pop("targetFrozenAt", None)
-    for unit in plan["translationUnits"]:
+    for unit in plan["contentUnits"]:
         unit["anchors"] = []
         for piece in unit["pieces"]:
             piece["sourceSpan"] = None
@@ -449,7 +457,7 @@ def validate_alignment(plan: dict[str, Any]) -> list[dict[str, Any]]:
         minimum_ms = int(timing_profile["minimumPieceMilliseconds"])
 
     warnings: list[dict[str, Any]] = []
-    for unit in plan["translationUnits"]:
+    for unit in plan["contentUnits"]:
         identifier = str(unit["id"])
         unit_start = unit.get("sourceUnitStart")
         unit_end = unit.get("sourceUnitEnd")
@@ -480,7 +488,7 @@ def validate_alignment(plan: dict[str, Any]) -> list[dict[str, Any]]:
                     raise PlanError(
                         f"{piece_id} uses a {hint.get('state')} source boundary after {span_end}"
                     )
-            text_width = display_units(str(piece["targetText"]))
+            text_width = display_units(str(piece["outputText"]))
             if text_width > hard_units:
                 raise PlanError(f"{piece_id} exceeds hard width: {text_width} > {hard_units}")
             if text_width > fit_units:
@@ -498,7 +506,7 @@ def validate_alignment(plan: dict[str, Any]) -> list[dict[str, Any]]:
                     {"code": "READING_RATE_HIGH", "pieceId": piece_id, "unitsPerSecond": round(reading_rate, 2)}
                 )
         if previous_end_position != unit_position[str(unit_end)]:
-            raise PlanError(f"{identifier} source spans do not cover the complete translation unit")
+            raise PlanError(f"{identifier} source spans do not cover the complete content unit")
 
         for raw_anchor in unit.get("anchors", []):
             if not isinstance(raw_anchor, dict):
@@ -551,27 +559,27 @@ def render(args: argparse.Namespace) -> int:
     if isinstance(plan.get("outputProfile"), dict):
         punctuation_policy = str(plan["outputProfile"].get("punctuationPolicy", "preserve"))
     source_lines = ["WEBVTT", "Kind: captions", f"Language: {plan['sourceLanguage']}", ""]
-    target_lines = ["WEBVTT", "Kind: captions", f"Language: {plan['targetLanguage']}", ""]
+    output_lines = ["WEBVTT", "Kind: captions", f"Language: {plan['outputLanguage']}", ""]
     unit_order = [str(unit["id"]) for unit in plan["timedUnits"]]
     unit_position = {identifier: index for index, identifier in enumerate(unit_order)}
-    for translation_unit in plan["translationUnits"]:
-        for piece in translation_unit["pieces"]:
+    for content_unit in plan["contentUnits"]:
+        for piece in content_unit["pieces"]:
             span = piece["sourceSpan"]
             start_id = str(span["startUnitId"])
             end_id = str(span["endUnitId"])
             selected_ids = unit_order[unit_position[start_id] : unit_position[end_id] + 1]
             source_text = " ".join(str(timed_units[identifier]["text"]) for identifier in selected_ids)
-            target_text = str(piece["targetText"])
+            output_text = str(piece["outputText"])
             start = format_timestamp(float(timed_units[start_id]["start"]))
             end = format_timestamp(float(timed_units[end_id]["end"]))
             cue = [str(piece["id"]), f"{start} --> {end}"]
             source_lines.extend(cue + [normalize_display_text(source_text, punctuation_policy), ""])
-            target_lines.extend(cue + [normalize_display_text(target_text, punctuation_policy), ""])
-    atomic_write_text(args.source_output, "\n".join(source_lines))
-    atomic_write_text(args.target_output, "\n".join(target_lines))
+            output_lines.extend(cue + [normalize_display_text(output_text, punctuation_policy), ""])
+    atomic_write_text(args.input_output, "\n".join(source_lines))
+    atomic_write_text(args.output, "\n".join(output_lines))
     print(
         f"Rendered target revision {plan['targetRevision']} for "
-        f"{plan['sourceLanguage']} -> {plan['targetLanguage']} with {len(warnings)} warning(s)."
+        f"{plan['sourceLanguage']} -> {plan['outputLanguage']} with {len(warnings)} warning(s)."
     )
     return 0
 
@@ -581,7 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     prepare_parser = subparsers.add_parser("prepare")
-    prepare_parser.add_argument("--translation-manifest", required=True, type=Path)
+    prepare_parser.add_argument("--content-manifest", required=True, type=Path)
     prepare_parser.add_argument("--source-transcript", required=True, type=Path)
     prepare_parser.add_argument("--output", required=True, type=Path)
     prepare_parser.add_argument("--width-profile", choices=tuple(PROFILE_DEFAULTS))
@@ -603,8 +611,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     render_parser = subparsers.add_parser("render")
     render_parser.add_argument("--plan", required=True, type=Path)
-    render_parser.add_argument("--source-output", required=True, type=Path)
-    render_parser.add_argument("--target-output", required=True, type=Path)
+    render_parser.add_argument("--input-output", required=True, type=Path)
+    render_parser.add_argument("--output", required=True, type=Path)
     render_parser.set_defaults(handler=render)
     return parser
 

@@ -1,84 +1,86 @@
 ---
 name: translate-subtitles
-description: Translate a local or explicitly authorized API model's timed source-language transcript into a complete, natural target-language subtitle translation for any supported BCP 47 language pair. Use for subtitle translation, bilingual sentence preparation, translation revision, terminology repair, sentence reconstruction, or a needs_translation INSU Player job; leave target-first display segmentation and Source Alignment to segment-subtitles.
+description: Translate a model-timed source-language transcript into complete, natural subtitle sentences in another BCP 47 language. Use for subtitle translation, terminology repair, sentence reconstruction, or a needs_translation INSU Player job; leave display segmentation and Source Alignment to segment-subtitles.
 ---
 
 # Translate Complete Subtitle Sentences
 
-Produce a schema-version 2 `bilingual-sentences.json` containing complete source sentences and complete natural target translations. Keep translation separate from display segmentation.
+Create a schema-version 3 `translate` content manifest. This skill owns complete-sentence translation and polishing only. `$segment-subtitles` separately owns display cuts and Source Alignment.
 
-Read [references/language-contract.md](references/language-contract.md) for every non-English or non-Traditional-Chinese language pair, uncertain model capability, complex writing system, or output-normalization decision.
+Read [references/language-contract.md](references/language-contract.md) whenever the language pair, writing system, normalization, or selected model capability is uncertain.
 
-## Decide Before Subtitle Acquisition
+## Require the Correct Evidence
 
-1. Before inspecting or downloading subtitles, ask whether translation is wanted.
-2. If yes, ask for the target language as a BCP 47 code, confirm or detect the source language, and require an explicit local or API transcription/translation model choice.
-3. Verify that the selected transcription model provides ordered word, token, or grapheme-group timing for the source language and that the selected language model supports the requested source/target pair. Schema support does not prove model support.
-4. Translation mode must not inspect or download platform captions in any format. Transcribe the original audio and preserve timed units.
-5. Obtain explicit consent before any audio or subtitle text leaves the device. Do not infer consent from an API key. Never store a key in files, logs, metadata, or replies.
-6. If translation is not wanted, use the platform playback track when available; this skill is not needed.
+1. Require a normalized model transcript with ordered `word`, `token`, or `grapheme-group` timing from the original audio.
+2. Require distinct source and output BCP 47 language codes.
+3. A creator-provided manual CC track may be used as optional spelling and terminology evidence. Its cue boundaries are never timing authority.
+4. Never inspect, download, import, or reference platform automatic captions.
+5. Verify that the selected local or explicitly authorized OpenAI model supports the requested language pair. Schema support does not prove model support.
+6. Obtain explicit consent before audio or subtitle text leaves the device. Never persist an API key.
 
-## Build Complete Translation Units
-
-Prepare a language-neutral manifest:
+## Prepare Complete Sentences
 
 ```bash
 python3 scripts/reflow_subtitles.py prepare \
   --source-transcript WORKSPACE/jobs/VIDEO_ID/whisper/PROVIDER/transcript.json \
+  --manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/translate-SOURCE-TARGET.json \
+  --mode translate \
   --source-language SOURCE_BCP47 \
-  --target-language TARGET_BCP47 \
-  --manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/bilingual-sentences.json \
-  --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/SOURCE.sentence.vtt \
+  --output-language TARGET_BCP47 \
+  --timing-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
+  --reference-artifact MANUAL_CC_ARTIFACT_ID \
+  --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.sentence.vtt \
   --punctuation-policy preserve
 ```
 
-The script accepts `word`, `token`, and `grapheme-group` timed units. It reconstructs a conservative complete-sentence plan using source punctuation and preserves each segment's `sourceUnitStart` and `sourceUnitEnd`. Review sentence boundaries with the selected language model; do not assume every language uses whitespace or English punctuation.
+Omit `--reference-artifact` when no manual CC exists. The manifest records complete source sentences, immutable source timed-unit ranges, `draftOutputText`, `outputText`, required terms, timing provenance, and optional text-reference provenance.
 
-Record the model that will translate text before writing a target translation:
+Record the content model before writing the translation:
 
 ```bash
-python3 scripts/reflow_subtitles.py record-translation-model \
-  --manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/bilingual-sentences.json \
-  --provider local \
-  --model MODEL_NAME
+python3 scripts/reflow_subtitles.py record-content-model \
+  --manifest MANIFEST --provider local --model MODEL_NAME
 ```
 
-For an authorized external API, use `--provider api --service SERVICE --model MODEL_NAME`.
+Use `--provider openai --service SERVICE` only after explicit subtitle-text upload authorization.
 
 ## Translate Then Polish
 
-1. Mark the job `draft_translation`.
-2. Translate each complete `sourceText` into `draftTargetText` with the selected model. Use neighboring complete sentences for context without merging their identities.
-3. Mark the job `sentence_polish`.
-4. Re-read the complete source sentence and draft, then write a natural, complete target-language sentence into `targetText`.
-5. Preserve names, numbers, code, URLs, sound labels, negation, conditions, causality, roles, uncertainty, glossary terms, and required target spellings.
-6. Keep segment IDs, source timed-unit ranges, order, and timestamps unchanged. Do not split into display pieces here.
-7. Keep raw punctuation in the manifest. Apply any product-specific display normalization only while rendering.
-8. Never leave internal batch markers such as `CUE`, `___CUE0001___`, or `XQZCUE` in any field.
+1. Translate every complete `sourceText` into `draftOutputText`, using neighboring complete sentences for context without merging identities.
+2. Re-read the complete source and draft, then write the final natural sentence to `outputText`.
+3. Preserve names, numbers, code, URLs, sound labels, negation, conditions, causality, roles, uncertainty, glossary terms, and required spellings.
+4. Keep segment IDs, source timed-unit ranges, order, and sentence timestamps unchanged.
+5. Do not create display pieces or follow source cue breaks here.
+6. Keep raw punctuation in the manifest. Display normalization belongs to rendering policy.
+7. Never leave internal batch markers in any field.
 
-If text is too long for display and cannot be segmented safely, create a new complete translation revision with a shorter equivalent expression. Never let Source Alignment silently rewrite a frozen target.
+If an output sentence is too long and has no safe display seam, create a shorter equivalent content revision here. Do not let alignment silently rewrite a frozen output.
 
-## Render the Complete-Sentence Pair
-
-Render sentence-level review tracks:
+## Render and Import the Translation Revision
 
 ```bash
 python3 scripts/reflow_subtitles.py render \
-  --manifest WORKSPACE/jobs/VIDEO_ID/subtitle-work/bilingual-sentences.json \
-  --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/SOURCE.final.vtt \
-  --target-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/TARGET.final.vtt
+  --manifest MANIFEST \
+  --input-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.final.vtt \
+  --output WORKSPACE/jobs/VIDEO_ID/subtitle-work/output.final.vtt
+
+plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
+  WORKSPACE VIDEO_ID input.final.vtt output.final.vtt \
+  --source-language SOURCE_BCP47 \
+  --output-language TARGET_BCP47 \
+  --provider local \
+  --model MODEL_NAME \
+  --artifact-kind translation \
+  --revision REVISION \
+  --manifest MANIFEST \
+  --timing-source-artifact MODEL_TRANSCRIPT_ARTIFACT_ID \
+  --text-reference-artifact MANUAL_CC_ARTIFACT_ID
 ```
 
-The source and target tracks share complete-sentence cue IDs and timestamps. Rendering rejects empty text, missing model metadata, marker leakage, overlap, count mismatch, timestamp mismatch, and line splitting.
+The validated translation revision becomes playable immediately. Omit the optional text reference when absent. Do not create a `proofread` or `segmentation` artifact from this skill.
 
-When the user wants target-first display pieces, stop after the complete translation is polished and invoke `$segment-subtitles`. That skill owns target cuts, frozen revisions, source spans, width/timing validation, and segmented VTT. `$watch-video` owns final library import and state updates.
+Hand the content manifest, exact model transcript, timing-source artifact ID, and translation artifact ID to `$segment-subtitles`. Failed or processing segmentation must leave the last valid translation revision available.
 
-## Guardrails and Handoff
+## Report
 
-- Preserve the model transcript, source sentence track, translation manifest, translation revisions, and original media.
-- If timed units are unavailable, report the limitation; never claim word-accurate reconstruction from coarse cues.
-- Treat the transcript's detected language as evidence, not an override of a user's correction.
-- Do not claim a transcription model performed arbitrary target-language translation unless that exact capability was used and recorded.
-- Do not hard-code English, Traditional Chinese, left-to-right order, whitespace tokenization, or comma/period removal into the language-neutral contract.
-
-Report source and target BCP 47 codes, transcription provider/model, translation provider/model, timed-unit kind and count, sentence count, draft/polish completion, complete-pair validation, manifest and VTT paths, uncertain terminology, and whether `$segment-subtitles` remains pending.
+Report source and output BCP 47 codes, transcription and content provider/model, timed-unit kind and count, sentence count, manual CC references, validation result, translation artifact ID/revision, manifest and VTT paths, unresolved terminology, active playback result, and whether segmentation remains pending.

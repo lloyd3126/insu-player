@@ -40,6 +40,9 @@ export function JobAboutPanel({ job }: { job: JobDetail }) {
           {formatDuration(job.durationSeconds) ?? "—"}
         </JobFact>
         <JobFact label="容量">{formatBytes(job.sizeBytes)}</JobFact>
+        <JobFact label="目前畫質">
+          {job.activeMedia ? `${job.activeMedia.height}p` : "—"}
+        </JobFact>
         <JobFact label="影音 ID">{job.videoId}</JobFact>
         <JobFact label="建立時間">{formatDate(job.createdAt)}</JobFact>
         <JobFact label="更新時間">{formatDate(job.updatedAt)}</JobFact>

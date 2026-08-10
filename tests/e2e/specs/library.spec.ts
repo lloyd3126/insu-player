@@ -181,6 +181,153 @@ test.describe("library and details @critical", () => {
     ).toHaveAttribute("aria-selected", "true")
   })
 
+  test("manages exact downloadable qualities in a reload-safe detail tab", async ({
+    page,
+  }) => {
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    await library.getByRole("tab", { name: "詳細資訊" }).click()
+    await library
+      .getByRole("row")
+      .filter({ hasText: "雙語測試影音" })
+      .getByRole("button", { name: "雙語測試影音", exact: true })
+      .click()
+
+    const detail = page.getByRole("dialog", { name: "雙語測試影音" })
+    await detail.getByRole("tab", { name: "畫質管理" }).click()
+    await expect(page).toHaveURL(
+      /\/jobs\/demo-video\/quality\?returnTo=%2Flibrary%2Flist$/,
+    )
+    await expect(detail.getByText("720p", { exact: true }).first()).toBeVisible()
+    const qualityTable = detail.getByRole("table")
+    const downloadable = qualityTable.getByRole("row").filter({ hasText: "1080p" })
+    await expect(downloadable.getByText("可下載", { exact: true })).toBeVisible()
+    await downloadable.getByRole("button", { name: "下載" }).click()
+    const confirmation = page.getByRole("alertdialog", {
+      name: "下載 1080p 到影音庫",
+    })
+    await expect(confirmation).toContainText("完成並驗證後才會加入可播放畫質")
+    const request = page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "POST" &&
+        new URL(candidate.url()).pathname ===
+          "/api/jobs/demo-video/media/renditions",
+    )
+    await confirmation.getByRole("button", { name: "下載到影音庫" }).click()
+    expect((await request).postDataJSON()).toEqual({ height: 1080 })
+    await expect(confirmation).toBeHidden()
+    await expect(downloadable.getByText("正在下載", { exact: true })).toBeVisible()
+    await expect(
+      downloadable.getByRole("button", { name: /下載中/ }),
+    ).toBeDisabled()
+    await expect(
+      downloadable.getByRole("button", { name: "下載", exact: true }),
+    ).toHaveCount(0)
+    await expect(downloadable.getByText("已下載", { exact: true })).toBeVisible()
+    await expect(
+      downloadable.getByRole("button", { name: "設為播放", exact: true }),
+    ).toBeVisible()
+
+    await page.reload()
+    await expect(
+      page
+        .getByRole("dialog", { name: "雙語測試影音" })
+        .getByRole("tab", { name: "畫質管理" }),
+    ).toHaveAttribute("aria-selected", "true")
+  })
+
+  test("switches an already downloaded player quality from the quality selector", async ({
+    page,
+  }) => {
+    const mediaCatalog = {
+      schemaVersion: 1,
+      videoId: "demo-video",
+      revision: 2,
+      activeRenditionId: "720p-demo",
+      availableBytes: 10_000_000,
+      sourceRefreshedAt: "2026-08-08T00:00:00.000Z",
+      formats: [],
+      renditions: [
+        {
+          id: "720p-demo",
+          requestedHeight: 720,
+          width: 1280,
+          height: 720,
+          container: "mp4",
+          videoCodec: "avc1",
+          audioCodec: "aac",
+          sizeBytes: 18,
+          checksum: "a".repeat(64),
+          createdAt: "2026-08-08T00:00:00.000Z",
+          active: true,
+        },
+        {
+          id: "1080p-demo",
+          requestedHeight: 1080,
+          width: 1920,
+          height: 1080,
+          container: "mp4",
+          videoCodec: "avc1",
+          audioCodec: "aac",
+          sizeBytes: 40,
+          checksum: "b".repeat(64),
+          createdAt: "2026-08-08T01:00:00.000Z",
+          active: false,
+        },
+      ],
+      operation: null,
+    }
+    await page.route(/\/api\/jobs\/demo-video\/media(?:\/active)?$/, async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(mediaCatalog),
+        })
+        return
+      }
+      const activated = {
+        ...mediaCatalog,
+        revision: 3,
+        activeRenditionId: "1080p-demo",
+        renditions: mediaCatalog.renditions.map((rendition) => ({
+          ...rendition,
+          active: rendition.id === "1080p-demo",
+        })),
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(activated),
+      })
+    })
+
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    await library
+      .locator(".video-grid-card")
+      .filter({ hasText: "雙語測試影音" })
+      .getByRole("button", { name: "觀看 雙語測試影音" })
+      .click()
+    const player = page.getByRole("dialog", { name: "雙語測試影音" })
+    const quality = player.getByRole("combobox", { name: "播放器畫質" })
+    await expect(quality).toContainText("720p")
+    await quality.click()
+    const activation = page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "PUT" &&
+        new URL(candidate.url()).pathname ===
+          "/api/jobs/demo-video/media/active",
+    )
+    await page.getByRole("option", { name: "1080p" }).click()
+    expect((await activation).postDataJSON()).toEqual({
+      renditionId: "1080p-demo",
+    })
+    await expect(quality).toContainText("1080p")
+  })
+
   test("returns through nested modal origins and preserves them after reload", async ({
     page,
   }) => {
@@ -478,11 +625,17 @@ test.describe("library and details @critical", () => {
   })
 
   test("separates media facts subtitles segmentation and processing records", async ({ page }) => {
-    let captionRequests = 0
+    let subtitleCatalogRequests = 0
+    let subtitleArtifactRequests = 0
     let logRequests = 0
     page.on("request", (request) => {
       const url = request.url()
-      if (url.includes("/api/jobs/demo-video/captions")) captionRequests += 1
+      if (url.endsWith("/api/jobs/demo-video/subtitles")) {
+        subtitleCatalogRequests += 1
+      }
+      if (url.includes("/api/jobs/demo-video/subtitles/artifacts/")) {
+        subtitleArtifactRequests += 1
+      }
       if (url.includes("/api/jobs/demo-video/log")) logRequests += 1
     })
 
@@ -496,12 +649,11 @@ test.describe("library and details @critical", () => {
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await expect(detail.getByRole("tab")).toHaveText([
       "關於影音",
-      "執行紀錄",
-      "原始字幕",
+      "畫質管理",
+      "字幕管理",
       "影音摘要",
-      "翻譯字幕",
-      "切分字幕",
       "影音筆記",
+      "執行紀錄",
     ])
     await expect(detail.getByRole("tab", { name: "關於影音" })).toHaveAttribute(
       "aria-selected",
@@ -561,14 +713,35 @@ test.describe("library and details @critical", () => {
     await expect(removalDialog).toBeHidden()
     await expect(removalTrigger).toBeFocused()
     await expect(detail.getByText("Workflow log", { exact: true })).toHaveCount(0)
-    expect(captionRequests).toBe(0)
+    expect(subtitleCatalogRequests).toBe(0)
+    expect(subtitleArtifactRequests).toBe(0)
     expect(logRequests).toBe(0)
 
-    await detail.getByRole("tab", { name: "原始字幕" }).click()
-    const sourcePanel = detail.getByRole("tabpanel", { name: "原始字幕" })
-    await expect(sourcePanel.getByText("原始字幕", { exact: true }).last()).toBeVisible()
-    await expect(detail.getByText("轉錄模型", { exact: true })).toBeVisible()
-    await expect(detail.getByText("本機模型轉錄", { exact: true })).toBeVisible()
+    await detail.getByRole("tab", { name: "字幕管理" }).click()
+    await expect(page).toHaveURL(
+      /\/jobs\/demo-video\/subtitles\/source\?returnTo=/,
+    )
+    const subtitlePanel = detail.getByRole("tabpanel", { name: "字幕管理" })
+    await expect(subtitlePanel.getByRole("tab")).toHaveText([
+      "原始字幕",
+      "校正字幕",
+      "翻譯字幕",
+      "切分字幕",
+    ])
+    const sourcePanel = subtitlePanel.getByRole("tabpanel", {
+      name: "原始字幕",
+    })
+    await expect(sourcePanel.getByText("原始字幕 · r1", { exact: true })).toBeVisible()
+    await expect(subtitlePanel.getByRole("heading", {
+      name: "製作與更新字幕",
+    })).toBeVisible()
+    await expect(subtitlePanel.getByRole("region", {
+      name: "播放字幕版本",
+    })).toBeVisible()
+    await expect(sourcePanel.getByRole("combobox", {
+      name: "字幕版本",
+    })).toContainText("r1 · en")
+    await expect(sourcePanel.getByText("local · medium", { exact: true })).toBeVisible()
     const sourceComparison = sourcePanel.getByRole("table")
     await expect(
       sourceComparison.getByRole("columnheader", { name: "en" }),
@@ -585,28 +758,60 @@ test.describe("library and details @critical", () => {
         getComputedStyle(element).whiteSpace,
       ),
     ).toBe("normal")
-    await expect.poll(() => captionRequests).toBe(1)
+    await expect.poll(() => subtitleCatalogRequests).toBe(1)
+    await expect.poll(() => subtitleArtifactRequests).toBe(1)
     expect(logRequests).toBe(0)
+
+    await subtitlePanel.getByRole("tab", { name: "校正字幕" }).click()
+    const proofreadPanel = subtitlePanel.getByRole("tabpanel", {
+      name: "校正字幕",
+    })
+    await expect(
+      proofreadPanel.getByRole("columnheader", { name: "en · 輸入字幕" }),
+    ).toBeVisible()
+    await expect(
+      proofreadPanel.getByRole("columnheader", { name: "en · 輸出字幕" }),
+    ).toBeVisible()
+    await expect.poll(() => subtitleArtifactRequests).toBe(2)
 
     await detail.getByRole("tab", { name: "影音摘要" }).click()
     await expect(detail.getByText("影音摘要尚未設定")).toBeVisible()
 
-    await detail.getByRole("tab", { name: "翻譯字幕" }).click()
-    const translatedPanel = detail.getByRole("tabpanel", { name: "翻譯字幕" })
+    await detail.getByRole("tab", { name: "字幕管理" }).click()
+    await subtitlePanel.getByRole("tab", { name: "翻譯字幕" }).click()
+    await expect(page).toHaveURL(/\/jobs\/demo-video\/subtitles\/translation/)
+    const translatedPanel = subtitlePanel.getByRole("tabpanel", {
+      name: "翻譯字幕",
+    })
     const translatedComparison = translatedPanel.getByRole("table")
+    await expect(
+      translatedComparison.getByRole("columnheader", { name: "en" }),
+    ).toBeVisible()
     await expect(
       translatedComparison.getByRole("columnheader", { name: "zh-TW" }),
     ).toBeVisible()
     await expect(
-      translatedComparison.getByRole("columnheader", { name: "en" }),
-    ).toHaveCount(0)
-    await expect(
       translatedComparison.getByText(/過去一個月我一直在嘗試 Vibe Coding/),
     ).toBeVisible()
-    await expect.poll(() => captionRequests).toBe(1)
+    await expect.poll(() => subtitleArtifactRequests).toBe(3)
 
-    await detail.getByRole("tab", { name: "切分字幕" }).click()
-    await expect(detail.getByText("切分字幕尚未設定")).toBeVisible()
+    await subtitlePanel.getByRole("tab", { name: "切分字幕" }).click()
+    const segmentedPanel = subtitlePanel.getByRole("tabpanel", {
+      name: "切分字幕",
+    })
+    const segmentedComparison = segmentedPanel.getByRole("table")
+    await expect(
+      segmentedComparison.getByRole("columnheader", { name: "en" }),
+    ).toBeVisible()
+    await expect(
+      segmentedComparison.getByRole("columnheader", { name: "zh-TW" }),
+    ).toBeVisible()
+    await expect(segmentedPanel.getByText("有驗證提醒", { exact: true })).toBeVisible()
+    await expect(segmentedPanel.getByText("1 個提醒", { exact: true })).toBeVisible()
+    await expect(
+      segmentedPanel.getByRole("button", { name: "移除切分字幕" }),
+    ).toBeVisible()
+    await expect.poll(() => subtitleArtifactRequests).toBe(4)
 
     await detail.getByRole("tab", { name: "影音筆記" }).click()
     await expect(detail.getByText("影音筆記尚未設定")).toBeVisible()
@@ -630,6 +835,17 @@ test.describe("library and details @critical", () => {
       activityPanel.locator(".workflow-log-card").boundingBox(),
     ])
     expect(logBox?.width ?? 0).toBeGreaterThan((panelBox?.width ?? 0) * 0.9)
+
+    await detail.getByRole("tab", { name: "字幕管理" }).click()
+    await subtitlePanel.getByRole("tab", { name: "翻譯字幕" }).click()
+    await page.reload()
+    const reloadedDetail = page.getByRole("dialog", { name: "雙語測試影音" })
+    await expect(
+      reloadedDetail.getByRole("tab", { name: "字幕管理" }),
+    ).toHaveAttribute("aria-selected", "true")
+    await expect(
+      reloadedDetail.getByRole("tab", { name: "翻譯字幕" }),
+    ).toHaveAttribute("aria-selected", "true")
   })
 
   test("virtualizes a long bilingual caption timeline", async ({ page }) => {
@@ -638,24 +854,26 @@ test.describe("library and details @critical", () => {
       start: index * 2,
       end: index * 2 + 2,
       cues: {
-        en: `English sentence ${index + 1}`,
-        "zh-TW": `繁中句子 ${index + 1}`,
+        "source-en": `English sentence ${index + 1}`,
+        "target-zh-TW": `繁中句子 ${index + 1}`,
       },
     }))
-    await page.route("**/api/jobs/demo-video/captions", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          videoId: "demo-video",
-          baselineLanguage: "en",
-          tracks: [
-            { code: "en", label: "English", cueCount: rows.length },
-            { code: "zh-TW", label: "繁體中文", cueCount: rows.length },
-          ],
-          rows,
+    await page.route(
+      "**/api/jobs/demo-video/subtitles/artifacts/demo-video-source-model-transcript-en-r1/captions",
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            videoId: "demo-video",
+            baselineTrackId: "source-en",
+            tracks: [
+              { id: "source-en", code: "en", label: "English", cueCount: rows.length },
+              { id: "target-zh-TW", code: "zh-TW", label: "繁體中文", cueCount: rows.length },
+            ],
+            rows,
+          }),
         }),
-      }),
     )
 
     const home = new HomePage(page)
@@ -668,7 +886,7 @@ test.describe("library and details @critical", () => {
       .getByRole("button", { name: "雙語測試影音", exact: true })
       .click()
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
-    await detail.getByRole("tab", { name: "原始字幕" }).click()
+    await detail.getByRole("tab", { name: "字幕管理" }).click()
 
     const table = detail.getByRole("table")
     const viewport = detail.locator(".caption-table-frame")
@@ -684,14 +902,67 @@ test.describe("library and details @critical", () => {
     expect(await table.getByRole("row").count()).toBeLessThan(50)
   })
 
+  test("switches the active subtitle revision from subtitle management", async ({
+    page,
+  }) => {
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    await library.getByRole("tab", { name: "詳細資訊" }).click()
+    await library
+      .getByRole("row")
+      .filter({ hasText: "雙語測試影音" })
+      .getByRole("button", { name: "雙語測試影音", exact: true })
+      .click()
+
+    const detail = page.getByRole("dialog", { name: "雙語測試影音" })
+    await detail.getByRole("tab", { name: "字幕管理" }).click()
+    const selector = detail.getByRole("combobox", { name: "en 播放版本" })
+    await expect(selector).toContainText("校正字幕 · r1")
+
+    const selectSource = page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "PUT" &&
+        new URL(candidate.url()).pathname ===
+          "/api/jobs/demo-video/subtitles/active",
+    )
+    await selector.click()
+    await page.getByRole("option", { name: "模型轉錄 · r1" }).click()
+    expect((await selectSource).postDataJSON()).toEqual({
+      languageCode: "en",
+      trackId: "demo-video-source-model-transcript-en-r1-source_raw",
+    })
+    await expect(selector).toContainText("模型轉錄 · r1")
+
+    const restoreProofread = page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "PUT" &&
+        new URL(candidate.url()).pathname ===
+          "/api/jobs/demo-video/subtitles/active",
+    )
+    await selector.click()
+    await page.getByRole("option", { name: "校正字幕 · r1" }).click()
+    expect((await restoreProofread).postDataJSON()).toEqual({
+      languageCode: "en",
+      trackId: "demo-video-proofread-en-en-r1-output_sentence",
+    })
+    await expect(selector).toContainText("校正字幕 · r1")
+  })
+
   test("persists paused and closing playback against the active video", async ({
     page,
   }) => {
-    const saved: Array<{ path: string; time: number; duration: number | null }> = []
+    const saved: Array<{
+      path: string
+      time?: number
+      duration?: number | null
+      captionLanguage?: string | null
+    }> = []
     await page.route(/\/api\/jobs\/[^/]+\/playback$/, async (route) => {
       const payload = route.request().postDataJSON() as {
-        time: number
-        duration: number | null
+        time?: number
+        duration?: number | null
+        captionLanguage?: string | null
       }
       saved.push({
         path: new URL(route.request().url()).pathname,
@@ -717,6 +988,15 @@ test.describe("library and details @critical", () => {
     const playerDialog = page.getByRole("dialog", { name: "雙語測試影音" })
     const playerFrame = page.frameLocator('iframe[title="本機影音播放器"]')
     await expect(playerFrame.locator("body")).toBeVisible()
+
+    await playerDialog.getByLabel("播放器字幕").click()
+    await page.getByRole("option", { name: "en", exact: true }).click()
+    await expect
+      .poll(
+        () =>
+          saved.filter((entry) => entry.captionLanguage === "en").length,
+      )
+      .toBe(1)
 
     const sendPlayback = (type: string, time: number) =>
       playerFrame.locator("body").evaluate(

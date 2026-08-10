@@ -14,6 +14,7 @@ import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { atomicWriteJson } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
+import { MediaService } from "@server/services/media-service"
 import { RemovalService } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
 
@@ -117,8 +118,15 @@ const removalScript = path.resolve(
   "scripts",
   "remove_library_item.py",
 )
+const mediaScript = path.resolve(
+  values["library-template"],
+  "../../..",
+  "scripts",
+  "manage-rendition.sh",
+)
 const app = createApplication({
   jobs,
+  media: new MediaService(workspace, jobs, mediaScript),
   removals: new RemovalService(workspace, removalScript),
   resources,
   libraryAppRoot: path.resolve(values["library-template"]),

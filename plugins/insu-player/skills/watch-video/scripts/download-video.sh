@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: download-video.sh <workspace> <video-url> [--translate TARGET_BCP47 | --no-translate]\n'
+  printf 'usage: download-video.sh <workspace> <video-url> --language SOURCE_BCP47 [--translate TARGET_BCP47 | --proofread] [--allow-low-quality]\n'
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then usage; exit 0; fi
@@ -14,20 +14,31 @@ if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then usage; ex
 workspace_input="$1"
 video_url="$2"
 shift 2
-translation_mode="legacy"
+translation_mode=""
 translation_target=""
+source_language=""
+allow_low_quality=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --language)
+      [ "$#" -ge 2 ] || caption_die "--language requires a language"
+      source_language="$2"
+      shift 2
+      ;;
     --translate)
       [ "$#" -ge 2 ] || caption_die "--translate requires a language"
-      [ "$translation_mode" = "legacy" ] || caption_die "choose only one translation mode"
+      [ -z "$translation_mode" ] || caption_die "choose only one translation mode"
       translation_mode="translate"
       translation_target="$2"
       shift 2
       ;;
-    --no-translate)
-      [ "$translation_mode" = "legacy" ] || caption_die "choose only one translation mode"
-      translation_mode="none"
+    --proofread)
+      [ -z "$translation_mode" ] || caption_die "choose only one translation mode"
+      translation_mode="proofread"
+      shift
+      ;;
+    --allow-low-quality)
+      allow_low_quality=1
       shift
       ;;
     -h|--help) usage; exit 0 ;;
@@ -35,11 +46,23 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+[ -n "$source_language" ] || caption_die "--language SOURCE_BCP47 is required after confirming the source language"
+caption_validate_language "$source_language"
+[ -n "$translation_mode" ] || caption_die "choose --translate TARGET_BCP47 or --proofread after asking the user"
 if [ "$translation_mode" = "translate" ]; then caption_validate_language "$translation_target"; fi
+if [ "$translation_mode" = "translate" ] && [ "$translation_target" = "$source_language" ]; then caption_die "translation target must differ from the source language"; fi
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
 caption_require_runtime
+caption_require_command curl
+
+preferred_max_height=1080
+minimum_height=720
+media_quality_script="$SCRIPT_DIR/media_quality.py"
+[ -f "$media_quality_script" ] || caption_die "media quality helper is missing: $media_quality_script"
+media_catalog_script="$SCRIPT_DIR/media_catalog.py"
+[ -f "$media_catalog_script" ] || caption_die "media catalog helper is missing: $media_catalog_script"
 
 mkdir -p "$CAPTION_YTDLP_CACHE"
 common_args=(
@@ -62,33 +85,17 @@ caption_validate_video_id "$video_id"
 job_dir="$CAPTION_JOBS/$video_id"
 source_dir="$job_dir/source"
 youtube_caption_dir="$job_dir/youtube-captions"
-caption_dir="$job_dir/captions"
-mkdir -p "$source_dir" "$youtube_caption_dir" "$caption_dir" "$job_dir/logs"
+mkdir -p "$source_dir" "$youtube_caption_dir" "$job_dir/logs"
 
 job_init_args=(--job-dir "$job_dir" --video-id "$video_id" --source-url "$video_url" --title "$video_title")
 if [ -n "$video_duration" ]; then
   job_init_args+=(--duration-seconds "$video_duration")
 fi
 caption_job_state init "${job_init_args[@]}" >/dev/null
-if [ "$translation_mode" = "translate" ]; then
-  existing_workflow_source=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.source 2>/dev/null || true)
-  existing_workflow_stage=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.stage 2>/dev/null || true)
-  existing_target_language=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.targetLanguage 2>/dev/null || true)
-  existing_source_language=$(caption_job_state show --job-dir "$job_dir" --field subtitleWorkflow.sourceLanguage 2>/dev/null || true)
-  if [ "$existing_workflow_source" = "model" ] && [ "$existing_workflow_stage" = "complete" ] \
-    && [ "$existing_target_language" = "$translation_target" ] && [ -f "$source_dir/video.mp4" ] \
-    && [ -f "$caption_dir/$translation_target.vtt" ] \
-    && { [ -z "$existing_source_language" ] || [ -f "$caption_dir/$existing_source_language.vtt" ]; }; then
-    caption_note "Model-generated bilingual captions are already complete; no source subtitles were requested."
-    caption_note "Download complete: $job_dir"
-    caption_note "Video ID: $video_id"
-    exit 0
-  fi
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage awaiting_model --target-language "$translation_target" >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state checking --stage model_source --message "翻譯模式將使用模型音訊轉錄。不取得來源字幕" --progress 0 --clear-error --record-history >/dev/null
-else
-  caption_job_state update --job-dir "$job_dir" --state checking --stage subtitles --message "正在檢查來源字幕" --progress 0 --clear-error --record-history >/dev/null
-fi
+pipeline_output_language="$source_language"
+if [ "$translation_mode" = "translate" ]; then pipeline_output_language="$translation_target"; fi
+caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
+caption_job_state update --job-dir "$job_dir" --state checking --stage subtitles --message "正在檢查人工 CC 字幕，平台自動字幕不會下載" --progress 0 --clear-error --record-history >/dev/null
 
 fail_job() {
   local exit_code=$?
@@ -98,51 +105,87 @@ fail_job() {
 }
 trap fail_job ERR
 
+initial_run_dir="$job_dir/media-work/runs/initial"
+mkdir -p "$initial_run_dir"
+attempt_log="$initial_run_dir/attempts.jsonl"
+media_selection_file="$initial_run_dir/selection.json"
+media_catalog_file="$job_dir/media-work/catalog.json"
+printf '%s' "$metadata_json" | "$CAPTION_PYTHON" "$media_catalog_script" discover \
+  --job-dir "$job_dir" --video-id "$video_id" >/dev/null
+probe_result=""
+probe_statuses=""
+
+cleanup_attempt_dir() {
+  local attempt_dir="$1"
+  case "$attempt_dir" in
+    "$source_dir"/.video-download-*) rm -rf -- "$attempt_dir" ;;
+    *) caption_die "refusing to clean unexpected media attempt directory: $attempt_dir" ;;
+  esac
+}
+
+record_media_attempt() {
+  "$CAPTION_PYTHON" "$media_quality_script" record-attempt \
+    --output "$attempt_log" \
+    --height "$1" \
+    --retry "$2" \
+    --probe-result "$3" \
+    --http-statuses "$4" \
+    --download-result "$5"
+}
+
+probe_video_format() {
+  local format_selector="$1"
+  local stream_urls
+  local stream_url
+  local http_code
+  local stream_count=0
+  local all_available=1
+
+  probe_result="unavailable"
+  probe_statuses=""
+  if ! stream_urls=$("$CAPTION_YTDLP" "${common_args[@]}" --get-url --format "$format_selector" "$video_url" 2>> "$job_dir/logs/workflow.log"); then
+    return 1
+  fi
+
+  while IFS= read -r stream_url; do
+    [ -n "$stream_url" ] || continue
+    stream_count=$((stream_count + 1))
+    http_code=$(curl -L --silent --show-error --range 0-1023 --max-time 20 -o /dev/null -w '%{http_code}' "$stream_url" 2>> "$job_dir/logs/workflow.log" || true)
+    if [ -n "$probe_statuses" ]; then probe_statuses="$probe_statuses,$http_code"; else probe_statuses="$http_code"; fi
+    case "$http_code" in 200|206) ;; *) all_available=0 ;; esac
+  done <<EOF
+$stream_urls
+EOF
+
+  if [ "$stream_count" -eq 0 ]; then return 1; fi
+  if [ "$all_available" -ne 1 ]; then
+    probe_result="http-failed"
+    return 1
+  fi
+  probe_result="ok"
+  return 0
+}
+
 find_track() {
   local expression="$1"
   local extension="$2"
   find "$youtube_caption_dir" -maxdepth 1 -type f -name "*.$extension" -print | LC_ALL=C sort | awk -v expression="$expression" 'BEGIN { IGNORECASE=1 } $0 ~ expression { print; exit }'
 }
 
-if [ "$translation_mode" = "translate" ]; then
-  caption_note "Translation requested; skipping all source subtitles so a local or OpenAI model can transcribe the audio."
-else
-  if [ "$translation_mode" = "none" ]; then
-    caption_note "No translation requested; downloading an English playback VTT..."
-    subtitle_languages='en.*'
-  else
-    caption_note "Legacy call without a translation choice; downloading English and Traditional Chinese playback VTT tracks..."
-    subtitle_languages='en.*,zh-Hant.*,zh-TW.*'
-  fi
-  if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-    --job-dir "$job_dir" --state checking --stage subtitles --message "正在取得來源字幕" --success-message "字幕來源檢查完成" --allow-failure -- \
-    "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-subs --write-auto-subs \
-    --sub-langs "$subtitle_languages" --sub-format vtt --output "$youtube_caption_dir/%(id)s.%(ext)s" "$video_url"; then
-    caption_note "warning: subtitle download was incomplete; media download will continue"
-  fi
+source_caption_ready=0
+caption_note "Checking for creator-provided $source_language CC; automatic captions are intentionally excluded..."
+if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
+  --job-dir "$job_dir" --state checking --stage subtitles --message "正在取得人工 CC 字幕" --success-message "人工 CC 檢查完成" --allow-failure -- \
+  "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-subs \
+  --sub-langs "$source_language.*" --sub-format vtt --output "$youtube_caption_dir/%(id)s.%(ext)s" "$video_url"; then
+  caption_note "warning: manual CC download was incomplete; media download will continue"
+fi
 
-  if [ "$translation_mode" = "legacy" ]; then
-    zh_source=$(find_track '\.(zh-TW|zh-Hant)([-.][A-Za-z0-9_-]+)?\.vtt$' vtt)
-    if [ -n "$zh_source" ]; then
-      cp "$zh_source" "$caption_dir/zh-TW.vtt"
-      if grep -q '^WEBVTT' "$caption_dir/zh-TW.vtt" && grep -q -- '-->' "$caption_dir/zh-TW.vtt"; then
-        caption_job_state subtitle --job-dir "$job_dir" --language zh-TW --path "$caption_dir/zh-TW.vtt" --source youtube --label "繁體中文" >/dev/null
-      else
-        rm -f -- "$caption_dir/zh-TW.vtt"
-        caption_note "warning: downloaded Traditional Chinese subtitle was not a valid VTT"
-      fi
-    fi
-  fi
-  en_source=$(find_track '\.en([-.][A-Za-z0-9_-]+)?\.vtt$' vtt)
-  if [ -n "$en_source" ]; then
-    cp "$en_source" "$caption_dir/en.vtt"
-    if grep -q '^WEBVTT' "$caption_dir/en.vtt" && grep -q -- '-->' "$caption_dir/en.vtt"; then
-      caption_job_state subtitle --job-dir "$job_dir" --language en --path "$caption_dir/en.vtt" --source youtube --label "English" >/dev/null
-    else
-      rm -f -- "$caption_dir/en.vtt"
-      caption_note "warning: downloaded English subtitle was not a valid VTT"
-    fi
-  fi
+manual_source=$(find_track "\\.$source_language([-.][A-Za-z0-9_-]+)?\\.vtt$" vtt)
+if [ -n "$manual_source" ]; then
+  caption_validate_vtt "$manual_source"
+  "$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$source_language" "$manual_source" --source-type manual-cc --provider yt-dlp
+  source_caption_ready=1
 fi
 
 if [ ! -f "$source_dir/thumbnail.jpg" ]; then
@@ -154,25 +197,114 @@ if [ ! -f "$source_dir/thumbnail.jpg" ]; then
   fi
 fi
 
-caption_note "Downloading a browser-oriented MP4..."
-"$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-  --job-dir "$job_dir" --state downloading --stage video --message "正在下載影片" --success-message "影片下載完成" -- \
-  "$CAPTION_YTDLP" "${common_args[@]}" \
-  --format 'bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b' \
-  --merge-output-format mp4 --recode-video mp4 --output "$source_dir/video.%(ext)s" "$video_url"
+video_file=""
+selected_height=""
+selected_info_file=""
+selected_attempt_dir=""
+quality_heights=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" "$media_quality_script" plan --preferred-max-height "$preferred_max_height")
+best_available_height=$(printf '%s\n' "$quality_heights" | sed -n '1p')
 
-video_file="$source_dir/video.mp4"
+video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \
+  --job-dir "$job_dir" --video-id "$video_id" 2>/dev/null || true)
+if [ -n "$video_file" ]; then
+  caption_note "Using the active verified media rendition."
+else
+  caption_note "Downloading the highest verified browser-oriented MP4 up to ${preferred_max_height}p..."
+  lower_quality_available=0
+  for height in $quality_heights; do
+    case "$height" in ''|*[!0-9]*) caption_die "invalid planned media height: $height" ;; esac
+    if [ "$height" -lt "$minimum_height" ] && [ "$allow_low_quality" -ne 1 ]; then
+      lower_quality_available=1
+      continue
+    fi
+
+    format_selector="bv*[ext=mp4][vcodec^=avc1][height=$height]+ba[ext=m4a]/b[ext=mp4][vcodec^=avc1][height=$height]/bv*[ext=mp4][height=$height]+ba[ext=m4a]/b[ext=mp4][height=$height]"
+    retry=1
+    while [ "$retry" -le 2 ]; do
+      attempt_dir="$source_dir/.video-download-${height}p-${retry}"
+      cleanup_attempt_dir "$attempt_dir"
+      mkdir -p "$attempt_dir"
+      caption_note "Checking a fresh ${height}p stream URL (attempt ${retry}/2)..."
+      if ! probe_video_format "$format_selector"; then
+        record_media_attempt "$height" "$retry" "$probe_result" "$probe_statuses" "not-run"
+        cleanup_attempt_dir "$attempt_dir"
+        retry=$((retry + 1))
+        continue
+      fi
+
+      if "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
+        --job-dir "$job_dir" --state downloading --stage video --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --allow-failure -- \
+        "$CAPTION_YTDLP" "${common_args[@]}" \
+        --format "$format_selector" --merge-output-format mp4 --recode-video mp4 --write-info-json \
+        --output "$attempt_dir/video.%(ext)s" "$video_url"; then
+        candidate_file="$attempt_dir/video.mp4"
+        if [ -f "$candidate_file" ]; then
+          record_media_attempt "$height" "$retry" "ok" "$probe_statuses" "success"
+          selected_height="$height"
+          selected_info_file="$attempt_dir/video.info.json"
+          selected_attempt_dir="$attempt_dir"
+          break
+        fi
+      fi
+      record_media_attempt "$height" "$retry" "ok" "$probe_statuses" "failed"
+      cleanup_attempt_dir "$attempt_dir"
+      retry=$((retry + 1))
+    done
+    if [ -n "$selected_height" ]; then break; fi
+  done
+
+  if [ -z "$selected_height" ]; then
+    if [ "$lower_quality_available" -eq 1 ] && [ "$allow_low_quality" -ne 1 ]; then
+      caption_die "source metadata advertises formats below ${minimum_height}p, but low-quality fallback requires user confirmation; rerun with --allow-low-quality"
+    fi
+    caption_die "no verified browser-oriented MP4 could be downloaded after fresh URL retries"
+  fi
+fi
+
+media_probe_file="$video_file"
+if [ -n "$selected_attempt_dir" ]; then media_probe_file="$selected_attempt_dir/video.mp4"; fi
+"$CAPTION_FFMPEG" -nostdin -hide_banner -i "$media_probe_file" 2> "$job_dir/media-info.txt" || true
+
+if [ -n "$selected_height" ]; then
+  finalize_args=(
+    finalize
+    --output "$media_selection_file"
+    --media-info "$job_dir/media-info.txt"
+    --attempt-log "$attempt_log"
+    --selection-info "$selected_info_file"
+    --preferred-max-height "$preferred_max_height"
+    --minimum-height "$minimum_height"
+    --best-available-height "$best_available_height"
+    --selected-height "$selected_height"
+  )
+  if [ "$allow_low_quality" -eq 1 ]; then finalize_args+=(--allow-low-quality); fi
+  "$CAPTION_PYTHON" "$media_quality_script" "${finalize_args[@]}" >/dev/null
+  "$CAPTION_PYTHON" "$media_catalog_script" publish \
+    --job-dir "$job_dir" --video-id "$video_id" \
+    --source-file "$media_probe_file" --selection "$media_selection_file" \
+    --requested-height "$selected_height" --activate >/dev/null
+  video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \
+    --job-dir "$job_dir" --video-id "$video_id")
+  cleanup_attempt_dir "$selected_attempt_dir"
+  if [ "$selected_height" -lt "$best_available_height" ]; then
+    caption_note "warning: selected ${selected_height}p after fresh retries of higher-quality streams failed; see $media_selection_file"
+  else
+    caption_note "Selected and verified ${selected_height}p media."
+  fi
+fi
+
 caption_require_file "$video_file"
 caption_job_state asset --job-dir "$job_dir" --name video --path "$video_file" >/dev/null
+caption_job_state asset --job-dir "$job_dir" --name mediaCatalog --path "$media_catalog_file" >/dev/null
 
 if [ -f "$source_dir/thumbnail.jpg" ]; then
   caption_job_state asset --job-dir "$job_dir" --name thumbnail --path "$source_dir/thumbnail.jpg" >/dev/null
 fi
 
-# Keep an audio copy only when there is no usable text track. Otherwise Whisper can
-# extract it from video.mp4 later if the user asks for a fresh transcription.
-if [ "$translation_mode" = "translate" ] || { [ ! -f "$caption_dir/en.vtt" ] && [ ! -f "$caption_dir/zh-TW.vtt" ]; }; then
-  caption_note "No text track found; downloading audio for Whisper..."
+# A model-generated fine-grained timing source is mandatory for proofreading,
+# translation, and segmentation, even when creator CC is available as text evidence.
+if [ ! -f "$source_dir/audio.m4a" ]; then
+  caption_note "Downloading audio for the model timing source..."
   "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
     --job-dir "$job_dir" --state downloading --stage audio --message "正在下載轉錄音訊" --success-message "轉錄音訊下載完成" -- \
     "$CAPTION_YTDLP" "${common_args[@]}" --format ba --extract-audio --audio-format m4a --audio-quality 0 \
@@ -181,7 +313,6 @@ if [ "$translation_mode" = "translate" ] || { [ ! -f "$caption_dir/en.vtt" ] && 
   caption_job_state asset --job-dir "$job_dir" --name audio --path "$source_dir/audio.m4a" >/dev/null
 fi
 
-"$CAPTION_FFMPEG" -nostdin -hide_banner -i "$video_file" 2> "$job_dir/media-info.txt" || true
 caption_job_state asset --job-dir "$job_dir" --name mediaInfo --path "$job_dir/media-info.txt" >/dev/null
 
 {
@@ -189,25 +320,20 @@ caption_job_state asset --job-dir "$job_dir" --name mediaInfo --path "$job_dir/m
   printf 'title: %s\n' "$video_title"
   printf 'source-url: %s\n' "$video_url"
   printf 'video-file: %s\n' "$video_file"
-  printf 'translation-target: %s\n' "${translation_target:-none}"
+  printf 'media-catalog-file: %s\n' "$media_catalog_file"
+  printf 'subtitle-mode: %s\n' "$translation_mode"
+  printf 'source-language: %s\n' "$source_language"
+  printf 'output-language: %s\n' "$pipeline_output_language"
 } > "$job_dir/manifest.txt"
 caption_job_state asset --job-dir "$job_dir" --name manifest --path "$job_dir/manifest.txt" >/dev/null
 
-if [ "$translation_mode" = "translate" ]; then
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation requested --source model --stage awaiting_model --target-language "$translation_target" >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage model_transcription --message "影片與音訊已就緒。等待選定的本機或 OpenAI 模型產生詞級字幕" --progress 0 --clear-error --record-history >/dev/null
-elif [ "$translation_mode" = "none" ] && [ -f "$caption_dir/en.vtt" ]; then
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source platform --stage source_caption >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與英文字幕已可觀看。不需要翻譯" --progress 100 --clear-error --record-history >/dev/null
-elif [ -f "$caption_dir/zh-TW.vtt" ]; then
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source legacy --stage source_caption >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影片與繁體中文字幕已可觀看" --progress 100 --clear-error --record-history >/dev/null
-elif [ -f "$caption_dir/en.vtt" ]; then
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage translation --message "影片與英文字幕已就緒。等待繁中翻譯" --progress 0 --clear-error --record-history >/dev/null
+caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
+if [ "$source_caption_ready" -eq 1 ]; then
+  next_message="影音與人工 CC 已可觀看，仍需模型從音訊建立細粒度時間軸"
 else
-  caption_job_state subtitle-workflow --job-dir "$job_dir" --translation not-requested --source model --stage awaiting_model >/dev/null
-  caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage transcription --message "影片已就緒。沒有可用字幕，等待本機轉錄" --progress 0 --clear-error --record-history >/dev/null
+  next_message="影音與音訊已就緒，等待模型建立細粒度來源字幕"
 fi
+caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage model_transcription --message "$next_message" --progress 0 --clear-error --record-history >/dev/null
 
 trap - ERR
 caption_note "Download complete: $job_dir"

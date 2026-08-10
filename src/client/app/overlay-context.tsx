@@ -9,6 +9,7 @@ import {
 import { useLocation, useNavigate } from "react-router-dom"
 
 import { overlayFromLocation, pathForOverlay } from "@/app/overlay-routes"
+import type { SubtitleArtifactKind } from "@shared/contracts/subtitle-catalog"
 
 export type UsageGuideTab =
   | "getting-started"
@@ -21,19 +22,31 @@ export type FeatureSettingsTab =
 export type LibraryView = "grid" | "list"
 export type JobDetailTab =
   | "about"
-  | "activity"
-  | "source-subtitle"
+  | "quality"
+  | "subtitles"
   | "summary"
   | "notes"
-  | "translated-subtitle"
-  | "segmentation"
+  | "activity"
+export type SubtitleManagementView = SubtitleArtifactKind
+
+type StandardJobDetailTab = Exclude<JobDetailTab, "subtitles">
+
+export type JobDetailDestination =
+  | { type: "detail"; videoId: string; tab: StandardJobDetailTab }
+  | {
+      type: "detail"
+      videoId: string
+      tab: "subtitles"
+      subtitleView: SubtitleManagementView
+      artifactId?: string
+    }
 
 export type OverlayDestination =
   | { type: "usage-guide"; tab: UsageGuideTab }
   | { type: "feature-settings"; tab: FeatureSettingsTab }
   | { type: "library"; view: LibraryView | null }
   | { type: "player"; videoId: string; caption?: string }
-  | { type: "detail"; videoId: string; tab: JobDetailTab }
+  | JobDetailDestination
   | { type: "policy"; required: boolean }
 
 export type OverlayState =
