@@ -1,0 +1,12 @@
+{
+  "evals": [
+    {
+      "prompt": "把影音 abc123 的文字摘要 abc123-text-en-r2 做成心智圖",
+      "expected_output": "Reads only the exact text summary, creates a bounded safe Markdown tree, validates it, and imports a new dependent mind-map revision."
+    },
+    {
+      "prompt": "在心智圖加入外部圖片和 YouTube 連結",
+      "expected_output": "Rejects images and external links while allowing only same-video timestamp links."
+    }
+  ]
+}

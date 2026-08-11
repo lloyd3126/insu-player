@@ -14,6 +14,10 @@ export const SUBTITLE_ARTIFACT_PROVIDERS = [
   "yt-dlp",
   "local",
   "openai",
+  "groq",
+  "elevenlabs",
+  "xai",
+  "openrouter",
   "agent",
 ] as const
 

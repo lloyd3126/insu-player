@@ -40,7 +40,7 @@ if [ "$remove_all" -eq 1 ]; then
   exec "$CAPTION_PYTHON" "$remover" execute "$CAPTION_WORKSPACE" --kind video --video-id "$video_id" --plan-digest "$plan_digest" --yes
 fi
 
-if [ -f "$job_dir/status.json" ] && [ -x "$CAPTION_PYTHON" ]; then
+if [ -f "$CAPTION_WORKSPACE/app.db" ] && [ -x "$CAPTION_PYTHON" ]; then
   current_state=$(caption_job_state show --job-dir "$job_dir" --field state)
   case "$current_state" in
     checking|downloading|transcribing|translating|preparing_player)
@@ -57,12 +57,12 @@ printf 'Removal preview\n'
 printf '  intermediate audio: %s\n' "$job_dir/source/audio.m4a"
 printf '  raw YouTube captions: %s\n' "$job_dir/youtube-captions"
 printf '  Whisper working files: %s\n' "$job_dir/whisper"
-printf '  preserved: media renditions, normalized captions, status, logs, thumbnail\n'
+printf '  preserved: media renditions, normalized captions, database records, logs, thumbnail\n'
 [ "$confirmed" -eq 1 ] || { printf 'dry-run: nothing was removed; rerun with --yes after checking these exact paths\n'; exit 0; }
 
 rm -f -- "$job_dir/source/audio.m4a"
 rm -rf -- "$job_dir/youtube-captions" "$job_dir/whisper"
-if [ -x "$CAPTION_PYTHON" ] && [ -f "$job_dir/status.json" ]; then
+if [ -x "$CAPTION_PYTHON" ] && [ -f "$CAPTION_WORKSPACE/app.db" ]; then
   caption_job_state asset --job-dir "$job_dir" --name audio --remove >/dev/null
   current_state=$(caption_job_state show --job-dir "$job_dir" --field state)
   caption_job_state update --job-dir "$job_dir" --state "$current_state" --stage cleanup --message "已移除可重建的中間檔" --record-history >/dev/null

@@ -10,10 +10,18 @@ import path from "node:path"
 
 import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
+import { jobs as mediaItems } from "@server/db/schema"
 import { JobRepository } from "@server/repositories/job-repository"
+import { DownloadBatchService } from "@server/services/download-batch-service"
+import { ExtensionPairingService } from "@server/services/extension-pairing-service"
+import { MediaSessionService } from "@server/services/media-session-service"
+import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
+import { NoteService } from "@server/services/note-service"
 import type { RemovalOperations } from "@server/services/removal-service"
 import type { MediaOperations } from "@server/services/media-service"
 import { ResourceService } from "@server/services/resource-service"
+import { RuntimeService } from "@server/services/runtime-service"
+import { SummaryService } from "@server/services/summary-service"
 import type { MediaOperation } from "@shared/contracts/media"
 
 const root = path.resolve(import.meta.dir, "../..")
@@ -108,13 +116,12 @@ writeFileSync(
   path.join(job, "logs", "workflow.log"),
   "download complete\ntranscription complete\nsubtitle reflow complete\n",
 )
-writeFileSync(
-  path.join(job, "status.json"),
-  `${JSON.stringify({
-    schemaVersion: 6,
+const mediaRecord = {
+    schemaVersion: 2,
     videoId: "demo-video",
     title: "雙語測試影音",
     sourceUrl: "https://example.test/demo",
+    sourceKind: "page",
     state: "ready",
     stage: "complete",
     progress: 1,
@@ -135,7 +142,11 @@ writeFileSync(
       stage: "complete",
       sourceLanguage: "en",
       outputLanguage: "zh-TW",
-      timingProcessor: { provider: "local", model: "medium" },
+      timingProcessor: {
+        provider: "local",
+        service: "openai-whisper",
+        model: "medium",
+      },
       contentProcessor: { provider: "agent", service: "codex" },
       segmentationProcessor: { provider: "agent", service: "codex" },
       manualReferenceArtifactIds: [],
@@ -152,7 +163,11 @@ writeFileSync(
         sourceLanguage: "en",
         outputLanguage: null,
         sourceType: "model-transcript",
-        processor: { provider: "local", model: "medium" },
+        processor: {
+          provider: "local",
+          service: "openai-whisper",
+          model: "medium",
+        },
         timingUnitKind: "word",
         targetFrozen: false,
         manifestPath: null,
@@ -321,6 +336,7 @@ writeFileSync(
     process: null,
     transcription: {
       provider: "local",
+      service: "openai-whisper",
       model: "medium",
       languageTag: "en",
       engineLanguage: "en",
@@ -340,8 +356,7 @@ writeFileSync(
         message: "字幕已完成",
       },
     ],
-  })}\n`,
-)
+  }
 
 const opened = openAppDatabase(
   path.join(workspace, "app.db"),
@@ -350,6 +365,26 @@ const opened = openAppDatabase(
     "plugins/insu-player/skills/watch-video/assets/server/drizzle",
   ),
 )
+opened.db.insert(mediaItems).values({
+  videoId: mediaRecord.videoId,
+  title: mediaRecord.title,
+  sourceUrl: mediaRecord.sourceUrl,
+  state: mediaRecord.state,
+  effectiveState: mediaRecord.state,
+  stage: mediaRecord.stage,
+  progress: mediaRecord.progress,
+  message: mediaRecord.message,
+  createdAt: mediaRecord.createdAt,
+  updatedAt: mediaRecord.updatedAt,
+  completedAt: mediaRecord.completedAt,
+  lastError: mediaRecord.lastError,
+  watchable: true,
+  sizeBytes: 0,
+  durationSeconds: mediaRecord.durationSeconds,
+  recordJson: mediaRecord,
+  recordRevision: 1,
+  projectedAt: mediaRecord.updatedAt,
+}).run()
 const removalDigest = "a".repeat(64)
 const removals: RemovalOperations = {
   async preview(target) {
@@ -462,11 +497,29 @@ const media: MediaOperations = {
     return this.catalog(videoId)
   },
 }
+const jobs = new JobRepository(workspace, opened.db)
+const mediaSessions = new MediaSessionService(workspace)
 const app = createApplication({
-  jobs: new JobRepository(workspace, opened.db),
+  jobs,
+  downloads: new DownloadBatchService(
+    workspace,
+    opened.db,
+    jobs,
+    path.join(root, "plugins/insu-player/skills/watch-video/scripts/download-video.sh"),
+    mediaSessions,
+  ),
+  extensionPairing: new ExtensionPairingService(
+    opened.db,
+    path.join(root, "plugins/insu-player/chrome-extension"),
+  ),
+  mediaSessions,
+  models: new TranscriptionModelCatalogService(workspace, opened.db),
+  summaries: new SummaryService(jobs, opened.db),
+  notes: new NoteService(opened.db),
   media,
   removals,
   resources: new ResourceService(workspace),
+  runtime: new RuntimeService(workspace, opened.db),
   libraryAppRoot: path.join(
     root,
     "plugins/insu-player/skills/watch-video/assets/library/app",

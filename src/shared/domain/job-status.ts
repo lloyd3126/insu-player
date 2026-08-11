@@ -51,6 +51,16 @@ export const SUBTITLE_STAGE_LABELS: Record<string, string> = {
   complete: "字幕已完成",
 }
 
+const PROCESSOR_LABELS: Record<string, string> = {
+  local: "本機",
+  openai: "OpenAI API",
+  groq: "Groq API",
+  elevenlabs: "ElevenLabs API",
+  xai: "xAI API",
+  openrouter: "OpenRouter API",
+  agent: "Agent",
+}
+
 export type JobPhase =
   | "尚未開始"
   | "影音處理中"
@@ -124,12 +134,7 @@ export function subtitlePipelineLabel(job: JobSummary) {
           ? pipeline.contentProcessor
           : pipeline.timingProcessor
     if (processor) {
-      const provider =
-        processor.provider === "local"
-          ? "本機"
-          : processor.provider === "openai"
-            ? "OpenAI API"
-            : "Agent"
+      const provider = PROCESSOR_LABELS[processor.provider] ?? processor.provider
       const identity = processor.model ?? processor.service
       detail = identity ? `${provider} · ${identity}` : provider
     }
@@ -137,7 +142,7 @@ export function subtitlePipelineLabel(job: JobSummary) {
   }
   if (job.transcription) {
     const provider =
-      job.transcription.provider === "local" ? "本機" : "OpenAI API"
+      PROCESSOR_LABELS[job.transcription.provider] ?? job.transcription.provider
     return {
       label: "模型轉錄",
       detail: `${provider} · ${job.transcription.model || "—"}`,

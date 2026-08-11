@@ -85,7 +85,9 @@ function artifact(
     sourceLanguage: tracks[0]?.languageCode,
     outputLanguage: source ? null : tracks[1]?.languageCode,
     sourceType: source ? "model-transcript" : null,
-    processor: { provider: "local", model: "medium" },
+    processor: source
+      ? { provider: "local", service: "openai-whisper", model: "medium" }
+      : { provider: "agent", service: "codex" },
     timingUnitKind: source ? "word" : null,
     targetFrozen: kind === "segmentation",
     manifestPath,
@@ -365,8 +367,41 @@ describe("subtitle catalog resolver", () => {
     expect(catalog.artifacts[1]?.processor).toEqual({
       provider: "agent",
       service: "codex",
-      model: null,
     })
+  })
+
+  test("rejects non-Agent processors for derived subtitle revisions", () => {
+    const directory = workspace()
+    const sourceId = "source-en-r1"
+    const translationId = "translation-en-fr-r1"
+    expect(() =>
+      resolveSubtitleCatalog({
+        videoId: "demo",
+        jobDirectory: directory,
+        rawArtifacts: [
+          artifact(directory, "source", sourceId, 1, [
+            track(directory, sourceId, "en", "source_raw", "source"),
+          ]),
+          artifact(directory, "translation", translationId, 1, [
+            track(directory, translationId, "en", "input_sentence", "source"),
+            track(directory, translationId, "fr", "output_sentence", "cible"),
+          ], {
+            processor: {
+              provider: "openai",
+              service: "audio/transcriptions",
+              model: "whisper-1",
+            },
+            sourceLanguage: "en",
+            outputLanguage: "fr",
+            dependencies: [
+              { artifactId: sourceId, relation: "timing-source" },
+              { artifactId: sourceId, relation: "content-source" },
+            ],
+          }),
+        ],
+        explicitActiveTracks: {},
+      }),
+    ).toThrow("subtitle revisions must use agent / codex")
   })
 
   test("rejects tracks without the current updatedAt field", () => {

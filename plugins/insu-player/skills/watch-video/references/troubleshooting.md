@@ -40,7 +40,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 ## 找不到目標語言字幕
 
-先確認使用者是否在字幕取得前選擇翻譯並以一般語言名稱說明目標語言。Agent 負責從音訊偵測來源語言，正規化 BCP 47 與模型參數，並依已說明的資料邊界選擇 timing、內容與切分能力。不得把語言碼、provider 或 processor 的責任交給使用者。翻譯模式不得檢查或下載任何平台字幕。來源 timed units 必須由本機或經明確 API 上傳同意的 timing 模型從原始音訊產生。若 schema-version 2 `transcript.json` 沒有 words/tokens、resolved language 或 engineLanguage，使用相同 timing provider 重新轉錄。不要修補舊 transcript，也不要把 Whisper 的英語 translation task 當成任意目標語言翻譯。
+先確認使用者是否在字幕取得前選擇翻譯並以一般語言名稱說明目標語言。Agent 負責從音訊偵測來源語言並正規化 BCP 47 與模型參數，不得把語言碼、provider 或 processor 的責任交給使用者。轉錄必須讀取「轉錄設定」中目前選用且已就緒的精確模型 ID，不得接受命令列覆寫。翻譯模式不得檢查或下載任何平台字幕。來源 timed units 必須由本機或經本次明確 API 上傳同意的選定模型從原始音訊產生。若 schema-version 3 `transcript.json` 缺少 exact processor identity、words、resolved language、engineLanguage 或 chunk metadata，使用同一個已固定且已授權的模型重新轉錄。不要修補舊 transcript，不要自動 fallback 到另一個 provider，也不要把 Whisper 的英語 translation task 當成任意目標語言翻譯。
 
 ## VTT 已下載但播放器顯示 0 cues
 
@@ -51,7 +51,7 @@ plugins/insu-player/skills/watch-video/scripts/doctor.sh <workspace>
 
 ## 首頁顯示處理中，但 terminal 已經停止
 
-首頁會檢查 active job 的 PID 和最後更新時間。程序消失超過約 45 秒後，`effectiveState` 會顯示「已中斷」，但不會擅自修改原始 `status.json`。先打開詳細資料看 log，確認 active rendition、音訊或 VTT 是否已完成，再只重跑對應命令。「畫質管理」的 operation 若失去 live PID，會顯示為可重試的「已中斷」。
+首頁會檢查 active operation 的 PID 和最後更新時間。程序消失超過約 45 秒後，`effectiveState` 會顯示「已中斷」，但不會擅自修改 SQLite 中的原始 operation event。先打開詳細資料看 log，確認 active rendition、音訊或 VTT 是否已完成，再只重跑對應命令。「畫質管理」的 operation 若失去 live PID，會顯示為可重試的「已中斷」。
 
 不要只把狀態手動改成 `ready`。`ready` 但 media catalog 缺少 active rendition 或檔案會被首頁視為失敗。
 
@@ -96,7 +96,7 @@ plugins/insu-player/skills/watch-video/scripts/serve-library.sh <workspace>
 此流程預設使用 CPU。若手動指定 MPS 後 crash，改回：
 
 ```bash
-transcribe.sh <workspace> <video-id> --model medium --device cpu
+transcribe.sh <workspace> <video-id> --mode proofread --language und --output-language und --device cpu
 ```
 
 CPU 可能較慢，但通常比反覆 crash 更可預期。
@@ -124,11 +124,11 @@ Hono/Bun 服務會先獨占探測 `8000`。若已被占用，就由作業系統�
 
 ## 首頁沒有出現新影片
 
-- 確認存在 `<workspace>/jobs/VIDEO_ID/status.json`。
-- `status.json` 必須是 JSON object，而且 `videoId` 只能含英數字、底線與連字號。
+- 確認 `app.db` 的 `media_items` 存在該 `video_id`。
+- media record 必須符合現行 schema 1，而且 `videoId` 只能含英數字、底線與連字號。
 - 首頁每 2.5 秒更新。可按右上重新整理按鈕。
 - 確認啟動 server 時使用的是同一個 workspace。
-- 看 terminal 是否有 `/api/jobs` 的 `500`。狀態檔無法解析時，修復 JSON。不要刪除整個 job。
+- 看 terminal 是否有 `/api/jobs` 的 `500`。資料契約不合時不修補舊列，對該影音做精確移除後重建。
 
 ## iframe modal 是黑畫面
 

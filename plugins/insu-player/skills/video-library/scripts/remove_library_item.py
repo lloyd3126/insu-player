@@ -63,7 +63,7 @@ def validate_video_id(video_id: str) -> str:
 
 def validate_artifact_id(artifact_id: str) -> str:
     if not ARTIFACT_ID_PATTERN.fullmatch(artifact_id):
-        raise RemovalError("subtitle artifact ID contains unsupported characters")
+        raise RemovalError("artifact ID contains unsupported characters")
     return artifact_id
 
 
@@ -100,14 +100,61 @@ def process_is_alive(pid: object) -> bool:
 
 
 def read_status(job_directory: Path) -> tuple[dict[str, Any], str | None]:
-    status_path = job_directory / "status.json"
+    database = job_directory.parent.parent / "app.db"
+    connection: sqlite3.Connection | None = None
     try:
-        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+        row = connection.execute(
+            "SELECT record_json FROM media_items WHERE video_id = ?",
+            (job_directory.name,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("media record not found")
+        payload = json.loads(row[0])
         if not isinstance(payload, dict):
-            raise ValueError("status must be a JSON object")
+            raise ValueError("media record must be a JSON object")
         return payload, None
-    except (OSError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, sqlite3.Error, ValueError, json.JSONDecodeError) as error:
         return {}, str(error)
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def write_status(job_directory: Path, payload: dict[str, Any]) -> None:
+    database = job_directory.parent.parent / "app.db"
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    connection = sqlite3.connect(database, timeout=30)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            """
+            UPDATE media_items SET
+              title = ?, source_url = ?, state = ?, effective_state = ?,
+              stage = ?, progress = ?, message = ?, created_at = ?,
+              updated_at = ?, completed_at = ?, last_error = ?,
+              duration_seconds = ?, record_json = ?,
+              record_revision = record_revision + 1, projected_at = ?
+            WHERE video_id = ?
+            """,
+            (
+                payload["title"], payload["sourceUrl"], payload["state"],
+                payload["state"], payload["stage"], payload["progress"],
+                payload["message"], payload["createdAt"], payload["updatedAt"],
+                payload.get("completedAt"), payload.get("lastError"),
+                payload.get("durationSeconds"), serialized, payload["updatedAt"],
+                payload["videoId"],
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RemovalError("media record disappeared during removal")
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def filesystem_inventory(workspace: Path, job_directory: Path) -> dict[str, Any]:
@@ -180,7 +227,7 @@ def inspect_database(database_path: Path, video_id: str) -> dict[str, Any]:
         return {
             "path": database_path.name,
             "exists": False,
-            "jobsTable": False,
+            "mediaItemsTable": False,
             "rows": [],
             "unsafeReferences": [],
             "error": None,
@@ -189,7 +236,7 @@ def inspect_database(database_path: Path, video_id: str) -> dict[str, Any]:
         return {
             "path": database_path.name,
             "exists": True,
-            "jobsTable": False,
+            "mediaItemsTable": False,
             "rows": [],
             "unsafeReferences": [],
             "error": "app.db is not a regular workspace-owned file",
@@ -204,29 +251,34 @@ def inspect_database(database_path: Path, video_id: str) -> dict[str, Any]:
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
                 )
             ]
-            jobs_table = "jobs" in table_names
+            media_items_table = "media_items" in table_names
             relevant: dict[str, dict[str, object]] = {}
             unsafe_references: list[dict[str, str]] = []
 
-            if jobs_table:
+            if media_items_table:
                 count = int(
                     connection.execute(
-                        'SELECT COUNT(*) FROM "jobs" WHERE "video_id" = ?', (video_id,)
+                        'SELECT COUNT(*) FROM "media_items" WHERE "video_id" = ?', (video_id,)
                     ).fetchone()[0]
                 )
-                relevant["jobs"] = {"table": "jobs", "rows": count, "delete": "primary"}
+                relevant["media_items"] = {
+                    "table": "media_items",
+                    "rows": count,
+                    "delete": "primary",
+                }
 
             for table_name in table_names:
                 quoted_table = safe_identifier(table_name)
                 foreign_keys = connection.execute(
                     f"PRAGMA foreign_key_list({quoted_table})"
                 ).fetchall()
-                references_jobs = [
+                references_media_items = [
                     row
                     for row in foreign_keys
-                    if str(row["table"]) == "jobs" and str(row["from"]) == "video_id"
+                    if str(row["table"]) == "media_items"
+                    and str(row["from"]) == "video_id"
                 ]
-                if not references_jobs:
+                if not references_media_items:
                     continue
                 count = int(
                     connection.execute(
@@ -239,7 +291,7 @@ def inspect_database(database_path: Path, video_id: str) -> dict[str, Any]:
                     "rows": count,
                     "delete": "cascade",
                 }
-                for foreign_key in references_jobs:
+                for foreign_key in references_media_items:
                     on_delete = str(foreign_key["on_delete"] or "NO ACTION").upper()
                     if on_delete != "CASCADE":
                         unsafe_references.append(
@@ -249,7 +301,7 @@ def inspect_database(database_path: Path, video_id: str) -> dict[str, Any]:
             return {
                 "path": database_path.name,
                 "exists": True,
-                "jobsTable": jobs_table,
+                "mediaItemsTable": media_items_table,
                 "rows": sorted(relevant.values(), key=lambda item: str(item["table"])),
                 "unsafeReferences": sorted(
                     unsafe_references, key=lambda item: (item["table"], item["onDelete"])
@@ -262,7 +314,7 @@ def inspect_database(database_path: Path, video_id: str) -> dict[str, Any]:
         return {
             "path": database_path.name,
             "exists": True,
-            "jobsTable": False,
+            "mediaItemsTable": False,
             "rows": [],
             "unsafeReferences": [],
             "error": str(error),
@@ -332,7 +384,7 @@ class VideoRemovalHandler:
             blocked.append(
                 {
                     "code": "resource-identity-mismatch",
-                    "message": "status.json videoId does not match the selected job directory",
+                    "message": "media record videoId does not match the selected job directory",
                     "statusVideoId": status_video_id,
                     "directoryVideoId": video_id,
                 }
@@ -362,11 +414,11 @@ class VideoRemovalHandler:
             )
         if status_error:
             warnings.append({"code": "status-unreadable", "message": status_error})
-        if database["exists"] and not database["jobsTable"] and not database["error"]:
+        if database["exists"] and not database["mediaItemsTable"] and not database["error"]:
             warnings.append(
                 {
-                    "code": "jobs-table-missing",
-                    "message": "app.db exists but does not contain the jobs projection table",
+                    "code": "media-items-table-missing",
+                    "message": "app.db exists but does not contain the current media_items table",
                 }
             )
 
@@ -388,11 +440,11 @@ class VideoRemovalHandler:
             "removes": [
                 "the complete workspace-owned video job directory",
                 "video, thumbnail, captions, subtitle work, summaries, notes, playback state, status, history, and logs owned by this job",
-                "the app.db jobs row and every ON DELETE CASCADE relation owned by this job",
+                "the app.db media_items row and every ON DELETE CASCADE relation owned by this media item",
             ],
             "preserves": [
                 "the INSU Player runtime and models",
-                "all other video jobs and their data",
+                "all other media items and their data",
                 "repository source files",
             ],
             "recoverability": {
@@ -429,11 +481,13 @@ class VideoRemovalHandler:
         connection: sqlite3.Connection | None = None
         os.replace(job_directory, staging)
         try:
-            if plan["database"]["exists"] and plan["database"]["jobsTable"]:
+            if plan["database"]["exists"] and plan["database"]["mediaItemsTable"]:
                 connection = sqlite3.connect(database_path, timeout=10)
                 connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("BEGIN IMMEDIATE")
-                connection.execute('DELETE FROM "jobs" WHERE "video_id" = ?', (video_id,))
+                connection.execute(
+                    'DELETE FROM "media_items" WHERE "video_id" = ?', (video_id,)
+                )
                 connection.commit()
             shutil.rmtree(staging)
         except Exception:
@@ -509,8 +563,8 @@ class SubtitleArtifactRemovalHandler:
         return directory
 
     def artifacts(self, job_directory: Path, status: dict[str, Any]) -> list[dict[str, Any]]:
-        if status.get("schemaVersion") != 6:
-            raise RemovalError("subtitle status must use schemaVersion 6")
+        if status.get("schemaVersion") != 2:
+            raise RemovalError("subtitle media record must use schemaVersion 2")
         raw = status.get("subtitleArtifacts")
         if not isinstance(raw, list) or not all(isinstance(artifact, dict) for artifact in raw):
             raise RemovalError("subtitle status must contain subtitleArtifacts")
@@ -652,6 +706,45 @@ class SubtitleArtifactRemovalHandler:
                         )
         return paths, blocked
 
+    def dependent_summaries(
+        self, workspace: Path, removed_ids: set[str]
+    ) -> list[dict[str, str]]:
+        database_path = workspace / "app.db"
+        if not database_path.is_file() or database_path.is_symlink():
+            raise RemovalError("current app.db is unavailable or unsafe")
+        connection = database_connection_readonly(database_path)
+        try:
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            required = {"summary_artifacts", "summary_dependencies"}
+            missing = sorted(required - tables)
+            if missing:
+                raise RemovalError(
+                    f"current summary schema is incomplete: {', '.join(missing)}"
+                )
+            placeholders = ",".join("?" for _ in removed_ids)
+            return [
+                dict(row)
+                for row in connection.execute(
+                    f"""
+                    SELECT dependency.artifact_id, dependency.dependency_id
+                      FROM summary_dependencies AS dependency
+                      JOIN summary_artifacts AS artifact
+                        ON artifact.id = dependency.artifact_id
+                     WHERE dependency.dependency_type = 'subtitle'
+                       AND dependency.dependency_id IN ({placeholders})
+                     ORDER BY dependency.artifact_id
+                    """,
+                    tuple(sorted(removed_ids)),
+                )
+            ]
+        finally:
+            connection.close()
+
     def preview(self, workspace: Path, resource_id: str) -> dict[str, Any]:
         video_id, artifact_id = self.parse_resource_id(resource_id)
         job_directory = self.job_directory(workspace, video_id)
@@ -663,6 +756,17 @@ class SubtitleArtifactRemovalHandler:
         owned_paths, blocked = self.owned_paths(
             job_directory, artifacts, removed_ids
         )
+        summary_dependents = self.dependent_summaries(workspace, removed_ids)
+        if summary_dependents:
+            blocked.append(
+                {
+                    "code": "dependent-summary-artifact",
+                    "message": "remove dependent summaries before removing this subtitle revision",
+                    "artifactIds": [
+                        item["artifact_id"] for item in summary_dependents
+                    ],
+                }
+            )
         process = status.get("process") if isinstance(status.get("process"), dict) else {}
         pid = process.get("pid") if isinstance(process, dict) else None
         if process_is_alive(pid):
@@ -680,7 +784,7 @@ class SubtitleArtifactRemovalHandler:
             }
             for candidate in owned_paths
         ]
-        status_path = job_directory / "status.json"
+        status_serialized = json.dumps(status, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         plan: dict[str, Any] = {
             "schemaVersion": SCHEMA_VERSION,
             "operation": "remove",
@@ -691,10 +795,9 @@ class SubtitleArtifactRemovalHandler:
             },
             "workspace": str(workspace),
             "generatedAt": utc_now(),
-            "statusFingerprint": hashlib.sha256(
-                status_path.read_bytes()
-            ).hexdigest(),
+            "recordFingerprint": hashlib.sha256(status_serialized.encode("utf-8")).hexdigest(),
             "removedArtifactIds": sorted(removed_ids),
+            "dependentSummaryArtifacts": summary_dependents,
             "files": path_inventory,
             "dependencyPolicy": "cascade-dependent-subtitle-artifacts",
             "blocked": blocked,
@@ -749,9 +852,10 @@ class SubtitleArtifactRemovalHandler:
             raise RemovalError("removal plan is blocked")
 
         job_directory = self.job_directory(workspace, video_id)
-        status_path = job_directory / "status.json"
-        original_status = status_path.read_bytes()
-        status = json.loads(original_status)
+        status, status_error = read_status(job_directory)
+        if status_error:
+            raise RemovalError(f"media record is unavailable: {status_error}")
+        original_status = json.loads(json.dumps(status))
         artifacts = self.artifacts(job_directory, status)
         removed_ids = set(plan["removedArtifactIds"])
         survivors = [
@@ -852,7 +956,7 @@ class SubtitleArtifactRemovalHandler:
         )
         history = status.get("history")
         if not isinstance(history, list):
-            raise RemovalError("status history does not match the current schema")
+            raise RemovalError("media record history does not match the current schema")
         history.append(
             {
                 "at": now,
@@ -893,11 +997,11 @@ class SubtitleArtifactRemovalHandler:
                 for directory in nested_directories:
                     directory.rmdir()
                 artifact_directory.rmdir()
-            atomic_write_json(status_path, status)
+            write_status(job_directory, status)
             self.clear_projection(workspace, video_id)
             shutil.rmtree(staging)
         except Exception:
-            status_path.write_bytes(original_status)
+            write_status(job_directory, original_status)
             for staged, original in reversed(moved):
                 if staged.exists():
                     original.parent.mkdir(parents=True, exist_ok=True)
@@ -984,6 +1088,332 @@ class SubtitleArtifactRemovalHandler:
             "statusError": status_error,
             "stagingDirectories": [candidate.name for candidate in staging],
             "artifactDirectoryExists": artifact_directory.exists(),
+            "databaseRows": database_rows,
+            "removed": removed,
+        }
+
+
+class SummaryArtifactRemovalHandler:
+    kind = "summary-artifact"
+    required_tables = {
+        "summary_artifacts",
+        "summary_dependencies",
+        "active_summary_artifacts",
+    }
+
+    def parse_resource_id(self, resource_id: str) -> tuple[str, str]:
+        video_id, separator, artifact_id = resource_id.partition(":")
+        if not separator:
+            raise RemovalError("summary artifact target is incomplete")
+        return validate_video_id(video_id), validate_artifact_id(artifact_id)
+
+    def job_directory(self, workspace: Path, video_id: str) -> Path:
+        directory = workspace / "jobs" / video_id
+        if directory.parent != workspace / "jobs":
+            raise RemovalError("resolved summary job escaped the workspace")
+        if not directory.is_dir() or directory.is_symlink():
+            raise RemovalError(f"video job not found: {directory}")
+        return directory
+
+    def database_snapshot(
+        self, workspace: Path, video_id: str, artifact_id: str
+    ) -> dict[str, Any]:
+        database_path = workspace / "app.db"
+        if not database_path.is_file() or database_path.is_symlink():
+            raise RemovalError("current app.db is unavailable or unsafe")
+        connection = database_connection_readonly(database_path)
+        try:
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            missing = sorted(self.required_tables - tables)
+            if missing:
+                raise RemovalError(
+                    f"current summary schema is incomplete: {', '.join(missing)}"
+                )
+            row = connection.execute(
+                """
+                SELECT id, video_id, kind, revision, language_code, title,
+                       processor_provider, processor_service, relative_path,
+                       checksum, validation_state, created_at
+                  FROM summary_artifacts
+                 WHERE video_id = ? AND id = ?
+                """,
+                (video_id, artifact_id),
+            ).fetchone()
+            if row is None:
+                raise RemovalError(f"summary artifact not found: {artifact_id}")
+            dependencies = [
+                dict(item)
+                for item in connection.execute(
+                    """
+                    SELECT artifact_id, dependency_type, dependency_id
+                      FROM summary_dependencies
+                     WHERE artifact_id = ?
+                     ORDER BY dependency_type, dependency_id
+                    """,
+                    (artifact_id,),
+                )
+            ]
+            dependents = [
+                dict(item)
+                for item in connection.execute(
+                    """
+                    SELECT artifact_id, dependency_type, dependency_id
+                      FROM summary_dependencies
+                     WHERE dependency_type = 'summary' AND dependency_id = ?
+                     ORDER BY artifact_id
+                    """,
+                    (artifact_id,),
+                )
+            ]
+            active = [
+                dict(item)
+                for item in connection.execute(
+                    """
+                    SELECT video_id, kind, artifact_id, activated_at
+                      FROM active_summary_artifacts
+                     WHERE artifact_id = ?
+                     ORDER BY kind
+                    """,
+                    (artifact_id,),
+                )
+            ]
+            return {
+                "artifact": dict(row),
+                "dependencies": dependencies,
+                "dependents": dependents,
+                "active": active,
+            }
+        finally:
+            connection.close()
+
+    def artifact_inventory(
+        self,
+        workspace: Path,
+        job_directory: Path,
+        artifact_id: str,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        row = snapshot["artifact"]
+        relative_path = Path(str(row["relative_path"]))
+        expected_name = "summary.md" if row["kind"] == "text" else "mindmap.md"
+        expected_path = Path("summaries") / artifact_id / expected_name
+        if row["kind"] not in {"text", "mindmap"} or relative_path != expected_path:
+            raise RemovalError("summary artifact owns an unsupported content path")
+        artifact_directory = job_directory / "summaries" / artifact_id
+        if not artifact_directory.is_dir() or artifact_directory.is_symlink():
+            raise RemovalError("summary artifact directory is unavailable or unsafe")
+        allowed = {expected_name, "manifest.json"}
+        entries: list[dict[str, object]] = []
+        for candidate in sorted(artifact_directory.iterdir(), key=lambda item: item.name):
+            if (
+                candidate.name not in allowed
+                or candidate.is_symlink()
+                or not candidate.is_file()
+            ):
+                raise RemovalError("summary artifact directory contains an unregistered entry")
+            metadata = candidate.stat(follow_symlinks=False)
+            entries.append(
+                {
+                    "path": candidate.relative_to(workspace).as_posix(),
+                    "bytes": metadata.st_size,
+                    "mtimeNs": metadata.st_mtime_ns,
+                    "checksum": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                }
+            )
+        if {candidate.name for candidate in artifact_directory.iterdir()} != allowed:
+            raise RemovalError("summary artifact directory is incomplete")
+        content_path = artifact_directory / expected_name
+        if hashlib.sha256(content_path.read_bytes()).hexdigest() != row["checksum"]:
+            raise RemovalError("summary artifact checksum does not match app.db")
+        try:
+            manifest = json.loads(
+                (artifact_directory / "manifest.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            raise RemovalError(f"summary manifest is invalid: {error}") from error
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("schemaVersion") != 1
+            or manifest.get("artifactId") != artifact_id
+            or manifest.get("videoId") != row["video_id"]
+            or manifest.get("kind") != row["kind"]
+            or manifest.get("checksum") != row["checksum"]
+        ):
+            raise RemovalError("summary manifest does not match app.db")
+        return {
+            "directory": artifact_directory.relative_to(workspace).as_posix(),
+            "entries": entries,
+            "fingerprint": hashlib.sha256(
+                canonical_json(entries).encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def preview(self, workspace: Path, resource_id: str) -> dict[str, Any]:
+        video_id, artifact_id = self.parse_resource_id(resource_id)
+        job_directory = self.job_directory(workspace, video_id)
+        snapshot = self.database_snapshot(workspace, video_id, artifact_id)
+        inventory = self.artifact_inventory(
+            workspace, job_directory, artifact_id, snapshot
+        )
+        blocked: list[dict[str, object]] = []
+        if snapshot["dependents"]:
+            blocked.append(
+                {
+                    "code": "dependent-summary-artifact",
+                    "message": "remove dependent mind maps before removing this text summary",
+                    "artifactIds": [
+                        item["artifact_id"] for item in snapshot["dependents"]
+                    ],
+                }
+            )
+        status, status_error = read_status(job_directory)
+        process = status.get("process") if isinstance(status.get("process"), dict) else {}
+        pid = process.get("pid") if isinstance(process, dict) else None
+        if process_is_alive(pid):
+            blocked.append(
+                {
+                    "code": "active-process",
+                    "message": "the video job has a live processing command",
+                    "pid": pid,
+                }
+            )
+        warnings = (
+            [{"code": "status-unreadable", "message": status_error}]
+            if status_error
+            else []
+        )
+        plan: dict[str, Any] = {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "remove",
+            "target": {
+                "kind": self.kind,
+                "videoId": video_id,
+                "artifactId": artifact_id,
+                "artifactKind": snapshot["artifact"]["kind"],
+                "title": snapshot["artifact"]["title"],
+            },
+            "workspace": str(workspace),
+            "generatedAt": utc_now(),
+            "filesystem": inventory,
+            "database": snapshot,
+            "dependencyPolicy": "block-while-dependent-summary-exists",
+            "blocked": blocked,
+            "warnings": warnings,
+        }
+        plan["digest"] = plan_digest(plan)
+        return plan
+
+    def execute(
+        self, workspace: Path, resource_id: str, expected_digest: str
+    ) -> dict[str, Any]:
+        video_id, artifact_id = self.parse_resource_id(resource_id)
+        plan = self.preview(workspace, resource_id)
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+            raise RemovalError("plan digest must be a 64-character lowercase SHA-256 value")
+        if expected_digest != plan["digest"]:
+            raise RemovalError("removal plan is stale; preview again")
+        if plan["blocked"]:
+            raise RemovalError("removal plan is blocked; resolve every blocker and preview again")
+
+        job_directory = self.job_directory(workspace, video_id)
+        artifact_directory = job_directory / "summaries" / artifact_id
+        staging = job_directory / "summaries" / f".removing-summary-{expected_digest[:12]}"
+        if staging.exists() or staging.is_symlink():
+            raise RemovalError("summary removal staging directory already exists")
+        connection: sqlite3.Connection | None = None
+        database_committed = False
+        os.replace(artifact_directory, staging)
+        try:
+            connection = sqlite3.connect(workspace / "app.db", timeout=10)
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("BEGIN IMMEDIATE")
+            deletion = connection.execute(
+                'DELETE FROM "summary_artifacts" WHERE "video_id" = ? AND "id" = ?',
+                (video_id, artifact_id),
+            )
+            if deletion.rowcount != 1:
+                raise RemovalError("summary artifact changed before execution")
+            connection.commit()
+            database_committed = True
+            shutil.rmtree(staging)
+        except Exception:
+            if connection is not None and connection.in_transaction:
+                connection.rollback()
+            if (
+                not database_committed
+                and staging.exists()
+                and not artifact_directory.exists()
+            ):
+                os.replace(staging, artifact_directory)
+            raise
+        finally:
+            if connection is not None:
+                connection.close()
+
+        verification = self.verify(workspace, resource_id)
+        if not verification["removed"]:
+            raise RemovalError("summary artifact removal verification failed")
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "remove",
+            "target": plan["target"],
+            "workspace": str(workspace),
+            "planDigest": expected_digest,
+            "executedAt": utc_now(),
+            "verification": verification,
+        }
+
+    def verify(self, workspace: Path, resource_id: str) -> dict[str, Any]:
+        video_id, artifact_id = self.parse_resource_id(resource_id)
+        job_directory = self.job_directory(workspace, video_id)
+        artifact_directory = job_directory / "summaries" / artifact_id
+        staging = list((job_directory / "summaries").glob(".removing-summary-*"))
+        database_path = workspace / "app.db"
+        database_rows = 0
+        if database_path.is_file() and not database_path.is_symlink():
+            connection = database_connection_readonly(database_path)
+            try:
+                tables = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                if self.required_tables.issubset(tables):
+                    database_rows = int(
+                        connection.execute(
+                            """
+                            SELECT
+                              (SELECT COUNT(*) FROM summary_artifacts WHERE id = ?) +
+                              (SELECT COUNT(*) FROM summary_dependencies WHERE artifact_id = ?) +
+                              (SELECT COUNT(*) FROM active_summary_artifacts WHERE artifact_id = ?)
+                            """,
+                            (artifact_id, artifact_id, artifact_id),
+                        ).fetchone()[0]
+                    )
+                else:
+                    database_rows = -1
+            finally:
+                connection.close()
+        else:
+            database_rows = -1
+        removed = not artifact_directory.exists() and not staging and database_rows == 0
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "operation": "verify-removal",
+            "target": {
+                "kind": self.kind,
+                "videoId": video_id,
+                "artifactId": artifact_id,
+            },
+            "checkedAt": utc_now(),
+            "artifactDirectoryExists": artifact_directory.exists(),
+            "stagingDirectories": [candidate.name for candidate in staging],
             "databaseRows": database_rows,
             "removed": removed,
         }
@@ -1229,6 +1659,7 @@ class MediaRenditionRemovalHandler:
 HANDLERS: dict[str, RemovalHandler] = {
     "video": VideoRemovalHandler(),
     "subtitle-artifact": SubtitleArtifactRemovalHandler(),
+    "summary-artifact": SummaryArtifactRemovalHandler(),
     "media-rendition": MediaRenditionRemovalHandler(),
 }
 
@@ -1261,11 +1692,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         workspace = resolve_workspace(args.workspace)
         handler = HANDLERS[args.kind]
-        if args.kind == "subtitle-artifact":
+        if args.kind in {"subtitle-artifact", "summary-artifact"}:
             if not args.artifact_id:
-                raise RemovalError("subtitle artifact removal requires --artifact-id")
+                raise RemovalError(f"{args.kind} removal requires --artifact-id")
             if args.rendition_id:
-                raise RemovalError("--rendition-id is not valid for subtitle artifacts")
+                raise RemovalError("--rendition-id is not valid for artifact removal")
             resource_id = f"{args.video_id}:{args.artifact_id}"
         elif args.kind == "media-rendition":
             if not args.rendition_id:

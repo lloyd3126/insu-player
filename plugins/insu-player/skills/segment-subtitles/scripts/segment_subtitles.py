@@ -111,7 +111,19 @@ def require_text(value: object, label: str) -> str:
         raise PlanError(f"{label} must contain text")
     if FORBIDDEN_MARKER_PATTERN.search(value):
         raise PlanError(f"{label} contains an internal cue marker")
+    if re.fullmatch(r"S\d{4}(?:-P\d{2})?", value.strip()):
+        raise PlanError(f"{label} uses an internal segmentation ID as visible subtitle text")
     return value.strip()
+
+
+TIMING_PROCESSOR_CONTRACTS: dict[str, tuple[str, set[str] | None]] = {
+    "local": ("openai-whisper", None),
+    "openai": ("audio/transcriptions", {"whisper-1"}),
+    "groq": ("audio/transcriptions", {"whisper-large-v3", "whisper-large-v3-turbo"}),
+    "elevenlabs": ("speech-to-text", {"scribe_v2"}),
+    "xai": ("v1/stt", set()),
+    "openrouter": ("audio/transcriptions", {"openai/whisper-large-v3"}),
+}
 
 
 def processor_identity(
@@ -119,30 +131,45 @@ def processor_identity(
     label: str,
     *,
     timing_only: bool = False,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise PlanError(f"{label} must be an object")
     unknown = set(value) - {"provider", "service", "model", "updatedAt"}
     if unknown:
         raise PlanError(f"{label} contains unsupported fields: {sorted(unknown)}")
     provider = value.get("provider")
-    allowed = {"local", "openai"} if timing_only else {"local", "openai", "agent"}
+    allowed = set(TIMING_PROCESSOR_CONTRACTS) if timing_only else {"agent"}
     if provider not in allowed:
         raise PlanError(f"{label}.provider is unsupported")
     service = value.get("service")
     model = value.get("model")
-    if provider in {"local", "openai"}:
-        require_text(model, f"{label}.model")
+    if provider in TIMING_PROCESSOR_CONTRACTS:
+        expected_service, allowed_models = TIMING_PROCESSOR_CONTRACTS[provider]
+        if service != expected_service:
+            raise PlanError(f"{label} must use {provider} / {expected_service}")
+        if allowed_models is not None and model not in allowed_models:
+            raise PlanError(f"{label}.model is unsupported")
+        if allowed_models is None:
+            require_text(model, f"{label}.model")
+            pattern = (
+                r"^[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$"
+                if provider == "openrouter"
+                else r"^[A-Za-z0-9._-]+$"
+            )
+            if not re.fullmatch(pattern, str(model)):
+                raise PlanError(f"{label}.model is invalid")
     if provider == "agent":
-        require_text(service, f"{label}.service")
+        if service != "codex" or model is not None:
+            raise PlanError(f"{label} must use agent / codex")
     for field_value, field_name in ((service, "service"), (model, "model")):
         if field_value is not None and not isinstance(field_value, str):
             raise PlanError(f"{label}.{field_name} must be text")
-    return {
-        key: str(value[key])
-        for key in ("provider", "service", "model", "updatedAt")
-        if value.get(key) is not None
-    }
+    identity = {"provider": provider, "service": service, "model": model}
+    if provider == "agent":
+        identity.pop("model")
+    if value.get("updatedAt") is not None:
+        identity["updatedAt"] = str(value["updatedAt"])
+    return identity
 
 
 def timed_units(transcript: dict[str, Any]) -> list[dict[str, Any]]:
@@ -242,6 +269,45 @@ def target_fingerprint(plan: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def alignment_fingerprint(plan: dict[str, Any]) -> str:
+    content_units: list[dict[str, Any]] = []
+    for unit in plan.get("contentUnits", []):
+        if not isinstance(unit, dict):
+            continue
+        content_units.append(
+            {
+                "id": unit.get("id"),
+                "anchors": unit.get("anchors"),
+                "pieces": [
+                    {"id": piece.get("id"), "sourceSpan": piece.get("sourceSpan")}
+                    for piece in unit.get("pieces", [])
+                    if isinstance(piece, dict)
+                ],
+            }
+        )
+    encoded = json.dumps(
+        {
+            "boundaryHints": plan.get("boundaryHints"),
+            "contentUnits": content_units,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def agent_review(value: object, label: str) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {"provider", "service", "reviewedAt"}:
+        raise PlanError(f"{label} fields do not match the current contract")
+    if value.get("provider") != "agent" or value.get("service") != "codex":
+        raise PlanError(f"{label} must use agent / codex")
+    reviewed_at = value.get("reviewedAt")
+    if not isinstance(reviewed_at, str) or not reviewed_at.endswith("Z"):
+        raise PlanError(f"{label}.reviewedAt is invalid")
+    return {"provider": "agent", "service": "codex", "reviewedAt": reviewed_at}
+
+
 def normalize_required_terms(raw_terms: object, label: str) -> list[str]:
     if raw_terms is None:
         return []
@@ -283,6 +349,7 @@ def prepare(args: argparse.Namespace) -> int:
         content.get("contentProcessor"),
         "contentProcessor",
     )
+    sentence_review = agent_review(content.get("sentenceReview"), "sentenceReview")
     source_content_artifact = content.get("sourceContentArtifactId")
     source_content_kind = content.get("sourceContentKind")
     timing_source_artifact = content.get("timingSourceArtifactId")
@@ -319,6 +386,29 @@ def prepare(args: argparse.Namespace) -> int:
         if actual_source_checksum != source_checksum:
             raise PlanError("proofread content source checksum changed")
     transcript = load_json(args.source_transcript, "source transcript")
+    expected_transcript_fields = {
+        "schemaVersion",
+        "processor",
+        "language",
+        "engineLanguage",
+        "timingUnitKind",
+        "durationSeconds",
+        "chunks",
+        "segments",
+        "words",
+        "text",
+    }
+    if transcript.get("schemaVersion") != 3 or set(transcript) != expected_transcript_fields:
+        raise PlanError("source transcript must use the exact schemaVersion 3 contract")
+    transcript_processor = processor_identity(
+        transcript.get("processor"),
+        "source transcript processor",
+        timing_only=True,
+    )
+    if transcript_processor != timing_processor:
+        raise PlanError("source transcript processor does not match the content timing processor")
+    if transcript.get("language") != source_language or transcript.get("timingUnitKind") != "word":
+        raise PlanError("source transcript language or timing unit does not match the content manifest")
     units = timed_units(transcript)
     unit_positions = {str(unit["id"]): index for index, unit in enumerate(units)}
     raw_segments = content.get("segments")
@@ -326,6 +416,7 @@ def prepare(args: argparse.Namespace) -> int:
         raise PlanError("content manifest has no complete-sentence units")
 
     content_units: list[dict[str, Any]] = []
+    expected_content_start = 0
     for raw_segment in raw_segments:
         if not isinstance(raw_segment, dict):
             raise PlanError("content segment must be an object")
@@ -336,8 +427,17 @@ def prepare(args: argparse.Namespace) -> int:
         source_end = raw_segment.get("sourceUnitEnd")
         if source_start not in unit_positions or source_end not in unit_positions:
             raise PlanError(f"{identifier} references an unknown timed unit")
-        if unit_positions[str(source_start)] > unit_positions[str(source_end)]:
+        start_position = unit_positions[str(source_start)]
+        end_position = unit_positions[str(source_end)]
+        if start_position != expected_content_start or start_position > end_position:
             raise PlanError(f"{identifier} source timed unit range is reversed")
+        unit_count = end_position - start_position + 1
+        duration = float(units[end_position]["end"]) - float(units[start_position]["start"])
+        if unit_count > 160 or duration > 60:
+            raise PlanError(
+                f"SOURCE_SENTENCE_IMPLAUSIBLE: {identifier} spans {unit_count} units and {round(duration, 3)} seconds"
+            )
+        expected_content_start = end_position + 1
         source_text = require_text(raw_segment.get("sourceText"), f"{identifier}.sourceText")
         output_text = require_text(raw_segment.get("outputText"), f"{identifier}.outputText")
         required_terms = normalize_required_terms(raw_segment.get("requiredTerms"), f"{identifier}.requiredTerms")
@@ -360,6 +460,9 @@ def prepare(args: argparse.Namespace) -> int:
                 ],
             }
         )
+
+    if expected_content_start != len(units):
+        raise PlanError("content sentences do not cover every timed source unit")
 
     profile_name = args.width_profile or language_profile(output_language)
     if profile_name not in PROFILE_DEFAULTS:
@@ -387,7 +490,11 @@ def prepare(args: argparse.Namespace) -> int:
         "sourceContentKind": source_content_kind,
         "timingProcessor": timing_processor,
         "contentProcessor": content_processor,
+        "sentenceReview": sentence_review,
         "segmentationProcessor": None,
+        "alignmentMethod": None,
+        "alignmentReview": None,
+        "alignmentFingerprint": None,
         "targetRevision": 1,
         "targetFrozen": False,
         "targetFingerprint": None,
@@ -414,6 +521,7 @@ def validate_target_structure(plan: dict[str, Any]) -> None:
         timing_only=True,
     )
     processor_identity(plan.get("contentProcessor"), "contentProcessor")
+    agent_review(plan.get("sentenceReview"), "sentenceReview")
     processor_identity(
         plan.get("segmentationProcessor"),
         "segmentationProcessor",
@@ -476,26 +584,16 @@ def record_segmentation_processor(args: argparse.Namespace) -> int:
             f"segmentation processor requires a schemaVersion {SCHEMA_VERSION} plan"
         )
     metadata: dict[str, str] = {
-        "provider": args.provider,
+        "provider": "agent",
+        "service": "codex",
         "updatedAt": utc_now(),
     }
-    if args.service is not None:
-        metadata["service"] = require_text(
-            args.service,
-            "segmentation processor service",
-        )
-    if args.model is not None:
-        metadata["model"] = require_text(
-            args.model,
-            "segmentation processor model",
-        )
     plan["segmentationProcessor"] = processor_identity(
         metadata,
         "segmentationProcessor",
     )
     atomic_write_json(args.plan, plan)
-    identity = metadata.get("model") or metadata.get("service") or args.provider
-    print(f"Recorded {args.provider} segmentation processor {identity}: {args.plan}")
+    print(f"Recorded agent segmentation processor codex: {args.plan}")
     return 0
 
 
@@ -509,6 +607,9 @@ def revise_target(args: argparse.Namespace) -> int:
     plan["targetFrozen"] = False
     plan["targetFingerprint"] = None
     plan.pop("targetFrozenAt", None)
+    plan["alignmentMethod"] = None
+    plan["alignmentReview"] = None
+    plan["alignmentFingerprint"] = None
     for unit in plan["contentUnits"]:
         unit["anchors"] = []
         for piece in unit["pieces"]:
@@ -518,12 +619,37 @@ def revise_target(args: argparse.Namespace) -> int:
     return 0
 
 
-def validate_alignment(plan: dict[str, Any]) -> list[dict[str, Any]]:
+def record_alignment_review(args: argparse.Namespace) -> int:
+    plan = load_json(args.plan, "segmentation plan")
+    validate_alignment(plan, require_review=False)
+    plan["alignmentMethod"] = "agent-semantic"
+    plan["alignmentReview"] = {
+        "provider": "agent",
+        "service": "codex",
+        "reviewedAt": utc_now(),
+    }
+    plan["alignmentFingerprint"] = alignment_fingerprint(plan)
+    atomic_write_json(args.plan, plan)
+    print(f"Recorded Agent semantic Source Alignment review: {args.plan}")
+    return 0
+
+
+def validate_alignment(
+    plan: dict[str, Any],
+    *,
+    require_review: bool = True,
+) -> list[dict[str, Any]]:
     if plan.get("targetFrozen") is not True:
         raise PlanError("target pieces must be frozen before source alignment")
     if plan.get("targetFingerprint") != target_fingerprint(plan):
         raise PlanError("frozen target pieces were modified")
     validate_target_structure(plan)
+    if require_review:
+        if plan.get("alignmentMethod") != "agent-semantic":
+            raise PlanError("Source Alignment must use agent-semantic review")
+        agent_review(plan.get("alignmentReview"), "alignmentReview")
+        if plan.get("alignmentFingerprint") != alignment_fingerprint(plan):
+            raise PlanError("Source Alignment changed after Agent semantic review")
 
     raw_timed_units = plan.get("timedUnits")
     if not isinstance(raw_timed_units, list) or not raw_timed_units:
@@ -601,13 +727,20 @@ def validate_alignment(plan: dict[str, Any]) -> list[dict[str, Any]]:
             if start_position != expected_start:
                 raise PlanError(f"{piece_id} sourceSpan leaves a gap or overlaps another piece")
             previous_end_position = end_position
+            output_text = str(piece["outputText"]).strip()
+            if not output_text:
+                raise PlanError(f"{piece_id} has empty outputText")
+            if output_text == piece_id or re.fullmatch(r"S\d{4}(?:-P\d{2})?", output_text):
+                raise PlanError(
+                    f"{piece_id} uses an internal segmentation ID as visible subtitle text"
+                )
             if piece_index < len(pieces) - 1:
                 hint = hints.get(str(span_end))
                 if hint and hint.get("state") in {"risky", "blocked"}:
                     raise PlanError(
                         f"{piece_id} uses a {hint.get('state')} source boundary after {span_end}"
                     )
-            text_width = display_units(str(piece["outputText"]))
+            text_width = display_units(output_text)
             if text_width > hard_units:
                 raise PlanError(f"{piece_id} exceeds hard width: {text_width} > {hard_units}")
             if text_width > fit_units:
@@ -691,7 +824,8 @@ def render(args: argparse.Namespace) -> int:
             output_text = str(piece["outputText"])
             start = format_timestamp(float(timed_units[start_id]["start"]))
             end = format_timestamp(float(timed_units[end_id]["end"]))
-            cue = [str(piece["id"]), f"{start} --> {end}"]
+            # Piece IDs belong to the manifest, never the player-facing track.
+            cue = [f"{start} --> {end}"]
             source_lines.extend(cue + [normalize_display_text(source_text, punctuation_policy), ""])
             output_lines.extend(cue + [normalize_display_text(output_text, punctuation_policy), ""])
     atomic_write_text(args.input_output, "\n".join(source_lines))
@@ -718,11 +852,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     processor_parser = subparsers.add_parser("record-segmentation-processor")
     processor_parser.add_argument("--plan", required=True, type=Path)
-    processor_parser.add_argument(
-        "--provider", required=True, choices=("local", "openai", "agent")
-    )
-    processor_parser.add_argument("--service")
-    processor_parser.add_argument("--model")
     processor_parser.set_defaults(handler=record_segmentation_processor)
 
     freeze_parser = subparsers.add_parser("freeze-target")
@@ -732,6 +861,10 @@ def build_parser() -> argparse.ArgumentParser:
     revise_parser = subparsers.add_parser("revise-target")
     revise_parser.add_argument("--plan", required=True, type=Path)
     revise_parser.set_defaults(handler=revise_target)
+
+    review_parser = subparsers.add_parser("record-alignment-review")
+    review_parser.add_argument("--plan", required=True, type=Path)
+    review_parser.set_defaults(handler=record_alignment_review)
 
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("--plan", required=True, type=Path)

@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: import-subtitle-revision.sh <workspace> <video-id> <input-vtt> <output-vtt> --source-language BCP47 --output-language BCP47 --processor-provider local|openai|agent [--processor-service NAME] [--processor-model NAME] --artifact-kind proofread|translation|segmentation --revision N --manifest JSON --timing-source-artifact ID [--content-source-artifact ID] [--text-reference-artifact ID ...] [--content-parent-artifact ID] [--warning-count N] [--hard-defect-count N]\n'
+  printf 'usage: import-subtitle-revision.sh <workspace> <video-id> <input-vtt> <output-vtt> --source-language BCP47 --output-language BCP47 --artifact-kind proofread|translation|segmentation --revision N --manifest JSON --timing-source-artifact ID [--content-source-artifact ID] [--text-reference-artifact ID ...] [--content-parent-artifact ID] [--warning-count N] [--hard-defect-count N]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -13,7 +13,7 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then usage; exit 0; fi
 [ "$#" -ge 4 ] || { usage >&2; exit 1; }
 
 workspace_input="$1"; video_id="$2"; input_track="$3"; output_track="$4"; shift 4
-source_language=""; output_language=""; processor_provider=""; processor_service=""; processor_model=""
+source_language=""; output_language=""; processor_provider="agent"; processor_service="codex"; processor_model=""
 artifact_kind=""; artifact_revision=""; artifact_manifest=""; timing_source_artifact=""; content_source_artifact=""
 content_parent_artifact=""; warning_count=0; hard_defect_count=0
 text_reference_artifacts=()
@@ -21,9 +21,6 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --source-language) [ "$#" -ge 2 ] || caption_die "--source-language requires a value"; source_language="$2"; shift 2 ;;
     --output-language) [ "$#" -ge 2 ] || caption_die "--output-language requires a value"; output_language="$2"; shift 2 ;;
-    --processor-provider) [ "$#" -ge 2 ] || caption_die "--processor-provider requires a value"; processor_provider="$2"; shift 2 ;;
-    --processor-service) [ "$#" -ge 2 ] || caption_die "--processor-service requires a value"; processor_service="$2"; shift 2 ;;
-    --processor-model) [ "$#" -ge 2 ] || caption_die "--processor-model requires a value"; processor_model="$2"; shift 2 ;;
     --artifact-kind) [ "$#" -ge 2 ] || caption_die "--artifact-kind requires a value"; artifact_kind="$2"; shift 2 ;;
     --revision) [ "$#" -ge 2 ] || caption_die "--revision requires a value"; artifact_revision="$2"; shift 2 ;;
     --manifest) [ "$#" -ge 2 ] || caption_die "--manifest requires a value"; artifact_manifest="$2"; shift 2 ;;
@@ -46,14 +43,6 @@ if [ "$artifact_kind" = "proofread" ]; then
   [ "$source_language" = "$output_language" ] || caption_die "proofreading must preserve the source language"
 elif [ "$artifact_kind" = "translation" ]; then
   [ "$source_language" != "$output_language" ] || caption_die "translation must use a different output language"
-fi
-case "$processor_provider" in local|openai|agent) ;; *) caption_die "--processor-provider must be local, openai, or agent" ;; esac
-case "$processor_service" in *[!A-Za-z0-9._-]*) caption_die "--processor-service must be a valid name" ;; esac
-case "$processor_model" in *[!A-Za-z0-9._-]*) caption_die "--processor-model must be a valid name" ;; esac
-if [ "$processor_provider" = "agent" ]; then
-  [ -n "$processor_service" ] || caption_die "agent processing requires --processor-service"
-else
-  [ -n "$processor_model" ] || caption_die "local and openai processing require --processor-model"
 fi
 case "$artifact_revision" in ''|*[!0-9]*) caption_die "--revision must be a positive integer" ;; esac
 [ "$artifact_revision" -ge 1 ] || caption_die "--revision must be a positive integer"

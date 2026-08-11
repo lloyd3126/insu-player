@@ -17,6 +17,8 @@ EXPECTED_SKILLS = {
     "translate-subtitles",
     "proofread-subtitles",
     "segment-subtitles",
+    "summarize-video",
+    "map-video-summary",
     "player-manager",
 }
 
@@ -45,11 +47,11 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertEqual(len(prompts), 1)
         self.assertLessEqual(len(prompts[0]), 128)
         self.assertIn("$watch-video", prompts[0])
-        self.assertIn("OpenAI SDK", prompts[0])
+        self.assertIn("雲端 STT SDK", prompts[0])
         self.assertIn("SQLite", prompts[0])
         self.assertIn("Whisper medium", prompts[0])
         self.assertIn("完成後停在首頁", prompts[0])
-        self.assertIn("開始使用", prompts[0])
+        self.assertIn("開始說明 → 加入影音", prompts[0])
         self.assertIn("不要直接詢問網址或技術選項", prompts[0])
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("選擇「試用」", readme)
@@ -68,9 +70,46 @@ class ProductBoundaryTests(unittest.TestCase):
             *sorted((PLUGIN_ROOT / "skills").rglob("SKILL.md")),
             *sorted((PLUGIN_ROOT / "skills").rglob("openai.yaml")),
             *sorted((PLUGIN_ROOT / "skills").rglob("*.md")),
+            *sorted((PLUGIN_ROOT / "chrome-extension").glob("*.html")),
+            *sorted((PLUGIN_ROOT / "chrome-extension").glob("*.js")),
+            *sorted((PLUGIN_ROOT / "chrome-extension").glob("*.css")),
+            *sorted((PLUGIN_ROOT / "chrome-extension").glob("*.md")),
         ]
         for source in files:
             self.assertNotIn("\uff1b", source.read_text(encoding="utf-8"), source)
+
+    def test_unpacked_chrome_extension_has_a_narrow_local_bridge_contract(self) -> None:
+        extension = PLUGIN_ROOT / "chrome-extension"
+        manifest = json.loads((extension / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["manifest_version"], 3)
+        self.assertEqual(manifest["background"]["service_worker"], "service-worker.js")
+        self.assertEqual(
+            manifest["host_permissions"],
+            ["http://127.0.0.1/*", "http://localhost/*"],
+        )
+        self.assertEqual(manifest["optional_permissions"], ["cookies"])
+        self.assertEqual(
+            manifest["optional_host_permissions"],
+            ["http://*/*", "https://*/*"],
+        )
+        for filename in [
+            "service-worker.js",
+            "content-bridge.js",
+            "media-discovery.js",
+            "popup.html",
+            "popup.js",
+            "popup.css",
+            "README.md",
+        ]:
+            self.assertTrue((extension / filename).is_file(), filename)
+        service_worker = (extension / "service-worker.js").read_text(encoding="utf-8")
+        popup = (extension / "popup.js").read_text(encoding="utf-8")
+        self.assertIn("chrome.storage.session", service_worker)
+        self.assertIn("chrome.webRequest", service_worker)
+        self.assertIn("authenticationConsentAt", popup)
+        self.assertIn("cookiePermissionOrigins(candidate)", popup)
+        self.assertNotIn("chrome.cookies.getAll(store ?", popup)
+        self.assertIn("rightsConfirmed: true", popup)
 
     def test_product_docs_use_the_insu_repository_and_brand(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -79,13 +118,16 @@ class ProductBoundaryTests(unittest.TestCase):
         manager = (PLUGIN_ROOT / "skills" / "player-manager" / "scripts" / "manage.py").read_text(encoding="utf-8")
         self.assertIn("# INSU Player", readme)
         self.assertIn("https://github.com/lloyd3126/insu-player.git", readme)
-        self.assertIn("使用說明、功能設定與影音中心", readme)
-        self.assertIn("API SDK 與 API Key 設定狀態", readme)
+        self.assertIn(
+            "開始說明、我的提示、轉錄設定、支援網站、擴充功能與影片中心",
+            readme,
+        )
+        self.assertIn("統一模型目錄", readme)
         self.assertIn("bun-runtime/bin` 加入 `PATH`", agent_guide)
         self.assertIn("不得假設使用者已安裝全域 Bun", agent_guide)
         self.assertIn("$monitor-player-job", agent_guide)
-        self.assertIn("八個 skill validator", agent_guide)
-        self.assertIn("## 八個產品 skills", readme)
+        self.assertIn("所有 skill validator", agent_guide)
+        self.assertIn("## 十個產品 skills", readme)
         self.assertIn("## v0.2.0", changelog)
         self.assertIn("api.github.com/repos/lloyd3126/insu-player/releases/latest", manager)
         legacy_repository = "lloyd3126/" + "xe" + "ruca-player"
@@ -111,7 +153,8 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("Never create a standalone scheduled task", monitor_skill)
         self.assertIn("never an isolated worktree", monitor_skill)
         self.assertIn("do not migrate, coerce, or fall back", monitor_skill)
-        self.assertIn("Do not use `app.db`", contract)
+        self.assertIn("SQLite operation records remain the source of truth", contract)
+        self.assertIn("or application database rows", contract)
         self.assertIn("Do not emulate it with `sleep`", contract)
         self.assertEqual(plugin_agent, bridge_agent)
         self.assertIn("$monitor-player-job", plugin_agent)
@@ -171,6 +214,10 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn(".insu-player-server.json", watch_skill + library_skill + workflow + server)
         self.assertIn("--auto-port", serve)
         self.assertIn('exec "$CAPTION_BUN" "$CAPTION_WEB_SERVER"', serve)
+        self.assertIn(
+            "unset OPENAI_API_KEY GROQ_API_KEY ELEVENLABS_API_KEY XAI_API_KEY OPENROUTER_API_KEY",
+            serve,
+        )
         self.assertIn("portIsAvailable", server)
         self.assertIn("server = startServer(selectedPort)", server)
         self.assertIn("const actualPort = server.port", server)
@@ -182,7 +229,12 @@ class ProductBoundaryTests(unittest.TestCase):
         watch_skill = (PLUGIN_ROOT / "skills" / "watch-video" / "SKILL.md").read_text(encoding="utf-8")
         translate_skill = (PLUGIN_ROOT / "skills" / "translate-subtitles" / "SKILL.md").read_text(encoding="utf-8")
         segment_skill = (PLUGIN_ROOT / "skills" / "segment-subtitles" / "SKILL.md").read_text(encoding="utf-8")
-        transcriber = (PLUGIN_ROOT / "skills" / "transcribe-media" / "scripts" / "transcribe_media.py").read_text(encoding="utf-8")
+        transcriber = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(
+                (PLUGIN_ROOT / "skills" / "transcribe-media" / "scripts").rglob("*.py")
+            )
+        )
         download = (PLUGIN_ROOT / "skills" / "watch-video" / "scripts" / "download-video.sh").read_text(encoding="utf-8")
         portable_add = (REPO_ROOT / "scripts" / "portable" / "add-video.sh").read_text(encoding="utf-8")
         reflow = PLUGIN_ROOT / "skills" / "translate-subtitles" / "scripts" / "reflow_subtitles.py"
@@ -200,7 +252,7 @@ class ProductBoundaryTests(unittest.TestCase):
 
         self.assertIn("Before inspecting or downloading subtitles, ask", watch_skill)
         self.assertIn("Never inspect, download, import, or reference platform automatic captions", translate_skill)
-        self.assertIn("Default to the current Agent for text translation", translate_skill)
+        self.assertIn("Use the current Agent for complete-sentence reconstruction", translate_skill)
         self.assertIn("Do not ask the user for a model ID, provider, processor", translate_skill)
         self.assertIn("Detect the source language from the original audio by default", watch_skill)
         self.assertIn("--write-subs", download)
@@ -215,7 +267,7 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("separately prepared audio track", watch_skill)
         self.assertIn('"timestamp_granularities": ["segment", "word"]', transcriber)
         self.assertIn("--proofread or --translate TARGET_BCP47", portable_add)
-        self.assertIn("the Agent must resolve --provider", portable_add)
+        self.assertNotIn("--timing-provider", portable_add)
         self.assertTrue(reflow.is_file())
         self.assertTrue(segmentation.is_file())
         self.assertTrue(revision_import.is_file())
@@ -224,10 +276,11 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("freeze-target", segment_skill)
         self.assertIn("Source Alignment", segment_skill)
         self.assertIn('"agent"', processor_contract)
-        self.assertIn('TIMING_PROCESSOR_PROVIDERS = ["local", "openai"]', processor_contract)
+        for provider in ["local", "openai", "groq", "elevenlabs", "xai", "openrouter"]:
+            self.assertIn(f'  "{provider}",', processor_contract)
         self.assertIn("timingProcessor?: TimingProcessorIdentity", job_contract)
-        self.assertIn("contentProcessor?: ProcessorIdentity", job_contract)
-        self.assertIn("segmentationProcessor?: ProcessorIdentity", job_contract)
+        self.assertIn("contentProcessor?: AgentProcessorIdentity", job_contract)
+        self.assertIn("segmentationProcessor?: AgentProcessorIdentity", job_contract)
         self.assertIn("processor: SubtitleArtifactProcessor", artifact_contract)
         self.assertNotIn("timingProvider?:", job_contract)
         self.assertNotIn("contentProvider?:", job_contract)
@@ -262,6 +315,9 @@ class ProductBoundaryTests(unittest.TestCase):
         library_component = (
             REPO_ROOT / "src" / "client" / "features" / "library" / "LibraryDialog.tsx"
         ).read_text(encoding="utf-8")
+        media_card_component = (
+            REPO_ROOT / "src" / "client" / "features" / "library" / "MediaCard.tsx"
+        ).read_text(encoding="utf-8")
         player_component = (
             REPO_ROOT / "src" / "client" / "features" / "player" / "PlayerDialog.tsx"
         ).read_text(encoding="utf-8")
@@ -271,14 +327,34 @@ class ProductBoundaryTests(unittest.TestCase):
         usage_content = (
             REPO_ROOT / "src" / "client" / "features" / "home" / "UsageDialog.tsx"
         ).read_text(encoding="utf-8")
-        settings_component = (
-            REPO_ROOT / "src" / "client" / "features" / "settings" / "FeatureSettingsDialog.tsx"
+        my_prompts_dialog = (
+            REPO_ROOT / "src" / "client" / "features" / "home" / "MyPromptsDialog.tsx"
         ).read_text(encoding="utf-8")
-        environment_component = (
-            REPO_ROOT / "src" / "client" / "features" / "settings" / "EnvironmentDialog.tsx"
+        supported_sites_dialog = (
+            REPO_ROOT / "src" / "client" / "features" / "resources" / "SupportedSitesDialog.tsx"
+        ).read_text(encoding="utf-8")
+        settings_component = (
+            REPO_ROOT / "src" / "client" / "features" / "settings" / "TranscriptionSettingsDialog.tsx"
         ).read_text(encoding="utf-8")
         models_component = (
             REPO_ROOT / "src" / "client" / "features" / "resources" / "ModelsDialog.tsx"
+        ).read_text(encoding="utf-8")
+        model_details_component = (
+            REPO_ROOT
+            / "src"
+            / "client"
+            / "features"
+            / "resources"
+            / "ModelDetailsDialog.tsx"
+        ).read_text(encoding="utf-8")
+        add_media_component = (
+            REPO_ROOT / "src" / "client" / "features" / "library" / "AddMediaDialog.tsx"
+        ).read_text(encoding="utf-8")
+        summary_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "VideoSummaryPanel.tsx"
+        ).read_text(encoding="utf-8")
+        markmap_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "MarkmapViewer.tsx"
         ).read_text(encoding="utf-8")
         detail_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobDetailDialog.tsx"
@@ -372,11 +448,17 @@ class ProductBoundaryTests(unittest.TestCase):
 
         self.assertIn("讓影音跨越語言", react_app)
         self.assertIn("OverlayCoordinator", react_app)
+        self.assertIn("加入影音", react_app)
         self.assertIn('className="hero-artwork"', react_app)
         self.assertIn('className="primary-nav"', react_app)
-        self.assertIn("使用說明", react_app)
-        self.assertIn("功能設定", react_app)
-        self.assertIn("影音中心", react_app)
+        self.assertIn("開始說明", react_app)
+        self.assertIn("我的提示", react_app)
+        self.assertIn("轉錄設定", react_app)
+        self.assertIn("支援網站", react_app)
+        self.assertIn("擴充功能", react_app)
+        self.assertIn("影片中心", react_app)
+        self.assertIn("LibraryBigIcon", react_app)
+        self.assertNotIn("PuzzleIcon", react_app)
         self.assertNotIn("AppearanceDialog", overlays)
         self.assertIn("lazy(", overlays)
 
@@ -385,7 +467,7 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("我的影音", library_component)
         self.assertIn("詳細資訊", library_component)
         self.assertIn("CaptionLanguageSelect", library_component)
-        self.assertIn("video-grid-card__duration", library_component)
+        self.assertIn("video-grid-card__duration", media_card_component)
         self.assertIn("VideoCardRemovalDialog", library_component)
         self.assertIn("VideoListRemovalDialog", library_component)
         self.assertIn('className="job-table"', library_component)
@@ -404,27 +486,48 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn('tab: "about"', player_component)
         self.assertNotIn("查看紀錄", player_component)
 
-        self.assertIn('value="getting-started"', usage_component)
-        self.assertIn('value="my-prompts"', usage_component)
-        self.assertIn('value="supported-sites"', usage_component)
-        self.assertIn("開始使用", usage_component)
-        self.assertIn("我的提示", usage_component)
-        self.assertIn("支援網站", usage_component)
+        self.assertIn('value="initialize"', usage_component)
+        self.assertIn('value="add-media"', usage_component)
+        self.assertIn('value="handoff"', usage_component)
+        self.assertNotIn('value="after-setup"', usage_component)
+        self.assertNotIn('value="agent-flow"', usage_component)
+        self.assertIn("1 初始化", usage_component)
+        self.assertIn("2 加入影音", usage_component)
+        self.assertIn("3 交給 Agent", usage_component)
+        self.assertIn("前往加入影音", usage_content)
+        self.assertIn("前往交給 Agent", usage_content)
+        self.assertNotIn('value="my-prompts"', usage_component)
+        self.assertNotIn('value="supported-sites"', usage_component)
+        self.assertIn('title="我的提示"', my_prompts_dialog)
+        self.assertIn('title="支援網站"', supported_sites_dialog)
         self.assertIn("buildAddVideoPrompt", usage_content)
         self.assertIn("影音網址", usage_content)
         self.assertIn("複製加入提示", usage_content)
         self.assertIn("copyDisabled={!result.prompt}", usage_content)
 
-        self.assertIn('value="environment"', settings_component)
-        self.assertIn('value="local-models"', settings_component)
-        self.assertIn('value="cloud-models"', settings_component)
-        self.assertIn("PromptActionCard", environment_component)
-        self.assertIn("ENVIRONMENT_PROMPT", environment_component)
-        self.assertIn("不要讀取或回報 Key 原值", prompt_contract)
-        self.assertIn("environment-table", environment_component)
-        self.assertIn("PromptActionCard", models_component)
-        self.assertIn("ApiKeySelect", models_component)
-        self.assertIn("實際下載大小", models_component)
+        self.assertNotIn("Tabs", settings_component)
+        self.assertIn("ModelsContent", settings_component)
+        self.assertIn("RoutedModelDetailsDialog", settings_component)
+        self.assertNotIn("PromptActionCard", models_component)
+        self.assertNotIn("ApiKeySelect", models_component)
+        self.assertIn("<TableHead>類型</TableHead>", models_component)
+        self.assertIn("<TableHead>操作</TableHead>", models_component)
+        for model_id in ("tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"):
+            self.assertIn(model_id, (REPO_ROOT / "src" / "server" / "services" / "local-model-service.ts").read_text(encoding="utf-8"))
+        self.assertIn("下載模型", model_details_component)
+        self.assertIn("移除模型", model_details_component)
+        self.assertIn("使用這個模型", model_details_component)
+        self.assertIn("每次真正上傳前仍會另外詢問你的同意", model_details_component)
+        self.assertIn("設定 API Key", model_details_component)
+        self.assertNotIn("TranscriptionSettingsContent", models_component)
+        self.assertNotIn("buildTranscriptionSettingsPrompt", models_component)
+        self.assertIn("最多 50 個", add_media_component)
+        self.assertIn("rightsConfirmed", prompt_contract)
+        self.assertIn("PromptActionCard", summary_component)
+        self.assertIn("MarkmapViewer", summary_component)
+        self.assertIn("ResourceRemovalDialog", summary_component)
+        self.assertIn("Transformer", markmap_component)
+        self.assertIn("Markmap", markmap_component)
 
         self.assertIn('value="about"', detail_component)
         self.assertIn('value="quality"', detail_component)
@@ -472,6 +575,7 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn('"/api/removals/execute"', server_app)
         self.assertIn('HANDLERS: dict[str, RemovalHandler]', removal_script)
         self.assertIn('"video": VideoRemovalHandler()', removal_script)
+        self.assertIn('"summary-artifact": SummaryArtifactRemovalHandler()', removal_script)
         self.assertIn("expected_digest != actual_digest", removal_script)
         self.assertIn("ON DELETE CASCADE", removal_protocol)
         self.assertIn("No removal prompt or Agent handoff", removal_protocol)
@@ -486,12 +590,16 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("PromptActionCard", detail_activity_component)
 
         tabbed_dialogs = usage_component + settings_component + library_component + detail_component
-        self.assertEqual(tabbed_dialogs.count('layout="tabbed"'), 4)
-        self.assertEqual(tabbed_dialogs.count("app-dialog-tabs"), 4)
+        self.assertEqual(tabbed_dialogs.count('layout="tabbed"'), 3)
+        self.assertEqual(tabbed_dialogs.count("app-dialog-tabs"), 3)
         self.assertIn("app-dialog__body--tabbed", app_dialog)
         self.assertIn('app.get("/api/jobs"', server_app)
         self.assertIn('app.get("/api/models"', server_app)
-        self.assertIn('app.get("/api/environment"', server_app)
+        self.assertIn('"/api/models/selection"', server_app)
+        self.assertNotIn('"/api/transcription-settings"', server_app)
+        self.assertNotIn('"/api/models/local/active"', server_app)
+        self.assertNotIn('"/api/environment"', server_app)
+        self.assertIn('"/api/providers/:providerId/credential"', server_app)
         self.assertIn("react", package["dependencies"])
         self.assertIn("hono", package["dependencies"])
         self.assertIn("drizzle-orm", package["dependencies"])

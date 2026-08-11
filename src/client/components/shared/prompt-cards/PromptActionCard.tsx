@@ -2,12 +2,12 @@ import type { ReactNode } from "react"
 
 import { CopyButton } from "@/components/shared/CopyButton"
 import {
-  Card,
-  CardAction,
+  FlowCard,
+  FlowCardHeader,
+} from "@/components/shared/prompt-cards/FlowCardHeader"
+import {
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+  CardFooter,
 } from "@/components/ui/card"
 
 interface PromptActionCardProps {
@@ -17,7 +17,9 @@ interface PromptActionCardProps {
   prompt: string
   copyLabel?: string
   copyDisabled?: boolean
+  onCopied?: () => void
   children?: ReactNode
+  footer?: ReactNode
 }
 
 function PromptActionCardLayout({
@@ -27,27 +29,29 @@ function PromptActionCardLayout({
   prompt,
   copyLabel,
   copyDisabled,
+  onCopied,
   children,
+  footer,
   className,
 }: PromptActionCardProps & { className: string }) {
   return (
-    <Card className={className}>
-      <CardHeader>
-        <span className="section-index">{kicker}</span>
-        <CardTitle role="heading" aria-level={3}>
-          {title}
-        </CardTitle>
-        <CardDescription>{description}</CardDescription>
-        <CardAction>
+    <FlowCard className={className}>
+      <FlowCardHeader
+        kicker={kicker}
+        title={title}
+        description={description}
+        action={(
           <CopyButton
             value={prompt}
             label={copyLabel}
             disabled={copyDisabled}
+            onCopied={onCopied}
           />
-        </CardAction>
-      </CardHeader>
+        )}
+      />
       {children ? <CardContent>{children}</CardContent> : null}
-    </Card>
+      {footer ? <CardFooter>{footer}</CardFooter> : null}
+    </FlowCard>
   )
 }
 

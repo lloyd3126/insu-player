@@ -14,7 +14,7 @@
     "build:server": "bun build src/server/bun.ts --target=bun --minify --outfile plugins/insu-player/skills/watch-video/assets/server/insu-player-server.js",
     "check": "tsc --noEmit",
     "doctor": "react-doctor . --no-telemetry --no-supply-chain --yes",
-    "test": "bun test src",
+    "test": "bun test src plugins/insu-player/chrome-extension/media-discovery.test.js",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -28,6 +28,8 @@
     "drizzle-orm": "latest",
     "hono": "latest",
     "lucide-react": "latest",
+    "markmap-lib": "^0.18.12",
+    "markmap-view": "^0.18.12",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "^7.18.2",

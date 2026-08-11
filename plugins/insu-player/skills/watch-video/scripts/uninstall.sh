@@ -42,10 +42,9 @@ if [ -f "$CAPTION_LIBRARY_PID" ]; then
 fi
 
 active_job_count=0
-if [ -x "$CAPTION_PYTHON" ] && [ -d "$CAPTION_JOBS" ]; then
-  for status_file in "$CAPTION_JOBS"/*/status.json; do
-    [ -f "$status_file" ] || continue
-    job_dir=$(dirname "$status_file")
+if [ -x "$CAPTION_PYTHON" ] && [ -d "$CAPTION_JOBS" ] && [ -f "$CAPTION_WORKSPACE/app.db" ]; then
+  for job_dir in "$CAPTION_JOBS"/*; do
+    [ -d "$job_dir" ] || continue
     job_state=$(caption_job_state show --job-dir "$job_dir" --field state 2>/dev/null || true)
     case "$job_state" in
       checking|downloading|transcribing|translating|preparing_player)
@@ -94,7 +93,7 @@ fi
 if [ -d "$CAPTION_RUNTIME" ]; then
   rm -rf -- "$CAPTION_RUNTIME"
 fi
-rm -f -- "$CAPTION_LIBRARY_PID" "$CAPTION_LIBRARY_DESCRIPTOR" "$CAPTION_ENVIRONMENT_DESCRIPTOR"
+rm -f -- "$CAPTION_LIBRARY_PID" "$CAPTION_LIBRARY_DESCRIPTOR" "$CAPTION_PROVIDER_DESCRIPTOR"
 
 if [ "$include_generated" -eq 1 ] && [ -d "$CAPTION_WORKSPACE/jobs" ]; then
   rm -rf -- "$CAPTION_WORKSPACE/jobs"

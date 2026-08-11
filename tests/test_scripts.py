@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from current_database import (
+    create_current_database,
+    read_media_record,
+    write_media_record,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +40,7 @@ class WorkflowScriptTests(unittest.TestCase):
         workflow_bin.mkdir(parents=True)
         fake_bin.mkdir()
         self.fake_bin = fake_bin
+        create_current_database(self.workspace)
         os.symlink(sys.executable, venv_bin / "python")
         make_executable(workflow_bin / "deno", "#!/bin/sh\nexit 0\n")
         make_executable(
@@ -40,9 +48,11 @@ class WorkflowScriptTests(unittest.TestCase):
             """#!/bin/sh
 set -eu
 input=''
+output=''
 previous=''
 for argument in "$@"; do
   if [ "$previous" = '-i' ]; then input="$argument"; fi
+  output="$argument"
   previous="$argument"
 done
 height=$(sed -n 's/^height=//p' "$input" 2>/dev/null | head -n 1)
@@ -56,6 +66,9 @@ case "$height" in
 esac
 printf 'local workflow ffmpeg\n' >&2
 printf '  Stream #0:0: Video: h264 (avc1), yuv420p, %sx%s, 30 fps\n' "$width" "$height" >&2
+case "$output" in
+  *.m4a) mkdir -p "$(dirname "$output")"; printf 'fake-audio' > "$output" ;;
+esac
 exit 0
 """,
         )
@@ -77,6 +90,10 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
+case "$all_arguments" in
+  *' --dump-single-json '*) ;;
+  *) if [ "${FAKE_ECHO_ARGUMENTS:-0}" = 1 ]; then printf 'debug arguments:%s\n' "$all_arguments" >&2; fi ;;
+esac
 case "$all_arguments" in
   *' --dump-single-json '*)
     if [ "${FAKE_LOW_ONLY:-0}" = 1 ]; then
@@ -169,7 +186,10 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             self.fail(error.stdout)
 
     def read_status(self) -> dict[str, object]:
-        return json.loads((self.workspace / "jobs" / "test-video" / "status.json").read_text(encoding="utf-8"))
+        return read_media_record(self.workspace, "test-video")
+
+    def write_status(self, status: dict[str, object]) -> None:
+        write_media_record(self.workspace, status)
 
     def read_media_catalog(self) -> dict[str, object]:
         return json.loads(
@@ -229,6 +249,29 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "media-work/catalog.json",
         )
 
+    def test_network_media_keeps_signed_urls_out_of_persistent_files(self) -> None:
+        signed_url = "https://cdn.example.test/master.m3u8?token=must-not-persist"
+        page_url = "https://media.example.test/watch/one"
+        self.environment["FAKE_ECHO_ARGUMENTS"] = "1"
+        self.run_script(
+            "download-video.sh",
+            str(self.workspace),
+            signed_url,
+            "--download-only",
+            "--source-kind",
+            "network-media",
+            "--library-source-url",
+            page_url,
+            "--referer",
+            page_url,
+        )
+        status = self.read_status()
+        self.assertEqual(status["sourceUrl"], page_url)
+        self.assertEqual(status["sourceKind"], "network-media")
+        job_dir = self.workspace / "jobs" / "test-video"
+        for persisted in [job_dir / "manifest.txt", job_dir / "logs" / "workflow.log"]:
+            self.assertNotIn(signed_url, persisted.read_text(encoding="utf-8"))
+
     def test_one_command_entrypoint_reaches_actionable_state(self) -> None:
         result = self.run_script(
             "process-video.sh",
@@ -237,8 +280,6 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "--language",
             "en",
             "--proofread",
-            "--provider",
-            "local",
             "--no-transcribe",
         )
         self.assertIn("State: needs_transcription", result.stdout)
@@ -406,19 +447,16 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
     def test_job_state_rejects_the_retired_schema(self) -> None:
         job_dir = self.workspace / "jobs" / "test-video"
         job_dir.mkdir(parents=True)
-        (job_dir / "status.json").write_text(
-            json.dumps(
-                {
-                    "schemaVersion": 3,
-                    "videoId": "test-video",
-                    "state": "queued",
-                    "stage": "queued",
-                    "progress": 0,
-                    "subtitleArtifacts": [],
-                    "activeSubtitleTracks": {},
-                }
-            ),
-            encoding="utf-8",
+        self.write_status(
+            {
+                "schemaVersion": 3,
+                "videoId": "test-video",
+                "state": "queued",
+                "stage": "queued",
+                "progress": 0,
+                "subtitleArtifacts": [],
+                "activeSubtitleTracks": {},
+            }
         )
         result = subprocess.run(
             [
@@ -435,7 +473,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schemaVersion 6", result.stdout)
+        self.assertIn("schemaVersion 2", result.stdout)
 
     def test_job_state_requires_current_transcription_language_metadata(self) -> None:
         job_dir = self.workspace / "jobs" / "test-video"
@@ -450,6 +488,8 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                 "test-video",
                 "--source-url",
                 "https://example.test/video",
+                "--source-kind",
+                "page",
             ],
             check=True,
             stdout=subprocess.DEVNULL,
@@ -463,6 +503,8 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                 str(job_dir),
                 "--provider",
                 "local",
+                "--service",
+                "openai-whisper",
                 "--model",
                 "medium",
                 "--language-tag",
@@ -473,12 +515,13 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             check=True,
             stdout=subprocess.DEVNULL,
         )
-        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
-        self.assertEqual(status["schemaVersion"], 6)
+        status = self.read_status()
+        self.assertEqual(status["schemaVersion"], 2)
         self.assertEqual(
             status["transcription"],
             {
                 "provider": "local",
+                "service": "openai-whisper",
                 "model": "medium",
                 "languageTag": "en-US",
                 "engineLanguage": "en",
@@ -486,8 +529,12 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             },
         )
 
-        status["transcription"] = {"provider": "local", "model": "medium"}
-        (job_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
+        status["transcription"] = {
+            "provider": "local",
+            "service": "openai-whisper",
+            "model": "medium",
+        }
+        self.write_status(status)
         result = subprocess.run(
             [
                 sys.executable,
@@ -517,15 +564,17 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                 "test-video",
                 "--source-url",
                 "https://example.test/video",
+                "--source-kind",
+                "page",
             ],
             check=True,
             stdout=subprocess.DEVNULL,
         )
-        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+        status = self.read_status()
         status["subtitleArtifacts"] = [
             {"id": "legacy-source", "provider": "local", "model": "medium"}
         ]
-        (job_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
+        self.write_status(status)
         result = subprocess.run(
             [
                 sys.executable,
@@ -556,13 +605,15 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                 "test-video",
                 "--source-url",
                 "https://example.test/video",
+                "--source-kind",
+                "page",
             ],
             check=True,
             stdout=subprocess.DEVNULL,
         )
-        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+        status = self.read_status()
         del status["history"][0]["stage"]
-        (job_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
+        self.write_status(status)
         result = subprocess.run(
             [
                 sys.executable,
@@ -625,6 +676,8 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                 "no-progress",
                 "--source-url",
                 "https://example.test/watch?v=no-progress",
+                "--source-kind",
+                "page",
                 "--title",
                 "No Progress",
             ],
@@ -656,7 +709,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             stderr=subprocess.STDOUT,
             check=True,
         )
-        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+        status = read_media_record(self.workspace, "no-progress")
         self.assertIn("no percentage output", result.stdout)
         self.assertEqual(status["state"], "downloading")
         self.assertEqual(status["progress"], 100.0)
@@ -675,6 +728,8 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "model-transcript",
             "--processor-provider",
             "local",
+            "--processor-service",
+            "openai-whisper",
             "--processor-model",
             "medium",
             "--timing-unit-kind",
@@ -714,6 +769,8 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "model-transcript",
             "--processor-provider",
             "local",
+            "--processor-service",
+            "openai-whisper",
             "--processor-model",
             "medium",
         )
@@ -724,6 +781,51 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         )
         manifest = job_dir / "subtitle-work" / "content-manifest.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
+        transcript = job_dir / "whisper" / "local" / "transcript.json"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 3,
+                    "processor": {
+                        "provider": "local",
+                        "service": "openai-whisper",
+                        "model": "medium",
+                    },
+                    "language": "en",
+                    "engineLanguage": "en",
+                    "timingUnitKind": "word",
+                    "durationSeconds": 2.0,
+                    "chunks": [
+                        {
+                            "index": 0,
+                            "startSeconds": 0.0,
+                            "endSeconds": 2.0,
+                            "sha256": "0" * 64,
+                        }
+                    ],
+                    "segments": [
+                        {
+                            "id": 0,
+                            "start": 0.0,
+                            "end": 2.0,
+                            "text": "Sample caption",
+                            "origin": "provider",
+                        }
+                    ],
+                    "words": [
+                        {
+                            "id": 0,
+                            "word": "Sample caption",
+                            "start": 0.0,
+                            "end": 2.0,
+                        }
+                    ],
+                    "text": "Sample caption",
+                }
+            ),
+            encoding="utf-8",
+        )
         manifest.write_text(
             json.dumps(
                 {
@@ -731,22 +833,36 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                     "mode": "translate",
                     "sourceLanguage": "en",
                     "outputLanguage": "fr",
+                    "sourceTranscript": str(transcript),
                     "timingSourceArtifactId": "test-video-source-model-transcript-en-r1",
                     "sourceContentArtifactId": "test-video-source-model-transcript-en-r1",
                     "sourceContentKind": "model-transcript",
                     "sourceContentManifest": None,
                     "sourceContentChecksum": None,
                     "referenceArtifactIds": ["test-video-source-manual-cc-en-r1"],
-                    "timingProcessor": {"provider": "local", "model": "medium"},
+                    "timingProcessor": {
+                        "provider": "local",
+                        "service": "openai-whisper",
+                        "model": "medium",
+                    },
                     "contentProcessor": {"provider": "agent", "service": "codex"},
+                    "sentenceReview": {
+                        "provider": "agent",
+                        "service": "codex",
+                        "reviewedAt": "2026-08-10T00:00:00Z",
+                    },
                     "outputProfile": {"punctuationPolicy": "preserve"},
                     "segments": [
                         {
                             "id": "S0001",
                             "start": "00:00:00.000",
                             "end": "00:00:02.000",
+                            "sourceUnitStart": "U000001",
+                            "sourceUnitEnd": "U000001",
                             "sourceText": "Sample caption",
+                            "draftOutputText": "Exemple de sous-titre",
                             "outputText": "Exemple de sous-titre",
+                            "requiredTerms": [],
                         }
                     ],
                 }
@@ -764,10 +880,6 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "en",
             "--output-language",
             "fr",
-            "--processor-provider",
-            "agent",
-            "--processor-service",
-            "codex",
             "--artifact-kind",
             "translation",
             "--revision",
@@ -813,22 +925,36 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                     "mode": "translate",
                     "sourceLanguage": "en",
                     "outputLanguage": "fr",
+                    "sourceTranscript": str(transcript),
                     "timingSourceArtifactId": "test-video-source-model-transcript-en-r1",
                     "sourceContentArtifactId": "test-video-source-model-transcript-en-r1",
                     "sourceContentKind": "model-transcript",
                     "sourceContentManifest": None,
                     "sourceContentChecksum": None,
                     "referenceArtifactIds": ["test-video-source-manual-cc-en-r1"],
-                    "timingProcessor": {"provider": "local", "model": "medium"},
+                    "timingProcessor": {
+                        "provider": "local",
+                        "service": "openai-whisper",
+                        "model": "medium",
+                    },
                     "contentProcessor": {"provider": "agent", "service": "codex"},
+                    "sentenceReview": {
+                        "provider": "agent",
+                        "service": "codex",
+                        "reviewedAt": "2026-08-10T00:00:00Z",
+                    },
                     "outputProfile": {"punctuationPolicy": "preserve"},
                     "segments": [
                         {
                             "id": "S0001",
                             "start": "00:00:00.000",
                             "end": "00:00:02.000",
+                            "sourceUnitStart": "U000001",
+                            "sourceUnitEnd": "U000001",
                             "sourceText": "Sample caption",
+                            "draftOutputText": "Exemple de sous-titre",
                             "outputText": "Exemple de sous-titre",
+                            "requiredTerms": [],
                         }
                     ],
                 }
@@ -858,10 +984,6 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "en",
             "--output-language",
             "fr",
-            "--processor-provider",
-            "agent",
-            "--processor-service",
-            "codex",
             "--artifact-kind",
             "translation",
             "--revision",
@@ -950,8 +1072,8 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         self.assertIn("library server is still running", attempted.stdout)
         self.assertTrue((self.workspace / ".agent-tools" / "insu-player").is_dir())
 
-    def test_uninstall_removes_stale_environment_session_descriptor(self) -> None:
-        descriptor = self.workspace / ".insu-environment-session.json"
+    def test_uninstall_removes_stale_provider_session_descriptor(self) -> None:
+        descriptor = self.workspace / ".insu-provider-session.json"
         descriptor.write_text('{"token":"stale"}\n', encoding="utf-8")
         descriptor.chmod(0o600)
         self.run_script("uninstall.sh", str(self.workspace), "--yes")
@@ -982,7 +1104,7 @@ printf '%s\n' "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$DENO_DIR" "$XDG_CACHE_H
         for forbidden in ("brew install", "apt-get", "sudo ", "dnf install", "pacman -S"):
             self.assertNotIn(forbidden, source)
 
-    def test_medium_is_the_default_local_model(self) -> None:
+    def test_medium_is_the_setup_default_and_transcription_uses_database_selection(self) -> None:
         setup_source = (SCRIPTS / "setup-environment.sh").read_text(encoding="utf-8")
         transcribe_source = (SCRIPTS / "transcribe.sh").read_text(encoding="utf-8")
         update_source = (SCRIPTS / "update-environment.sh").read_text(encoding="utf-8")
@@ -996,28 +1118,108 @@ printf '%s\n' "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$DENO_DIR" "$XDG_CACHE_H
             / "transcribe_media.py"
         ).read_text(encoding="utf-8")
         self.assertIn('model_name="medium"', setup_source)
-        self.assertIn('caption_state_value "$CAPTION_STATE" DEFAULT_MODEL', transcribe_source)
-        self.assertIn('model_name="${model_name:-medium}"', transcribe_source)
-        self.assertIn('model_name="${model_name:-medium}"', update_source)
-        self.assertIn('args.model = args.model or "medium"', transcriber_source)
+        self.assertIn("resolve-transcription-settings.py", transcribe_source)
+        self.assertNotIn("--timing-provider", transcribe_source)
+        self.assertNotIn("--model requires", transcribe_source)
+        self.assertNotIn("DEFAULT_MODEL", update_source)
+        self.assertNotIn("DEFAULT_MODEL", setup_source)
+        self.assertIn("elif not args.model:", transcriber_source)
+
+    def test_transcription_settings_resolver_fails_closed_and_returns_exact_identity(self) -> None:
+        resolver = SCRIPTS / "resolve-transcription-settings.py"
+        missing = subprocess.run(
+            [sys.executable, str(resolver), "--workspace", str(self.workspace)],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("no transcription model is selected", missing.stdout)
+
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            connection.execute(
+                "INSERT INTO transcription_settings (id, model_id, updated_at) VALUES (?, ?, ?)",
+                (
+                    "active",
+                    "cloud.groq.whisper-large-v3-turbo",
+                    "2026-08-11T00:00:00.000Z",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        resolved = subprocess.run(
+            [
+                sys.executable,
+                str(resolver),
+                "--workspace",
+                str(self.workspace),
+                "--format",
+                "tsv",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+        self.assertEqual(
+            resolved.stdout.strip(),
+            "groq\taudio/transcriptions\twhisper-large-v3-turbo",
+        )
+
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            connection.execute(
+                "UPDATE transcription_settings SET model_id = ? WHERE id = 'active'",
+                ("unsupported",),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        rejected = subprocess.run(
+            [sys.executable, str(resolver), "--workspace", str(self.workspace)],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("unsupported", rejected.stdout)
 
     def test_api_transcription_can_use_the_active_server_session_without_weakening_consent(self) -> None:
         source = (SCRIPTS / "transcribe.sh").read_text(encoding="utf-8")
-        helper = (SCRIPTS / "environment_session.py").read_text(encoding="utf-8")
-        self.assertIn("--allow-api-upload", source)
-        self.assertIn("--consent-to-upload", source)
-        self.assertIn("CAPTION_ENVIRONMENT_SESSION", source)
+        helper = (SCRIPTS / "provider_credential_session.py").read_text(encoding="utf-8")
+        self.assertIn("--consent-to-audio-upload", source)
+        self.assertNotIn("--allow-api-upload", source)
+        self.assertNotIn("--consent-to-upload", source)
+        self.assertIn("manual_reference_count=0", source)
+        self.assertNotIn('${#manual_reference_artifacts[@]}', source)
+        self.assertIn("CAPTION_PROVIDER_CREDENTIAL_SESSION", source)
         self.assertIn("os.execvpe", helper)
         self.assertNotIn("print(value", helper)
+        for name in (
+            "OPENAI_API_KEY",
+            "GROQ_API_KEY",
+            "ELEVENLABS_API_KEY",
+            "XAI_API_KEY",
+            "OPENROUTER_API_KEY",
+        ):
+            self.assertIn(name, helper)
 
         check = subprocess.run(
             [
                 sys.executable,
-                str(SCRIPTS / "environment_session.py"),
+                str(SCRIPTS / "provider_credential_session.py"),
                 "--workspace",
                 str(self.workspace),
-                "--name",
-                "OPENAI_API_KEY",
+                "--provider",
+                "openai",
                 "check",
             ],
             cwd=REPO_ROOT,
@@ -1029,7 +1231,7 @@ printf '%s\n' "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$DENO_DIR" "$XDG_CACHE_H
         )
         self.assertNotEqual(check.returncode, 0)
         self.assertNotIn("usage:", check.stdout)
-        self.assertIn("environment session", check.stdout)
+        self.assertIn("provider credential session", check.stdout)
 
 
 if __name__ == "__main__":

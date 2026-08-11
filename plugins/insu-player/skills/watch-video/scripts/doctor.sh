@@ -93,27 +93,31 @@ else
   missing=1
 fi
 
-provider_name=$(caption_configured_provider)
-printf 'transcription-provider: %s\n' "$provider_name"
 if [ -x "$CAPTION_WHISPER" ]; then
   whisper_version=$($CAPTION_PYTHON -c 'import importlib.metadata; print(importlib.metadata.version("openai-whisper"))' 2>/dev/null || printf installed)
   printf 'whisper: %s\n' "$whisper_version"
 else
   printf 'whisper: not-installed-by-workflow\n'
-  if [ "$provider_name" = "local" ] || [ "$provider_name" = "both" ]; then missing=1; fi
+  missing=1
 fi
 
-if [ -x "$CAPTION_PYTHON" ] && "$CAPTION_PYTHON" -c 'import openai' >/dev/null 2>&1; then
-  printf 'openai-sdk: installed\n'
-else
-  printf 'openai-sdk: not-installed-by-workflow\n'
-  if [ "$provider_name" = "openai" ] || [ "$provider_name" = "both" ]; then missing=1; fi
-fi
-if [ -n "${OPENAI_API_KEY:-}" ]; then
-  printf 'openai-api-key: present-in-process-environment\n'
-else
-  printf 'openai-api-key: not-set\n'
-fi
+for provider_spec in 'openai:openai:OPENAI_API_KEY' 'groq:groq:GROQ_API_KEY' 'elevenlabs:elevenlabs:ELEVENLABS_API_KEY' 'xai:httpx:XAI_API_KEY' 'openrouter:openai:OPENROUTER_API_KEY'; do
+  IFS=: read -r provider_module python_module key_name <<EOF
+$provider_spec
+EOF
+  if [ -x "$CAPTION_PYTHON" ] && "$CAPTION_PYTHON" -c "import $python_module" >/dev/null 2>&1; then
+    printf '%s-sdk: installed\n' "$provider_module"
+  else
+    printf '%s-sdk: not-installed-by-workflow\n' "$provider_module"
+    missing=1
+  fi
+  key_value="${!key_name:-}"
+  if [ -n "$key_value" ]; then
+    printf '%s-api-key: present-in-process-environment\n' "$provider_module"
+  else
+    printf '%s-api-key: not-set\n' "$provider_module"
+  fi
+done
 
 if [ -d "$CAPTION_MODELS" ]; then
   model_count=$(find "$CAPTION_MODELS" -maxdepth 1 -type f | wc -l | tr -d ' ')
@@ -136,12 +140,21 @@ fi
 
 if [ -d "$CAPTION_JOBS" ]; then
   job_count=$(find "$CAPTION_JOBS" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
-  status_count=$(find "$CAPTION_JOBS" -mindepth 2 -maxdepth 2 -type f -name status.json | wc -l | tr -d ' ')
   printf 'library-jobs: %s\n' "$job_count"
-  printf 'library-status-files: %s\n' "$status_count"
+  if [ -f "$CAPTION_WORKSPACE/app.db" ]; then
+    record_count=$("$CAPTION_PYTHON" - "$CAPTION_WORKSPACE/app.db" <<'PY'
+import sqlite3,sys
+with sqlite3.connect(sys.argv[1]) as db:
+    print(db.execute("SELECT COUNT(*) FROM media_items").fetchone()[0])
+PY
+)
+  else
+    record_count=0
+  fi
+  printf 'library-database-records: %s\n' "$record_count"
 else
   printf 'library-jobs: 0\n'
-  printf 'library-status-files: 0\n'
+  printf 'library-database-records: 0\n'
 fi
 
 if [ "$missing" -eq 0 ]; then

@@ -15,6 +15,10 @@
 - `ANCHOR_MISMATCH`: an anchor lies outside the source span paired with its target piece.
 - `INVALID_TIMING`: derived cue timing overlaps, reverses, or is empty.
 - `INTERNAL_MARKER`: generated text contains an internal batch marker.
+- `SENTENCE_REVIEW_MISSING`: complete-sentence boundaries were not reviewed by the current Agent.
+- `SOURCE_SENTENCE_IMPLAUSIBLE`: one claimed source sentence exceeds the current timed-unit or duration ceiling.
+- `ALIGNMENT_REVIEW_MISSING`: Source Alignment was not reviewed as `agent-semantic` by the current Agent.
+- `ALIGNMENT_CHANGED_AFTER_REVIEW`: a source span or bilingual anchor changed after the Agent review fingerprint was recorded.
 
 Fail rendering on every hard defect. Keep a reason code and affected translation unit, piece, term, anchor, or timed-unit ID.
 
@@ -29,4 +33,4 @@ Warnings remain visible in the plan and UI. Do not regenerate a natural translat
 
 ## Linguistic review
 
-The selected local model, authorized OpenAI model, or Agent must review semantic boundaries, dangling syntax, bound phrases, named entities, shortening equivalence, and language reordering. Deterministic validation must still enforce schema, frozen integrity, ranges, widths, required terms, anchors, and timing.
+The current Agent must review semantic boundaries, dangling syntax, bound phrases, named entities, shortening equivalence, language reordering, and every Source Alignment span. Deterministic validation still enforces schema, frozen integrity, reviewed fingerprints, ranges, widths, required terms, anchors, and timing. A supported cloud STT API may only supply audio transcription timing and cannot satisfy this linguistic review.

@@ -3,15 +3,72 @@ import { describe, expect, test } from "bun:test"
 import { overlayFromLocation, pathForOverlay } from "@/app/overlay-routes"
 
 describe("overlay routes", () => {
-  test("maps guide settings and library tabs to stable paths", () => {
-    expect(overlayFromLocation("/guide/my-prompts")).toEqual({
+  test("maps current standalone dialogs and tabbed dialogs to stable paths", () => {
+    expect(overlayFromLocation("/guide/add-media")).toEqual({
       type: "usage-guide",
-      tab: "my-prompts",
+      tab: "add-media",
     })
-    expect(overlayFromLocation("/settings/cloud-models")).toEqual({
-      type: "feature-settings",
-      tab: "cloud-models",
+    expect(overlayFromLocation("/guide/handoff")).toEqual({
+      type: "usage-guide",
+      tab: "handoff",
     })
+    expect(pathForOverlay({
+      type: "usage-guide",
+      tab: "handoff",
+    })).toBe("/guide/handoff")
+    expect(overlayFromLocation("/guide/after-setup")).toBeNull()
+    expect(overlayFromLocation("/guide/agent-flow")).toBeNull()
+    expect(overlayFromLocation("/prompts")).toEqual({
+      type: "my-prompts",
+    })
+    expect(pathForOverlay({ type: "my-prompts" })).toBe("/prompts")
+    expect(overlayFromLocation("/supported-sites")).toEqual({
+      type: "supported-sites",
+    })
+    expect(pathForOverlay({ type: "supported-sites" })).toBe("/supported-sites")
+    expect(overlayFromLocation("/extension/connect")).toEqual({
+      type: "chrome-extension",
+      tab: "connect",
+    })
+    expect(overlayFromLocation("/extension")).toEqual({
+      type: "chrome-extension",
+      tab: "install",
+    })
+    expect(pathForOverlay({
+      type: "chrome-extension",
+      tab: "usage",
+    })).toBe("/extension/usage")
+    expect(overlayFromLocation("/extension/library")).toBeNull()
+    expect(overlayFromLocation("/extension/unknown")).toBeNull()
+    expect(overlayFromLocation("/library/add/downloads")).toEqual({
+      type: "add-media",
+      tab: "downloads",
+    })
+    expect(pathForOverlay({
+      type: "add-media",
+      tab: "handoff",
+    })).toBe("/library/add/handoff")
+    expect(overlayFromLocation("/library/add")).toBeNull()
+    expect(overlayFromLocation("/library/add/unknown")).toBeNull()
+    expect(overlayFromLocation("/settings/models/cloud.groq.whisper-large-v3")).toEqual({
+      type: "transcription-settings",
+      modelId: "cloud.groq.whisper-large-v3",
+    })
+    expect(overlayFromLocation("/settings")).toEqual({
+      type: "transcription-settings",
+    })
+    expect(pathForOverlay({
+      type: "transcription-settings",
+      modelId: "local.openai-whisper.medium",
+    })).toBe(
+      "/settings/models/local.openai-whisper.medium",
+    )
+    for (const legacy of [
+      "/settings/transcription",
+      "/settings/local-models",
+      "/settings/cloud-models",
+      "/settings/environment",
+    ]) expect(overlayFromLocation(legacy)).toBeNull()
     expect(overlayFromLocation("/library/list")).toEqual({
       type: "library",
       view: "list",
@@ -130,10 +187,14 @@ describe("overlay routes", () => {
   })
 
   test("falls back to each modal's default tab", () => {
-    expect(overlayFromLocation("/guide/unknown")).toMatchObject({
+    expect(overlayFromLocation("/guide")).toMatchObject({
       type: "usage-guide",
-      tab: "getting-started",
+      tab: "initialize",
     })
+    expect(overlayFromLocation("/guide/getting-started")).toBeNull()
+    expect(overlayFromLocation("/guide/unknown")).toBeNull()
+    expect(overlayFromLocation("/guide/my-prompts")).toBeNull()
+    expect(overlayFromLocation("/guide/supported-sites")).toBeNull()
     expect(overlayFromLocation("/jobs/demo-video/unknown")).toBeNull()
     expect(overlayFromLocation("/jobs/demo-video/subtitle")).toBeNull()
     expect(overlayFromLocation("/not-a-route")).toBeNull()

@@ -104,6 +104,15 @@ function targetArguments(target: RemovalTarget) {
         "--rendition-id",
         target.renditionId,
       ]
+    case "summary-artifact":
+      return [
+        "--kind",
+        "summary-artifact",
+        "--video-id",
+        target.videoId,
+        "--artifact-id",
+        target.artifactId,
+      ]
   }
 }
 

@@ -6,11 +6,31 @@ import type {
   PlaybackState,
 } from "@shared/contracts/job"
 import type {
-  EnvironmentStatusResponse,
-  ModelInventoryResponse,
+  AgentIntentResponse,
   PromptLibraryResponse,
   SupportedSitesResponse,
+  RuntimeStatusResponse,
+  CloudTranscriptionProvider,
+  TranscriptionModelCatalogResponse,
+  TranscriptionModelDetailResponse,
 } from "@shared/contracts/resources"
+import type {
+  CreateDownloadBatchRequest,
+  CreateDownloadBatchResponse,
+  DownloadBatch,
+  DownloadBatchListResponse,
+  DownloadSourceInput,
+} from "@shared/contracts/download-batch"
+import type {
+  ExtensionPairingStatus,
+  StartExtensionPairingResponse,
+} from "@shared/contracts/browser-extension"
+import type {
+  SummaryArtifactKind,
+  SummaryArtifactResponse,
+  SummaryCatalogResponse,
+  SummaryImportRequest,
+} from "@shared/contracts/summary"
 import type {
   SubtitleArtifactComparisonResponse,
   SubtitleCatalogResponse,
@@ -24,6 +44,10 @@ import type {
   MediaCatalogResponse,
   MediaDownloadResponse,
 } from "@shared/contracts/media"
+import type {
+  SaveVideoNoteRequest,
+  VideoNotesResponse,
+} from "@shared/contracts/notes"
 
 async function fetchJson<T>(input: string, init?: RequestInit) {
   const response = await fetch(input, { cache: "no-store", ...init })
@@ -42,6 +66,14 @@ async function fetchJson<T>(input: string, init?: RequestInit) {
 }
 
 export const api = {
+  health: () =>
+    fetchJson<{
+      ok: boolean
+      runtime: string
+      framework: string
+      database: string
+      port: number
+    }>("/api/health"),
   jobs: () => fetchJson<JobsResponse>("/api/jobs"),
   job: (videoId: string) =>
     fetchJson<JobDetail>(`/api/jobs/${encodeURIComponent(videoId)}`),
@@ -115,21 +147,164 @@ export const api = {
         body: JSON.stringify(playback),
       },
     ),
-  models: () => fetchJson<ModelInventoryResponse>("/api/models"),
+  models: () => fetchJson<TranscriptionModelCatalogResponse>("/api/models"),
+  model: (modelId: string) =>
+    fetchJson<TranscriptionModelDetailResponse>(
+      `/api/models/${encodeURIComponent(modelId)}`,
+    ),
+  runtime: () => fetchJson<RuntimeStatusResponse>("/api/runtime"),
+  recordAgentIntent: (kind: string, source: string, videoId?: string) =>
+    fetchJson<AgentIntentResponse>("/api/agent-intents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, source, ...(videoId ? { videoId } : {}) }),
+    }),
+  downloadBatches: () =>
+    fetchJson<DownloadBatchListResponse>("/api/download-batches"),
+  createDownloadBatch: (sources: DownloadSourceInput[], rightsConfirmed: true) =>
+    fetchJson<CreateDownloadBatchResponse>("/api/download-batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sources, rightsConfirmed } satisfies CreateDownloadBatchRequest),
+    }),
+  extensionPairing: () =>
+    fetchJson<ExtensionPairingStatus>("/api/extension/pairing"),
+  startExtensionPairing: () =>
+    fetchJson<StartExtensionPairingResponse>("/api/extension/pairing/start", {
+      method: "POST",
+    }),
+  revokeExtensionPairing: () =>
+    fetchJson<{ paired: false }>("/api/extension/pairing", {
+      method: "DELETE",
+    }),
+  retryDownloadBatchItem: (
+    batchId: string,
+    itemId: string,
+    lowQualityApproved = false,
+  ) =>
+    fetchJson<DownloadBatch>(
+      `/api/download-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/retry`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lowQualityApproved }),
+      },
+    ),
+  cancelDownloadBatchItem: (batchId: string, itemId: string) =>
+    fetchJson<DownloadBatch>(
+      `/api/download-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}`,
+      { method: "DELETE" },
+    ),
+  pauseDownloadBatch: (batchId: string) =>
+    fetchJson<DownloadBatch>(
+      `/api/download-batches/${encodeURIComponent(batchId)}/pause`,
+      { method: "POST" },
+    ),
+  resumeDownloadBatch: (batchId: string) =>
+    fetchJson<DownloadBatch>(
+      `/api/download-batches/${encodeURIComponent(batchId)}/resume`,
+      { method: "POST" },
+    ),
+  downloadModel: (modelId: string) =>
+    fetchJson<TranscriptionModelDetailResponse>(
+      `/api/models/${encodeURIComponent(modelId)}/download`,
+      { method: "POST" },
+    ),
+  cancelModelDownload: (modelId: string) =>
+    fetchJson<{ cancelled: true }>(
+      `/api/models/${encodeURIComponent(modelId)}/download`,
+      { method: "DELETE" },
+    ),
+  removeModel: (modelId: string) =>
+    fetchJson<{ removed: true }>(
+      `/api/models/${encodeURIComponent(modelId)}`,
+      { method: "DELETE" },
+    ),
+  selectTranscriptionModel: (modelId: string) =>
+    fetchJson<TranscriptionModelCatalogResponse>("/api/models/selection", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelId }),
+    }),
+  setProviderCredential: (
+    providerId: CloudTranscriptionProvider,
+    value: string,
+  ) =>
+    fetchJson<TranscriptionModelCatalogResponse>(
+      `/api/providers/${encodeURIComponent(providerId)}/credential`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      },
+    ),
+  clearProviderCredential: (providerId: CloudTranscriptionProvider) =>
+    fetchJson<TranscriptionModelCatalogResponse>(
+      `/api/providers/${encodeURIComponent(providerId)}/credential`,
+      { method: "DELETE" },
+    ),
+  summaries: (videoId: string) =>
+    fetchJson<SummaryCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/summaries`,
+    ),
+  summaryArtifact: (videoId: string, artifactId: string) =>
+    fetchJson<SummaryArtifactResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/summaries/${encodeURIComponent(artifactId)}`,
+    ),
+  importSummary: (videoId: string, request: SummaryImportRequest) =>
+    fetchJson<SummaryCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/summaries/import`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    ),
+  activateSummary: (
+    videoId: string,
+    kind: SummaryArtifactKind,
+    artifactId: string,
+  ) =>
+    fetchJson<SummaryCatalogResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/summaries/active`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, artifactId }),
+      },
+    ),
   prompts: () => fetchJson<PromptLibraryResponse>("/api/prompts"),
   supportedSites: () =>
     fetchJson<SupportedSitesResponse>("/api/supported-sites"),
-  environment: () =>
-    fetchJson<EnvironmentStatusResponse>("/api/environment"),
-  setEnvironment: (name: string, value: string) =>
-    fetchJson<EnvironmentStatusResponse>("/api/environment", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, value }),
-    }),
-  clearEnvironment: (name: string) =>
-    fetchJson<EnvironmentStatusResponse>(
-      `/api/environment/${encodeURIComponent(name)}`,
+  notes: (videoId: string) =>
+    fetchJson<VideoNotesResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/notes`,
+    ),
+  createNote: (videoId: string, request: SaveVideoNoteRequest) =>
+    fetchJson<VideoNotesResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/notes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    ),
+  updateNote: (
+    videoId: string,
+    noteId: string,
+    request: SaveVideoNoteRequest,
+  ) =>
+    fetchJson<VideoNotesResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/notes/${encodeURIComponent(noteId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    ),
+  removeNote: (videoId: string, noteId: string) =>
+    fetchJson<VideoNotesResponse>(
+      `/api/jobs/${encodeURIComponent(videoId)}/notes/${encodeURIComponent(noteId)}`,
       { method: "DELETE" },
     ),
   previewRemoval: (target: RemovalTarget) =>

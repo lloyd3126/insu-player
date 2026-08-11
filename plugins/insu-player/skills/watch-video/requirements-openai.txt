@@ -1,2 +1,0 @@
-# The API key is read only from OPENAI_API_KEY at execution time.
-openai>=1.0

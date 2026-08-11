@@ -1,0 +1,7 @@
+interface:
+  display_name: "Summarize INSU Player Video"
+  short_description: "從已驗證完整句字幕建立可追溯的影音摘要"
+  default_prompt: "Use $summarize-video to create and import a new validated text summary revision for this INSU Player video."
+
+policy:
+  allow_implicit_invocation: true

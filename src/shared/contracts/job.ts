@@ -1,5 +1,5 @@
 import type {
-  ProcessorIdentity,
+  AgentProcessorIdentity,
   TimingProcessorIdentity,
 } from "@shared/contracts/processor"
 
@@ -53,15 +53,16 @@ export interface SubtitlePipeline {
   sourceLanguage: string
   outputLanguage: string
   timingProcessor?: TimingProcessorIdentity
-  contentProcessor?: ProcessorIdentity
-  segmentationProcessor?: ProcessorIdentity
+  contentProcessor?: AgentProcessorIdentity
+  segmentationProcessor?: AgentProcessorIdentity
   manualReferenceArtifactIds: string[]
   updatedAt: string
 }
 
 export interface TranscriptionSummary {
-  provider: "local" | "openai"
-  model: string
+  provider: TimingProcessorIdentity["provider"]
+  service: string
+  model: string | null
   languageTag: string
   engineLanguage: string | null
   updatedAt: string
@@ -79,6 +80,7 @@ export interface JobSummary {
   videoId: string
   title: string
   sourceUrl: string
+  sourceKind: "page" | "embed" | "network-media"
   state: JobState
   effectiveState: JobState
   stage: string

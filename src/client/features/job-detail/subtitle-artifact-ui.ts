@@ -41,14 +41,17 @@ export function artifactLanguageCodes(artifact: SubtitleArtifact) {
 }
 
 export function artifactProvider(artifact: SubtitleArtifact) {
-  const provider =
-    artifact.processor.provider === "local"
-      ? "本機"
-      : artifact.processor.provider === "openai"
-        ? "OpenAI API"
-        : artifact.processor.provider === "agent"
-          ? "Agent"
-          : "yt-dlp"
+  const labels: Record<string, string> = {
+    local: "本機",
+    openai: "OpenAI API",
+    groq: "Groq API",
+    elevenlabs: "ElevenLabs API",
+    xai: "xAI API",
+    openrouter: "OpenRouter API",
+    agent: "Agent",
+    "yt-dlp": "yt-dlp",
+  }
+  const provider = labels[artifact.processor.provider] ?? artifact.processor.provider
   const identity = artifact.processor.model ?? artifact.processor.service
   return identity ? `${provider} · ${identity}` : provider
 }

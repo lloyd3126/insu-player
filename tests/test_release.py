@@ -44,6 +44,18 @@ class PortableReleaseTests(unittest.TestCase):
                 self.assertIn(prefix + ".agents/skills/watch-video/SKILL.md", names)
                 self.assertIn(prefix + "plugins/insu-player/.codex-plugin/plugin.json", names)
                 self.assertIn(
+                    prefix + "plugins/insu-player/chrome-extension/manifest.json",
+                    names,
+                )
+                self.assertIn(
+                    prefix + "plugins/insu-player/chrome-extension/service-worker.js",
+                    names,
+                )
+                self.assertIn(
+                    prefix + "plugins/insu-player/chrome-extension/popup.html",
+                    names,
+                )
+                self.assertIn(
                     prefix + "plugins/insu-player/skills/watch-video/assets/library/app/index.html",
                     names,
                 )

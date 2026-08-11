@@ -16,12 +16,19 @@ import { atomicWriteJson } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
 import {
   SERVER_BUILD_ID,
-  STATUS_SCHEMA_VERSION,
+  DATA_SCHEMA_VERSION,
   isCurrentServerRuntime,
 } from "@server/runtime-contract"
 import { MediaService } from "@server/services/media-service"
+import { NoteService } from "@server/services/note-service"
+import { DownloadBatchService } from "@server/services/download-batch-service"
+import { ExtensionPairingService } from "@server/services/extension-pairing-service"
+import { MediaSessionService } from "@server/services/media-session-service"
 import { RemovalService } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
+import { RuntimeService } from "@server/services/runtime-service"
+import { SummaryService } from "@server/services/summary-service"
+import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 
 function processIsAlive(pid: unknown) {
   if (!Number.isInteger(pid) || Number(pid) <= 0) return false
@@ -57,7 +64,7 @@ function readActiveEndpoint(candidate: string) {
       pid: number
       runtime?: string
       buildId?: string
-      statusSchemaVersion?: number
+      dataSchemaVersion?: number
     }
   } catch (error) {
     if (error instanceof Error && error.message.includes("server descriptor")) {
@@ -137,7 +144,7 @@ if (!Number.isInteger(preferredPort) || preferredPort < 1 || preferredPort > 655
 }
 
 const serverDescriptor = path.join(workspace, ".insu-player-server.json")
-const sessionDescriptor = path.join(workspace, ".insu-environment-session.json")
+const sessionDescriptor = path.join(workspace, ".insu-provider-session.json")
 const active = readActiveEndpoint(serverDescriptor)
 if (active) {
   const health = await readServerHealth(active)
@@ -160,6 +167,7 @@ if (pidFile && pidFile !== workspace && !pidFile.startsWith(`${workspace}${path.
 const { db, sqlite } = openAppDatabase(path.join(workspace, "app.db"), path.resolve(values.migrations))
 const jobs = new JobRepository(workspace, db)
 const resources = new ResourceService(workspace)
+const models = new TranscriptionModelCatalogService(workspace, db)
 const removalScript = path.resolve(
   values["library-template"],
   "../../../..",
@@ -173,11 +181,39 @@ const mediaScript = path.resolve(
   "scripts",
   "manage-rendition.sh",
 )
+const downloadScript = path.resolve(
+  values["library-template"],
+  "../../..",
+  "scripts",
+  "download-video.sh",
+)
+const extensionRoot = path.resolve(
+  values["library-template"],
+  "../../../../../chrome-extension",
+)
+const mediaSessions = new MediaSessionService(workspace)
+const extensionPairing = new ExtensionPairingService(
+  db,
+  extensionRoot,
+)
 const app = createApplication({
   jobs,
   media: new MediaService(workspace, jobs, mediaScript),
+  downloads: new DownloadBatchService(
+    workspace,
+    db,
+    jobs,
+    downloadScript,
+    mediaSessions,
+  ),
+  extensionPairing,
+  mediaSessions,
+  models,
+  summaries: new SummaryService(jobs, db),
+  notes: new NoteService(db),
   removals: new RemovalService(workspace, removalScript),
   resources,
+  runtime: new RuntimeService(workspace, db),
   libraryAppRoot: path.resolve(values["library-template"]),
   playerRoot: path.resolve(values["player-template"]),
 })
@@ -187,7 +223,7 @@ const startServer = (port: number) =>
     hostname: values.host,
     port,
     fetch: app.fetch,
-    maxRequestBodySize: 4096,
+    maxRequestBodySize: 4_194_304,
     development: false,
   })
 
@@ -214,13 +250,13 @@ atomicWriteJson(serverDescriptor, {
   pid: process.pid,
   runtime: "hono-bun",
   buildId: SERVER_BUILD_ID,
-  statusSchemaVersion: STATUS_SCHEMA_VERSION,
+  dataSchemaVersion: DATA_SCHEMA_VERSION,
 })
 atomicWriteJson(sessionDescriptor, {
   host: values.host,
   port: actualPort,
   pid: process.pid,
-  token: resources.sessionToken,
+  token: models.credentials.sessionToken,
 })
 if (pidFile) atomicWriteJson(pidFile, process.pid)
 

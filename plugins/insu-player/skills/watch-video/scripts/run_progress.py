@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a command while mirroring percentage progress into status.json."""
+"""Run a command while mirroring percentage progress into SQLite operations."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--message", required=True)
     parser.add_argument("--success-message")
     parser.add_argument("--allow-failure", action="store_true")
+    parser.add_argument("--redact-value", action="append", default=[])
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser
 
@@ -78,6 +79,9 @@ def main() -> int:
             log_handle.write(f"\n[{utc_now()}] START {Path(command[0]).name}\n")
             for raw_line in process.stdout:
                 line = raw_line.rstrip("\r\n")
+                for secret in args.redact_value:
+                    if secret:
+                        line = line.replace(secret, "[redacted-source-url]")
                 print(line, flush=True)
                 log_handle.write(line + "\n")
                 log_handle.flush()

@@ -8,9 +8,10 @@ import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { JobAboutPanel } from "@/features/job-detail/JobAboutPanel"
 import { JobActivityPanel } from "@/features/job-detail/JobActivityPanel"
-import { JobDetailPlaceholderPanel } from "@/features/job-detail/JobDetailPlaceholderPanel"
 import { MediaQualityPanel } from "@/features/job-detail/MediaQualityPanel"
 import { SubtitleManagementPanel } from "@/features/job-detail/SubtitleArtifactPanel"
+import { VideoSummaryPanel } from "@/features/job-detail/VideoSummaryPanel"
+import { VideoNotesPanel } from "@/features/job-detail/VideoNotesPanel"
 import { useJobDetail } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
 
@@ -94,20 +95,10 @@ function JobDetailTabs({
         ) : null}
       </TabsContent>
       <TabsContent value="summary" className="detail-tab-panel">
-        {tab === "summary" ? (
-          <JobDetailPlaceholderPanel
-            title="影音摘要尚未設定"
-            description="這裡會顯示由 Agent 根據影音與字幕整理的摘要。"
-          />
-        ) : null}
+        {tab === "summary" ? <VideoSummaryPanel job={job} /> : null}
       </TabsContent>
       <TabsContent value="notes" className="detail-tab-panel">
-        {tab === "notes" ? (
-          <JobDetailPlaceholderPanel
-            title="影音筆記尚未設定"
-            description="這裡會收納觀看影音時整理的筆記。"
-          />
-        ) : null}
+        {tab === "notes" ? <VideoNotesPanel job={job} /> : null}
       </TabsContent>
       <TabsContent value="activity" className="detail-tab-panel">
         {tab === "activity" ? <JobActivityPanel job={job} /> : null}

@@ -4,15 +4,16 @@ import {
   BUILT_IN_PROMPTS,
   CHECK_SOURCE_SUPPORT_PROMPT,
   CREATE_PROMPT_WITH_AGENT,
-  ENVIRONMENT_PROMPT,
-  MODEL_PROMPTS,
   buildAddVideoConversationPrompt,
   buildAddVideoPrompt,
   buildCreateProofreadSubtitlePrompt,
   buildCreateSegmentedSubtitlePrompt,
   buildCreateTranslationSubtitlePrompt,
+  buildDownloadedMediaPrompt,
+  buildMindMapPrompt,
   buildRecoveryPrompt,
   buildSubtitleManagementPrompt,
+  buildVideoSummaryPrompt,
   normalizeVideoUrl,
 } from "./insu-prompts"
 
@@ -29,9 +30,12 @@ describe("INSU prompt contract", () => {
     expect(prompt).toContain("一次只問一個必要問題")
     expect(prompt).toContain("來源語言預設交給 timing 模型")
     expect(prompt).toContain("不要要求我選 skill、模型名稱、provider、processor")
-    expect(prompt).toContain("預設優先用本機 Whisper medium")
+    expect(prompt).toContain("轉錄模型的唯一事實來源")
+    expect(prompt).toContain("不得自行切換，也不得 fallback")
     expect(prompt).toContain("目前 Agent 讀取轉錄文字")
-    expect(prompt).toContain("只有實際準備使用 API 時")
+    expect(prompt).toContain("只有轉錄設定目前選用雲端語音辨識時")
+    expect(prompt).toContain("不得自動換成另一家服務或沒有 word timing 的路由")
+    expect(prompt).toContain("API 不得用於完整句重建、校正、翻譯")
     expect(prompt).toContain("完整句字幕與切分字幕都已通過驗證")
     expect(prompt).toContain("$monitor-player-job")
     expect(prompt).not.toContain("\uFF1B")
@@ -71,7 +75,11 @@ describe("INSU prompt contract", () => {
       stage: "model_transcription",
       progress: 42,
       sourceLanguage: "en-US",
-      timingProcessor: { provider: "local", model: "medium" },
+      timingProcessor: {
+        provider: "local",
+        service: "openai-whisper",
+        model: "medium",
+      },
     })
 
     expect(prompt).toContain("影音 ID：safe-id")
@@ -95,7 +103,11 @@ describe("INSU prompt contract", () => {
       mode: "translate",
       sourceLanguage: "en-US",
       outputLanguage: "zh-TW",
-      timingProcessor: { provider: "local", model: "medium" },
+      timingProcessor: {
+        provider: "local",
+        service: "openai-whisper",
+        model: "medium",
+      },
       contentProcessor: { provider: "agent", service: "codex" },
     })
 
@@ -125,14 +137,12 @@ describe("INSU prompt contract", () => {
     expect(prompt).toContain("不要重新下載影音")
     expect(prompt).toContain("$translate-subtitles")
     expect(prompt).toContain("$segment-subtitles")
+    expect(prompt).toContain("固定由目前 Agent 完成")
   })
 
   test("all website prompt sources reject full-width semicolons", () => {
     const prompts = [
       CREATE_PROMPT_WITH_AGENT,
-      ENVIRONMENT_PROMPT.prompt,
-      MODEL_PROMPTS.local.prompt,
-      MODEL_PROMPTS.cloud.prompt,
       CHECK_SOURCE_SUPPORT_PROMPT,
       ...BUILT_IN_PROMPTS.map((prompt) => prompt.prompt),
       buildAddVideoPrompt("https://example.test/video"),
@@ -159,7 +169,36 @@ describe("INSU prompt contract", () => {
         timingArtifactId: "source-en-r1",
         sourceKind: "translation",
       }),
+      buildDownloadedMediaPrompt(["safe-id"]),
+      buildVideoSummaryPrompt("safe-id", "translation-en-ja-r1", "ja"),
+      buildMindMapPrompt("safe-id", "safe-id-text-ja-r1", "ja"),
     ]
     expect(prompts.every((prompt) => !prompt.includes("\uFF1B"))).toBe(true)
   })
+
+  test("direct-download continuation and summaries keep exact current dependencies", () => {
+    const continuation = buildDownloadedMediaPrompt(["video-one", "video-two"])
+    expect(continuation).toContain("不要重新下載影音")
+    expect(continuation).toContain("rightsConfirmed=true")
+    expect(continuation).not.toContain("開始下載前")
+
+    const summary = buildVideoSummaryPrompt(
+      "video-one",
+      "video-one-translation-en-zh-TW-r1",
+      "zh-TW",
+    )
+    expect(summary).toContain("$summarize-video")
+    expect(summary).toContain("字幕產物：video-one-translation-en-zh-TW-r1")
+    expect(summary).toContain("不要覆寫或刪除既有摘要")
+
+    const mindmap = buildMindMapPrompt(
+      "video-one",
+      "video-one-text-zh-TW-r1",
+      "zh-TW",
+    )
+    expect(mindmap).toContain("$map-video-summary")
+    expect(mindmap).toContain("最多四層且最多 120 個節點")
+    expect(mindmap).toContain("不要加入 HTML、圖片、程式碼區塊或外部連結")
+  })
+
 })

@@ -32,6 +32,12 @@ function blockerMessage(blocker: RemovalIssue) {
   if (blocker.code === "active-process") {
     return "這項內容仍在處理中，請等待處理結束後再試。"
   }
+  if (blocker.code === "dependent-summary-artifact") {
+    return "請先移除依賴這項內容的心智圖或文字摘要，再重新開啟刪除視窗。"
+  }
+  if (blocker.code === "active-rendition") {
+    return "請先切換到另一個已下載的播放畫質，再重新開啟刪除視窗。"
+  }
   return "目前無法安全移除這項內容，請稍後再試。"
 }
 

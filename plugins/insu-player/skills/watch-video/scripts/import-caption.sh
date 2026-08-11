@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: import-caption.sh <workspace> <video-id> <language> <vtt-file> --source-type manual-cc|model-transcript --processor-provider yt-dlp|local|openai [--processor-service NAME] [--processor-model NAME] [--timing-unit-kind cue|word|token|grapheme-group] [--revision N]\n'
+  printf 'usage: import-caption.sh <workspace> <video-id> <language> <vtt-file> --source-type manual-cc|model-transcript --processor-provider yt-dlp|local|openai|groq|elevenlabs|xai|openrouter [--processor-service NAME] [--processor-model NAME] [--timing-unit-kind cue|word|token|grapheme-group] [--revision N]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -36,15 +36,27 @@ if [ "$source_type" = "manual-cc" ]; then
   timing_unit_kind="${timing_unit_kind:-cue}"
   [ "$timing_unit_kind" = "cue" ] || caption_die "manual CC must use cue timing"
 else
-  case "$processor_provider" in local|openai) ;; *) caption_die "model transcripts require --processor-provider local or openai" ;; esac
-  [ -n "$processor_model" ] || caption_die "model transcripts require --processor-model"
+  case "$processor_provider" in local|openai|groq|elevenlabs|xai|openrouter) ;; *) caption_die "model transcripts require a supported timing provider" ;; esac
   timing_unit_kind="${timing_unit_kind:-word}"
   case "$timing_unit_kind" in word|token|grapheme-group) ;; *) caption_die "model transcripts require word, token, or grapheme-group timing" ;; esac
 fi
 case "$artifact_revision" in ''|*[!0-9]*) caption_die "--revision must be a positive integer" ;; esac
 [ "$artifact_revision" -ge 1 ] || caption_die "--revision must be a positive integer"
 case "$processor_service" in *[!A-Za-z0-9._-]*) caption_die "invalid processor service" ;; esac
-case "$processor_model" in *[!A-Za-z0-9._-]*) caption_die "invalid processor model" ;; esac
+if [ "$processor_provider" = "openrouter" ]; then
+  [ "$processor_model" = "openai/whisper-large-v3" ] || caption_die "OpenRouter word timing is locked to openai/whisper-large-v3"
+  case "$processor_model" in */*) ;; *) caption_die "OpenRouter model must include its provider namespace" ;; esac
+  case "$processor_model" in *[!A-Za-z0-9._/-]*) caption_die "invalid processor model" ;; esac
+else
+  case "$processor_model" in *[!A-Za-z0-9._-]*) caption_die "invalid processor model" ;; esac
+fi
+if [ "$source_type" = "model-transcript" ]; then
+  case "$processor_provider:$processor_service:$processor_model" in
+    local:openai-whisper:*|openai:audio/transcriptions:whisper-1|groq:audio/transcriptions:whisper-large-v3|groq:audio/transcriptions:whisper-large-v3-turbo|elevenlabs:speech-to-text:scribe_v2|openrouter:audio/transcriptions:openai/whisper-large-v3) ;;
+    xai:v1/stt:) ;;
+    *) caption_die "processor identity does not match the current timing provider contract" ;;
+  esac
+fi
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace

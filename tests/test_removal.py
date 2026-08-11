@@ -10,6 +10,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from current_database import (
+    create_current_database,
+    read_media_record,
+    write_media_record,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REMOVAL_SCRIPT = (
@@ -67,52 +73,61 @@ class LibraryRemovalTests(unittest.TestCase):
             "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHello\n",
             encoding="utf-8",
         )
-        self.write_status()
         self.create_database()
+        self.write_status()
+        self.seed_database_records()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
     def write_status(self, **overrides: object) -> None:
         payload: dict[str, object] = {
-            "schemaVersion": 6,
+            "schemaVersion": 2,
             "videoId": "demo-video",
             "title": "Demo Video",
+            "sourceUrl": "https://example.test/watch?v=demo-video",
+            "sourceKind": "page",
+            "durationSeconds": 60,
             "state": "ready",
             "stage": "complete",
-            "history": [],
+            "progress": 100,
+            "message": "字幕已完成",
+            "assets": {},
             "subtitleArtifacts": [],
             "activeSubtitleTracks": {},
+            "subtitlePipeline": None,
+            "transcription": None,
+            "process": None,
+            "lastError": None,
+            "createdAt": "2026-08-08T00:00:00Z",
+            "updatedAt": "2026-08-08T00:00:00Z",
+            "completedAt": "2026-08-08T00:00:00Z",
+            "history": [],
         }
         payload.update(overrides)
-        (self.job / "status.json").write_text(
-            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-        )
+        write_media_record(self.workspace, payload)
 
     def create_database(self) -> None:
+        create_current_database(self.workspace)
+
+    def seed_database_records(self) -> None:
         connection = sqlite3.connect(self.workspace / "app.db")
         try:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.executescript(
                 """
-                CREATE TABLE jobs (
-                  video_id TEXT PRIMARY KEY,
-                  title TEXT NOT NULL
+                INSERT INTO job_history(video_id, sequence, message)
+                  VALUES ('demo-video', 1, 'ready');
+                INSERT INTO media_renditions(
+                  id, video_id, requested_height, width, height, container,
+                  video_codec, audio_codec, relative_path, size_bytes,
+                  checksum, active, created_at
+                ) VALUES (
+                  '720p-test', 'demo-video', 720, 1280, 720, 'mp4',
+                  'avc1', 'aac', 'source/renditions/720p-test.mp4', 5,
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  1, '2026-08-08T00:00:00Z'
                 );
-                CREATE TABLE job_history (
-                  id INTEGER PRIMARY KEY,
-                  video_id TEXT NOT NULL REFERENCES jobs(video_id) ON DELETE CASCADE,
-                  message TEXT
-                );
-                CREATE TABLE media_renditions (
-                  id TEXT PRIMARY KEY,
-                  video_id TEXT NOT NULL REFERENCES jobs(video_id) ON DELETE CASCADE,
-                  height INTEGER NOT NULL
-                );
-                INSERT INTO jobs(video_id, title) VALUES ('demo-video', 'Demo Video');
-                INSERT INTO job_history(video_id, message) VALUES ('demo-video', 'ready');
-                INSERT INTO media_renditions(id, video_id, height)
-                  VALUES ('720p-test', 'demo-video', 720);
                 """
             )
             connection.commit()
@@ -189,23 +204,51 @@ class LibraryRemovalTests(unittest.TestCase):
             check=check,
         )
 
+    def run_summary_removal(
+        self, command: str, artifact_id: str, *arguments: str, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(REMOVAL_SCRIPT),
+                command,
+                str(self.workspace),
+                "--kind",
+                "summary-artifact",
+                "--video-id",
+                "demo-video",
+                "--artifact-id",
+                artifact_id,
+                *arguments,
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=check,
+        )
+
     def preview(self) -> dict[str, object]:
         return json.loads(self.run_removal("preview").stdout)
 
     def test_preview_is_read_only_and_reports_owned_files_and_database_rows(self) -> None:
-        before = (self.job / "status.json").read_bytes()
+        before = read_media_record(self.workspace, "demo-video")
         plan = self.preview()
 
         self.assertEqual(plan["schemaVersion"], 1)
         self.assertEqual(plan["target"]["videoId"], "demo-video")
         self.assertEqual(plan["filesystem"]["path"], "jobs/demo-video")
-        self.assertEqual(plan["filesystem"]["files"], 4)
+        self.assertEqual(plan["filesystem"]["files"], 3)
         self.assertEqual(plan["blocked"], [])
         self.assertRegex(plan["digest"], r"^[0-9a-f]{64}$")
         rows = {item["table"]: item["rows"] for item in plan["database"]["rows"]}
-        self.assertEqual(rows, {"job_history": 1, "jobs": 1, "media_renditions": 1})
+        self.assertEqual(rows["media_items"], 1)
+        self.assertEqual(rows["job_history"], 1)
+        self.assertEqual(rows["media_renditions"], 1)
+        self.assertEqual(rows["active_summary_artifacts"], 0)
+        self.assertEqual(rows["summary_artifacts"], 0)
         self.assertTrue(self.job.is_dir())
-        self.assertEqual((self.job / "status.json").read_bytes(), before)
+        self.assertEqual(read_media_record(self.workspace, "demo-video"), before)
 
     def test_execute_rejects_a_stale_plan_digest(self) -> None:
         digest = self.preview()["digest"]
@@ -246,7 +289,17 @@ class LibraryRemovalTests(unittest.TestCase):
         self.assertTrue(external.is_file())
 
     def test_status_identity_mismatch_is_blocked(self) -> None:
-        self.write_status(videoId="different-video")
+        payload = read_media_record(self.workspace, "demo-video")
+        payload["videoId"] = "different-video"
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            connection.execute(
+                "UPDATE media_items SET record_json = ? WHERE video_id = 'demo-video'",
+                (json.dumps(payload, ensure_ascii=False),),
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
         plan = self.preview()
 
@@ -266,11 +319,11 @@ class LibraryRemovalTests(unittest.TestCase):
         self.assertFalse(self.job.exists())
         verification = json.loads(self.run_removal("verify").stdout)
         self.assertTrue(verification["removed"])
-        self.assertEqual(verification["databaseRows"], [
-            {"delete": "cascade", "rows": 0, "table": "job_history"},
-            {"delete": "primary", "rows": 0, "table": "jobs"},
-            {"delete": "cascade", "rows": 0, "table": "media_renditions"},
-        ])
+        rows = {item["table"]: item["rows"] for item in verification["databaseRows"]}
+        self.assertEqual(rows["media_items"], 0)
+        self.assertEqual(rows["job_history"], 0)
+        self.assertEqual(rows["media_renditions"], 0)
+        self.assertEqual(rows["summary_artifacts"], 0)
 
     def test_media_rendition_removal_preserves_active_quality_and_other_job_data(self) -> None:
         rendition = self.job / "source" / "renditions" / "1080p-test.mp4"
@@ -297,8 +350,28 @@ class LibraryRemovalTests(unittest.TestCase):
         connection = sqlite3.connect(self.workspace / "app.db")
         try:
             connection.execute(
-                "INSERT INTO media_renditions(id, video_id, height) VALUES (?, ?, ?)",
-                ("1080p-test", "demo-video", 1080),
+                """
+                INSERT INTO media_renditions(
+                  id, video_id, requested_height, width, height, container,
+                  video_codec, audio_codec, relative_path, size_bytes,
+                  checksum, active, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "1080p-test",
+                    "demo-video",
+                    1080,
+                    1920,
+                    1080,
+                    "mp4",
+                    "avc1",
+                    "aac",
+                    "source/renditions/1080p-test.mp4",
+                    rendition.stat().st_size,
+                    hashlib.sha256(rendition.read_bytes()).hexdigest(),
+                    0,
+                    "2026-08-08T01:00:00Z",
+                ),
             )
             connection.commit()
         finally:
@@ -332,7 +405,7 @@ class LibraryRemovalTests(unittest.TestCase):
         )
         self.assertFalse(rendition.exists())
         self.assertTrue(self.job.is_dir())
-        self.assertTrue((self.job / "status.json").is_file())
+        self.assertEqual(read_media_record(self.workspace, "demo-video")["videoId"], "demo-video")
 
     def test_subtitle_artifact_removal_cascades_dependents_and_preserves_video(self) -> None:
         artifact_root = self.job / "subtitle-work" / "artifacts"
@@ -422,6 +495,49 @@ class LibraryRemovalTests(unittest.TestCase):
             },
         )
 
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(
+                """
+                INSERT INTO summary_artifacts(
+                  id, video_id, kind, revision, language_code, title,
+                  processor_provider, processor_service, relative_path,
+                  checksum, validation_state, created_at
+                ) VALUES (
+                  'summary-from-translation', 'demo-video', 'text', 1, 'fr',
+                  'Summary', 'agent', 'codex',
+                  'summaries/summary-from-translation/summary.md', ?, 'valid',
+                  '2026-08-08T00:00:00Z'
+                )
+                """,
+                ("a" * 64,),
+            )
+            connection.execute(
+                "INSERT INTO summary_dependencies VALUES ('summary-from-translation', 'subtitle', ?)",
+                (translation_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        blocked_preview = json.loads(
+            self.run_subtitle_removal("preview", translation_id).stdout
+        )
+        self.assertEqual(
+            blocked_preview["blocked"][0]["code"],
+            "dependent-summary-artifact",
+        )
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(
+                "DELETE FROM summary_artifacts WHERE id = 'summary-from-translation'"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
         preview = json.loads(
             self.run_subtitle_removal("preview", translation_id).stdout
         )
@@ -442,7 +558,7 @@ class LibraryRemovalTests(unittest.TestCase):
         )
 
         self.assertTrue(execution["verification"]["removed"])
-        status = json.loads((self.job / "status.json").read_text(encoding="utf-8"))
+        status = read_media_record(self.workspace, "demo-video")
         self.assertEqual(
             [artifact["id"] for artifact in status["subtitleArtifacts"]],
             [source_id],
@@ -463,6 +579,115 @@ class LibraryRemovalTests(unittest.TestCase):
             self.assertFalse(removed_path.exists())
         self.assertFalse((artifact_root / translation_id).exists())
         self.assertFalse((artifact_root / segmentation_id).exists())
+
+    def test_summary_removal_uses_preview_and_blocks_live_dependencies(self) -> None:
+        text_id = "demo-video-text-en-r1"
+        mindmap_id = "demo-video-mindmap-en-r1"
+        summaries = self.job / "summaries"
+
+        def write_artifact(
+            artifact_id: str,
+            kind: str,
+            content_name: str,
+            content: str,
+        ) -> tuple[str, str]:
+            directory = summaries / artifact_id
+            directory.mkdir(parents=True)
+            content_path = directory / content_name
+            content_path.write_text(content, encoding="utf-8")
+            checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            (directory / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "artifactId": artifact_id,
+                        "videoId": "demo-video",
+                        "kind": kind,
+                        "checksum": checksum,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return content_path.relative_to(self.job).as_posix(), checksum
+
+        text_path, text_checksum = write_artifact(
+            text_id, "text", "summary.md", "# Summary\n\nComplete sentences."
+        )
+        mindmap_path, mindmap_checksum = write_artifact(
+            mindmap_id, "mindmap", "mindmap.md", "# Summary\n- Topic"
+        )
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            for artifact_id, kind, relative_path, checksum in (
+                (text_id, "text", text_path, text_checksum),
+                (mindmap_id, "mindmap", mindmap_path, mindmap_checksum),
+            ):
+                connection.execute(
+                    """
+                    INSERT INTO summary_artifacts(
+                      id, video_id, kind, revision, language_code, title,
+                      processor_provider, processor_service, relative_path,
+                      checksum, validation_state, created_at
+                    ) VALUES (?, 'demo-video', ?, 1, 'en', ?, 'agent', 'codex', ?, ?, 'valid', '2026-08-08T00:00:00Z')
+                    """,
+                    (artifact_id, kind, artifact_id, relative_path, checksum),
+                )
+            connection.execute(
+                "INSERT INTO summary_dependencies VALUES (?, 'subtitle', 'proofread-en-r1')",
+                (text_id,),
+            )
+            connection.execute(
+                "INSERT INTO summary_dependencies VALUES (?, 'summary', ?)",
+                (mindmap_id, text_id),
+            )
+            connection.execute(
+                "INSERT INTO active_summary_artifacts VALUES ('demo-video', 'text', ?, '2026-08-08T00:00:00Z')",
+                (text_id,),
+            )
+            connection.execute(
+                "INSERT INTO active_summary_artifacts VALUES ('demo-video', 'mindmap', ?, '2026-08-08T00:00:00Z')",
+                (mindmap_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        blocked = json.loads(
+            self.run_summary_removal("preview", text_id).stdout
+        )
+        self.assertEqual(blocked["blocked"][0]["code"], "dependent-summary-artifact")
+
+        mindmap_preview = json.loads(
+            self.run_summary_removal("preview", mindmap_id).stdout
+        )
+        self.assertEqual(mindmap_preview["blocked"], [])
+        mindmap_execution = json.loads(
+            self.run_summary_removal(
+                "execute",
+                mindmap_id,
+                "--plan-digest",
+                mindmap_preview["digest"],
+                "--yes",
+            ).stdout
+        )
+        self.assertTrue(mindmap_execution["verification"]["removed"])
+
+        text_preview = json.loads(
+            self.run_summary_removal("preview", text_id).stdout
+        )
+        self.assertEqual(text_preview["blocked"], [])
+        text_execution = json.loads(
+            self.run_summary_removal(
+                "execute",
+                text_id,
+                "--plan-digest",
+                text_preview["digest"],
+                "--yes",
+            ).stdout
+        )
+        self.assertTrue(text_execution["verification"]["removed"])
+        self.assertTrue((self.job / "source" / "renditions" / "720p-test.mp4").is_file())
 
 
 if __name__ == "__main__":

@@ -4,12 +4,11 @@ import { HomePage } from "../pages/home.page"
 import {
   BUILT_IN_PROMPTS,
   CHECK_SOURCE_SUPPORT_PROMPT,
-  ENVIRONMENT_PROMPT,
   buildAddVideoPrompt,
 } from "../../../src/shared/prompts/insu-prompts"
 
 test.describe("INSU Player home @smoke", () => {
-  test("keeps the homepage focused on three primary destinations", async ({ page }) => {
+  test("shows six ordered text-only navigation destinations", async ({ page }) => {
     const home = new HomePage(page)
     await home.goto()
 
@@ -34,13 +33,26 @@ test.describe("INSU Player home @smoke", () => {
       }),
     ).toBeGreaterThan(1)
 
-    await expect(home.navigation.getByRole("button")).toHaveCount(3)
+    const navigationButtons = home.navigation.getByRole("button")
+    await expect(navigationButtons).toHaveCount(6)
+    await expect(navigationButtons).toHaveText([
+      "開始說明",
+      "我的提示",
+      "轉錄設定",
+      "支援網站",
+      "擴充功能",
+      /影片中心/,
+    ])
+    await expect(home.navigation.locator("svg")).toHaveCount(1)
     await expect(
-      home.navigation.getByRole("button", { name: "使用說明" }),
-    ).toBeVisible()
+      home.navigation.getByRole("button", { name: /影片中心/ }).locator("svg"),
+    ).toHaveCount(1)
+    await expect(
+      home.navigation.getByRole("button", { name: "開始說明" }).locator("svg"),
+    ).toHaveCount(0)
     await expect(
       home.navigation.getByRole("button", { name: "功能設定" }),
-    ).toBeVisible()
+    ).toHaveCount(0)
     await expect(
       home.navigation.getByRole("button", { name: "開始使用", exact: true }),
     ).toHaveCount(0)
@@ -50,7 +62,100 @@ test.describe("INSU Player home @smoke", () => {
     await expect(page).toHaveURL(/\/$/)
   })
 
-  test("groups all guidance into three reusable tabs", async ({ page }) => {
+  test("opens the direct download queue from the homepage", async ({ page }) => {
+    let batch: Record<string, unknown> | null = null
+    const completedBatch = {
+      id: "batch-demo",
+      state: "complete",
+      rightsConfirmed: true,
+      createdAt: "2026-08-11T00:00:00Z",
+      updatedAt: "2026-08-11T00:01:00Z",
+      items: [
+        {
+          id: "item-demo",
+          ordinal: 0,
+          sourceKind: "page",
+          pageUrl: "https://www.youtube.com/watch?v=demo-video",
+          sourceUrl: "https://www.youtube.com/watch?v=demo-video",
+          operationId: "operation-demo",
+          videoId: "demo-video",
+          state: "downloaded",
+          progress: 100,
+          message: "已下載並驗證 1080p MP4",
+          errorCode: null,
+          lowQualityApproved: false,
+          authentication: "none",
+          authenticationConsentAt: null,
+          createdAt: "2026-08-11T00:00:00Z",
+          updatedAt: "2026-08-11T00:01:00Z",
+          completedAt: "2026-08-11T00:01:00Z",
+        },
+      ],
+    }
+    await page.route("**/api/jobs", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          jobs: [{ videoId: "demo-video", state: "downloaded" }],
+          serverTime: "2026-08-11T00:01:00Z",
+        }),
+      }),
+    )
+    await page.route(/\/api\/download-batches$/, (route) => {
+      if (route.request().method() === "POST") {
+        batch = completedBatch
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ accepted: true, batch }),
+        })
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ batches: batch ? [batch] : [] }),
+      })
+    })
+    const home = new HomePage(page)
+    await home.goto()
+
+    await page.getByRole("button", { name: "加入影音" }).click()
+    const dialog = page.getByRole("dialog", { name: "加入影音" })
+    await expect(dialog).toBeVisible()
+    await expect(page).toHaveURL(/\/library\/add\/sources$/)
+    await expect(dialog.getByRole("tab")).toHaveText([
+      "1 加入影音",
+      "2 下載進度",
+      "3 交給 Agent",
+    ])
+    await expect(dialog.getByLabel("單支影音網址")).toBeVisible()
+    await expect(
+      dialog.getByText("我確認這些是我自己的內容，或我已取得下載、轉錄與觀看的權利"),
+    ).toBeVisible()
+    await dialog.getByLabel("單支影音網址").fill(
+      "https://www.youtube.com/watch?v=demo-video",
+    )
+    await dialog.getByRole("checkbox", {
+      name: /我確認這些是我自己的內容/,
+    }).click()
+    await dialog.getByRole("button", { name: "送出 1 個影音" }).click()
+    await expect(page).toHaveURL(/\/library\/add\/downloads$/)
+    await expect(dialog.getByRole("row", { name: /demo-video/ })).toBeVisible()
+    await dialog.getByRole("button", { name: "前往交給 Agent" }).click()
+    await expect(page).toHaveURL(/\/library\/add\/handoff$/)
+    await expect(
+      dialog.getByRole("heading", { name: "請 Agent 接續處理字幕" }),
+    ).toBeVisible()
+    await expect(
+      dialog.getByRole("button", { name: "複製提示" }).first(),
+    ).toBeEnabled()
+    await page.reload()
+    await expect(page).toHaveURL(/\/library\/add\/handoff$/)
+    await expect(page.getByRole("dialog", { name: "加入影音" })).toBeVisible()
+  })
+
+  test("keeps each getting-started section in its own tab", async ({ page }) => {
     await page.context().grantPermissions([
       "clipboard-read",
       "clipboard-write",
@@ -91,17 +196,42 @@ test.describe("INSU Player home @smoke", () => {
         }),
       }),
     )
+    await page.route("**/api/runtime", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          initialized: true,
+          capabilities: [
+            ["database", "影音庫資料庫", "SQLite 已建立"],
+            ["bun", "網頁執行環境", "Bun 已安裝在 workspace"],
+            ["python", "影音處理套件", "影音處理套件已安裝在 workspace"],
+            ["ffmpeg", "影音轉換工具", "FFmpeg 已安裝在 workspace"],
+            ["yt-dlp", "來源下載工具", "yt-dlp 已安裝在 workspace"],
+            ["whisper", "本機語音辨識", "Whisper 已安裝在 workspace"],
+            ["whisper-medium", "本機逐字時間模型", "Whisper medium 已下載"],
+          ].map(([key, label, detail]) => ({
+            key,
+            label,
+            detail,
+            state: "ready",
+            version: null,
+            checkedAt: "2026-08-11T00:00:00Z",
+          })),
+          activeSetup: null,
+        }),
+      }),
+    )
     const home = new HomePage(page)
     await home.goto()
 
-    const guide = await home.openNavigationDialog("使用說明", "使用說明")
+    const guide = await home.openNavigationDialog("開始說明", "開始說明")
     await expect(guide.getByRole("tab")).toHaveCount(3)
+    await expect(guide.getByRole("tab", { name: "我的提示" })).toHaveCount(0)
+    await expect(guide.getByRole("tab", { name: "支援網站" })).toHaveCount(0)
     await expect(guide.getByRole("tab", { name: "使用情境" })).toHaveCount(0)
-    await expect(guide.getByText("加入一支影音", { exact: true })).toBeVisible()
     await expect(
-      guide.getByText(
-        "貼上影音網址並複製提示，接下來只需要用一般語言回答想要哪種字幕。",
-      ),
+      guide.getByRole("heading", { name: "INSU Player 已準備完成" }),
     ).toBeVisible()
     const firstContentTop = async (tabName: string) => {
       const panel = guide.getByRole("tabpanel", { name: tabName })
@@ -113,7 +243,25 @@ test.describe("INSU Player home @smoke", () => {
         .locator(".guide-tab-content > :first-child")
         .evaluate((element) => element.getBoundingClientRect().top)
     }
-    const tabStartTops = [await firstContentTop("開始使用")]
+    const tabStartTops = [await firstContentTop("1 初始化")]
+    await expect(guide.locator('[role="tabpanel"]:visible > * > *')).toHaveCount(1)
+
+    await guide.getByRole("button", { name: "前往加入影音" }).click()
+    await expect(page).toHaveURL(/\/guide\/add-media$/)
+    await expect
+      .poll(async () =>
+        Math.abs((await firstContentTop("2 加入影音")) - tabStartTops[0]),
+      )
+      .toBeLessThan(2)
+    tabStartTops.push(await firstContentTop("2 加入影音"))
+    await expect(
+      guide.getByRole("heading", { name: "加入一支影音" }),
+    ).toBeVisible()
+    await expect(
+      guide.getByText(
+        "貼上影音網址並複製提示，接下來只需要用一般語言回答想要哪種字幕。",
+      ),
+    ).toBeVisible()
 
     const usageCallout = guide.locator(".usage-layout > .prompt-action-card")
     await expect(usageCallout).toBeVisible()
@@ -138,50 +286,51 @@ test.describe("INSU Player home @smoke", () => {
       .toBe(buildAddVideoPrompt(videoUrl))
     await expect(usageCallout).not.toContainText("VIDEO_ID")
     await expect(usageCallout).not.toContainText("VIDEO_URL")
-    await expect(guide.locator(".tutorial-step-list > li")).toHaveCount(4)
+    await expect(
+      usageCallout.getByRole("button", { name: "前往交給 Agent" }),
+    ).toBeVisible()
+    await expect(guide.locator('[role="tabpanel"]:visible > * > *')).toHaveCount(1)
+    await expect(guide.locator(".tutorial-card")).toHaveCount(0)
     const usageCopy = await usageCallout.boundingBox()
     const usageAction = await usageCallout
       .getByRole("button", { name: /已複製|複製加入提示/ })
       .boundingBox()
-    const tutorialCard = await guide.locator(".tutorial-card").boundingBox()
     expect(usageCopy).not.toBeNull()
     expect(usageAction).not.toBeNull()
-    expect(tutorialCard).not.toBeNull()
     expect(usageAction!.x).toBeGreaterThan(usageCopy!.x + usageCopy!.width / 2)
     expect(usageAction!.y).toBeLessThan(usageCopy!.y + usageCopy!.height / 3)
-    expect(tutorialCard!.y).toBeGreaterThanOrEqual(
-      usageCopy!.y + usageCopy!.height,
-    )
 
-    const myPromptsTab = guide.getByRole("tab", { name: "我的提示" })
-    await myPromptsTab.click()
-    tabStartTops.push(await firstContentTop("我的提示"))
-    const guideBody = guide.locator(".app-dialog__body")
-    const guideTabs = guide.locator(".app-dialog-tabs")
-    const guideTabList = guide.getByRole("tablist")
-    const myPromptsPanel = guide.getByRole("tabpanel", { name: "我的提示" })
-    const myPrompts = myPromptsPanel.locator(".advanced-section")
+    await usageCallout.getByRole("button", { name: "前往交給 Agent" }).click()
+    await expect(page).toHaveURL(/\/guide\/handoff$/)
+    tabStartTops.push(await firstContentTop("3 交給 Agent"))
+    await expect(guide.locator('[role="tabpanel"]:visible > * > *')).toHaveCount(1)
+    await expect(guide.locator(".tutorial-card")).toHaveCount(1)
+    await expect(
+      guide.getByRole("heading", { name: "把提示交給 Agent" }),
+    ).toBeVisible()
+    await expect(guide.locator(".tutorial-step-list > li")).toHaveCount(4)
+
+    expect(
+      Math.max(...tabStartTops) - Math.min(...tabStartTops),
+      `tab starts: ${tabStartTops.join(", ")}`,
+    ).toBeLessThan(2)
+    await guide.getByRole("button", { name: "關閉", exact: true }).click()
+
+    const myPromptsDialog = await home.openNavigationDialog(
+      "我的提示",
+      "我的提示",
+    )
+    await expect(page).toHaveURL(/\/prompts$/)
+    const myPromptsBody = myPromptsDialog.locator(".app-dialog__body")
+    const myPrompts = myPromptsDialog.locator(".advanced-section")
     const myPromptsCallout = myPrompts.locator(":scope > .prompt-action-card")
     const myPromptsScrollRegion = myPrompts.locator(
       ":scope > .my-prompts-scroll-region",
     )
-    await expect(guideBody).toHaveClass(/app-dialog__body--tabbed/)
+    await expect(myPromptsBody).toHaveClass(/app-dialog__body--tabbed/)
     expect(
-      await guideBody.evaluate((element) => getComputedStyle(element).overflowY),
+      await myPromptsBody.evaluate((element) => getComputedStyle(element).overflowY),
     ).toBe("hidden")
-    expect(
-      await guideTabs.evaluate((element) => getComputedStyle(element).overflow),
-    ).toBe("hidden")
-    expect(
-      await myPromptsPanel.evaluate(
-        (element) => getComputedStyle(element).overflowY,
-      ),
-    ).toBe("hidden")
-    expect(
-      await myPromptsPanel.evaluate((element) =>
-        Number.parseFloat(getComputedStyle(element).paddingInlineEnd),
-      ),
-    ).toBe(12)
     expect(
       await myPromptsScrollRegion.evaluate(
         (element) => getComputedStyle(element).scrollbarGutter,
@@ -192,9 +341,6 @@ test.describe("INSU Player home @smoke", () => {
         (element) => getComputedStyle(element).overflowY,
       ),
     ).toBe("auto")
-    const tabListTop = await guideTabList.evaluate(
-      (element) => element.getBoundingClientRect().top,
-    )
     const calloutTop = await myPromptsCallout.evaluate(
       (element) => element.getBoundingClientRect().top,
     )
@@ -206,15 +352,10 @@ test.describe("INSU Player home @smoke", () => {
     expect(panelScroll.max).toBeGreaterThan(0)
     expect(panelScroll.actual).toBeGreaterThan(0)
     expect(
-      await myPromptsPanel.evaluate(
+      await myPromptsBody.evaluate(
         (element) => element.scrollHeight - element.clientHeight,
       ),
     ).toBeLessThanOrEqual(1)
-    expect(
-      await guideTabList.evaluate(
-        (element) => element.getBoundingClientRect().top,
-      ),
-    ).toBeCloseTo(tabListTop, 0)
     expect(
       await myPromptsCallout.evaluate(
         (element) => element.getBoundingClientRect().top,
@@ -224,10 +365,10 @@ test.describe("INSU Player home @smoke", () => {
       element.scrollTop = 0
     })
     await expect(
-      guide.getByRole("heading", { name: BUILT_IN_PROMPTS[0].title }),
+      myPromptsDialog.getByRole("heading", { name: BUILT_IN_PROMPTS[0].title }),
     ).toBeVisible()
-    await expect(guide.getByText("READY TO COPY")).toHaveCount(0)
-    await expect(guide.getByText("BUILT-IN PLAYBOOK")).toHaveCount(0)
+    await expect(myPromptsDialog.getByText("READY TO COPY")).toHaveCount(0)
+    await expect(myPromptsDialog.getByText("BUILT-IN PLAYBOOK")).toHaveCount(0)
     await expect(myPromptsCallout).toBeVisible()
     const promptCardList = myPromptsScrollRegion.locator(
       ":scope > .prompt-action-card-list",
@@ -282,39 +423,33 @@ test.describe("INSU Player home @smoke", () => {
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
       .toContain("請和我一起建立一則可重用的 INSU Player 提示")
 
-    await myPromptsTab.press("ArrowRight")
-    const supportedSites = guide.getByRole("tab", { name: "支援網站" })
-    await expect(supportedSites).toBeFocused()
-    await supportedSites.press("Enter")
+    await myPromptsDialog.getByRole("button", { name: "關閉", exact: true }).click()
+
+    const supportedSitesDialog = await home.openNavigationDialog(
+      "支援網站",
+      "支援網站",
+    )
+    await expect(page).toHaveURL(/\/supported-sites$/)
+    await expect(supportedSitesDialog.getByRole("tab")).toHaveCount(0)
+    await expect(supportedSitesDialog.getByText("CURRENT COVERAGE")).toHaveCount(0)
     await expect(
-      supportedSites,
-    ).toHaveAttribute("aria-selected", "true")
-    await expect(guide.getByText("CURRENT COVERAGE")).toHaveCount(0)
-    await expect(
-      guide.getByText("INSU Player 的來源支援由"),
+      supportedSitesDialog.getByText("INSU Player 的來源支援由"),
     ).toHaveCount(0)
-    await expect(guide.getByText("詢問 Agent 是否支援")).toBeVisible()
-    await expect(guide.getByText("研究還沒支援的平台")).toHaveCount(0)
-    await expect(guide.getByText("更新 yt-dlp", { exact: true })).toHaveCount(0)
-    const supportedSitesPanel = guide.getByRole("tabpanel", {
-      name: "支援網站",
-    })
+    await expect(supportedSitesDialog.getByText("詢問 Agent 是否支援")).toBeVisible()
+    await expect(supportedSitesDialog.getByText("研究還沒支援的平台")).toHaveCount(0)
+    await expect(supportedSitesDialog.getByText("更新 yt-dlp", { exact: true })).toHaveCount(0)
+    const supportedSitesPanel = supportedSitesDialog.locator(".app-dialog__body")
     const sourceSupportCard = supportedSitesPanel.locator(
       ".guide-tab-content > .prompt-action-card",
     )
     await expect(sourceSupportCard).toHaveCount(1)
     await expect(sourceSupportCard).toBeVisible()
-    await expect
-      .poll(async () => {
-        const supportedTop = await firstContentTop("支援網站")
-        return Math.abs(supportedTop - tabStartTops[0])
-      })
-      .toBeLessThan(2)
-    tabStartTops.push(await firstContentTop("支援網站"))
     await expect(
       supportedSitesPanel.locator(".prompt-action-card--compact"),
     ).toHaveCount(0)
-    const supportedSearch = guide.getByRole("searchbox", { name: "搜尋支援網站" })
+    const supportedSearch = supportedSitesDialog.getByRole("searchbox", {
+      name: "搜尋支援網站",
+    })
     const [supportedCardsBox, supportedSearchBox] = await Promise.all([
       sourceSupportCard.boundingBox(),
       supportedSearch.boundingBox(),
@@ -375,293 +510,265 @@ test.describe("INSU Player home @smoke", () => {
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()))
       .toContain("若更新後仍不支援，再研究 yt-dlp")
-    expect(
-      Math.max(...tabStartTops) - Math.min(...tabStartTops),
-      `tab starts: ${tabStartTops.join(", ")}`,
-    ).toBeLessThan(2)
+    await page.reload()
+    await expect(
+      page.getByRole("dialog", { name: "支援網站" }),
+    ).toBeVisible()
   })
 
-  test("splits local and cloud models into feature settings tabs", async ({ page }) => {
-    const environmentVariables = Array.from({ length: 36 }, (_, index) => ({
-      name: index === 0 ? "OPENAI_API_KEY" : `TEST_API_KEY_${index + 1}`,
-      label: index === 0 ? "OpenAI API 金鑰" : `測試 API Key ${index + 1}`,
-      description: "供雲端模型使用",
-      configured: false,
-      source: null,
-      providerInstalled: false,
-    }))
-    let environmentConfigured = false
-    await page.route(/\/api\/environment(?:\/[^/?]+)?$/, async (route) => {
-      const request = route.request()
-      if (request.method() === "POST") {
-        expect(request.postDataJSON()).toEqual({
-          name: "OPENAI_API_KEY",
-          value: "test-key-value",
-        })
-        environmentConfigured = true
-      }
-      if (request.method() === "DELETE") environmentConfigured = false
-      await route.fulfill({
+  test("opens Chrome extension guidance in its own three-tab modal", async ({ page }) => {
+    let paired = false
+    await page.route("**/api/extension/pairing/start", (route) => {
+      paired = true
+      return route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          scope: "process",
-          variables: environmentVariables.map((variable) =>
-            variable.name === "OPENAI_API_KEY"
-              ? {
-                  ...variable,
-                  configured: environmentConfigured,
-                  source: environmentConfigured ? "session" : null,
-                }
-              : variable,
-          ),
+          challengeId: "pair-00000000-0000-4000-8000-000000000000",
+          token: "pairing-token",
+          expiresAt: "2026-08-11T01:00:00Z",
+          serverOrigin: "http://127.0.0.1:8000",
         }),
       })
     })
-    const localModels = Array.from({ length: 36 }, (_, index) => ({
-      name: `local-${index + 1}`,
-      displayName:
-        index === 0 ? "OpenAI Whisper medium" : `Local model ${index + 1}`,
-      sizeBytes: 512 * 1024 * 1024,
-      ready: true,
-    }))
-    const cloudModels = Array.from({ length: 36 }, (_, index) => ({
-      name: index === 0 ? "whisper-1" : `cloud-${index + 1}`,
-      displayName:
-        index === 0 ? "OpenAI whisper-1" : `Cloud model ${index + 1}`,
-      installed: true,
-      apiKeyName: "OPENAI_API_KEY",
-      apiKeyConfigured: false,
-    }))
-    await page.route("**/api/models", (route) =>
+    await page.route(/\/api\/extension\/pairing$/, (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          local: {
-            providerInstalled: true,
-            packageVersion: "1.0.0",
-            modelCount: localModels.length,
-            totalSizeBytes: localModels.reduce(
-              (total, model) => total + model.sizeBytes,
-              0,
-            ),
-            models: localModels,
-          },
-          api: {
-            providerInstalled: true,
-            packageVersion: "1.0.0",
-            keyConfigured: false,
-            models: cloudModels,
-          },
+          paired,
+          extensionOrigin: paired ? "chrome-extension://insu-player" : null,
+          pairedAt: paired ? "2026-08-11T00:00:00Z" : null,
+          lastSeenAt: paired ? "2026-08-11T00:00:00Z" : null,
+          extensionDirectory: "/project/plugins/insu-player/chrome-extension",
+          libraryUrl: "http://127.0.0.1:8000/browser-library",
         }),
       }),
     )
     const home = new HomePage(page)
     await home.goto()
 
-    const guide = await home.openNavigationDialog("使用說明", "使用說明")
+    const extension = await home.openNavigationDialog(
+      "擴充功能",
+      "Chrome 擴充功能",
+    )
+    await expect(page).toHaveURL(/\/extension\/install$/)
+    await expect(extension.getByRole("tab")).toHaveCount(3)
+    await expect(extension.getByRole("tab")).toHaveText([
+      "1 安裝",
+      "2 連接",
+      "3 使用",
+    ])
+    await expect(
+      extension.getByRole("heading", { name: "載入未封裝擴充功能" }),
+    ).toBeVisible()
+    await expect(extension.locator("code")).toContainText(
+      "plugins/insu-player/chrome-extension",
+    )
+
+    await extension.getByRole("button", {
+      name: "我已載入，前往連接",
+    }).click()
+    await expect(page).toHaveURL(/\/extension\/connect$/)
+    await expect(
+      extension.getByRole("button", { name: "連接 Chrome 擴充功能" }),
+    ).toBeVisible()
+    await extension.getByRole("button", { name: "連接 Chrome 擴充功能" }).click()
+    await expect(
+      extension.getByRole("heading", { name: "Chrome 已連接" }),
+    ).toBeVisible()
+    await extension.getByRole("button", { name: "前往使用" }).click()
+
+    await expect(page).toHaveURL(/\/extension\/usage$/)
+    await expect(
+      extension.getByRole("heading", { name: "Chrome 擴充功能已可使用" }),
+    ).toBeVisible()
+    await expect(extension).toContainText("iframe、MP4 與已結束的 M3U8")
+    await page.reload()
+    await expect(
+      page.getByRole("dialog", { name: "Chrome 擴充功能" }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole("tab", { name: "3 使用" }),
+    ).toHaveAttribute("aria-selected", "true")
+  })
+
+  test("manages local and cloud transcription models in one current table", async ({ page }) => {
+    let selectedModelId = "local.openai-whisper.medium"
+    let openAiConfigured = false
+    const provider = () => ({
+      id: "openai",
+      displayName: "OpenAI",
+      credentialName: "OPENAI_API_KEY",
+      configured: openAiConfigured,
+      source: openAiConfigured ? "session" : null,
+      sdkInstalled: true,
+      modelIds: ["cloud.openai.whisper-1"],
+    })
+    const localModels = Array.from({ length: 12 }, (_, index) => {
+      const model = index === 0 ? "medium" : `test-${index + 1}`
+      const installed = index === 0
+      return {
+        id: `local.openai-whisper.${model}`,
+        type: "local" as const,
+        displayName: index === 0 ? "OpenAI Whisper medium" : `OpenAI Whisper ${model}`,
+        provider: "local" as const,
+        providerName: "OpenAI Whisper",
+        service: "openai-whisper",
+        model,
+        timingUnitKind: "word" as const,
+        selected: selectedModelId === `local.openai-whisper.${model}`,
+        ready: installed,
+        status: installed ? "ready" as const : "not-downloaded" as const,
+        requiresAudioUpload: false,
+        requiresPerRunConsent: false,
+        local: {
+          runtimeInstalled: true,
+          languageSupport: "multilingual" as const,
+          approximateBytes: 512 * 1024 * 1024,
+          memoryLabel: "約 2 GB",
+          installed,
+          valid: installed,
+          sizeBytes: installed ? 512 * 1024 * 1024 : null,
+          download: {
+            state: "idle" as const,
+            progress: 0,
+            downloadedBytes: 0,
+            totalBytes: 512 * 1024 * 1024,
+            message: installed ? "可使用" : "尚未下載",
+            errorCode: null,
+          },
+        },
+      }
+    })
+    const cloudModels = Array.from({ length: 6 }, (_, index) => ({
+      id: index === 0 ? "cloud.openai.whisper-1" : `cloud.openai.test-${index + 1}`,
+      type: "cloud" as const,
+      displayName: index === 0 ? "OpenAI whisper-1" : `OpenAI cloud test ${index + 1}`,
+      provider: "openai" as const,
+      providerName: "OpenAI",
+      service: "audio/transcriptions",
+      model: index === 0 ? "whisper-1" : `test-${index + 1}`,
+      timingUnitKind: "word" as const,
+      selected: selectedModelId === (index === 0 ? "cloud.openai.whisper-1" : `cloud.openai.test-${index + 1}`),
+      ready: openAiConfigured,
+      status: openAiConfigured ? "ready" as const : "credential-missing" as const,
+      requiresAudioUpload: true,
+      requiresPerRunConsent: true,
+      cloud: {
+        sdkInstalled: true,
+        credentialConfigured: openAiConfigured,
+        credentialName: "OPENAI_API_KEY",
+        uploadDescription: "音訊分段會上傳到 OpenAI 語音辨識服務",
+      },
+    }))
+    const modelsPayload = () => ({
+      models: [...localModels, ...cloudModels].map((model) => ({
+        ...model,
+        selected: model.id === selectedModelId,
+        ...(model.type === "cloud"
+          ? {
+              ready: openAiConfigured,
+              status: openAiConfigured ? "ready" : "credential-missing",
+              cloud: { ...model.cloud, credentialConfigured: openAiConfigured },
+            }
+          : {}),
+      })),
+      providers: [provider()],
+      selectedModelId,
+      updatedAt: "2026-08-11T00:00:00.000Z",
+    })
+    await page.route(/\/api\/models(?:\/[^/?]+)?$/, async (route) => {
+      const url = new URL(route.request().url())
+      const suffix = url.pathname.slice("/api/models/".length)
+      if (url.pathname === "/api/models/selection") {
+        expect(route.request().method()).toBe("PUT")
+        selectedModelId = route.request().postDataJSON().modelId
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(modelsPayload()) })
+        return
+      }
+      if (url.pathname === "/api/models") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(modelsPayload()) })
+        return
+      }
+      const model = modelsPayload().models.find((candidate) => candidate.id === suffix)
+      await route.fulfill({
+        status: model ? 200 : 404,
+        contentType: "application/json",
+        body: JSON.stringify(model ? { model, provider: model.type === "cloud" ? provider() : null } : { error: "not found" }),
+      })
+    })
+    await page.route("**/api/providers/openai/credential", async (route) => {
+      if (route.request().method() === "PUT") {
+        expect(route.request().postDataJSON()).toEqual({ value: "test-key-value" })
+        openAiConfigured = true
+      } else if (route.request().method() === "DELETE") {
+        openAiConfigured = false
+      }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(modelsPayload()) })
+    })
+    const home = new HomePage(page)
+    await home.goto()
+
+    const guide = await home.openNavigationDialog("開始說明", "開始說明")
     const guideHeight = await guide.evaluate((element) =>
       Number.parseFloat(getComputedStyle(element).height),
     )
     await guide.getByRole("button", { name: "關閉", exact: true }).click()
 
-    const settings = await home.openNavigationDialog("功能設定", "功能設定")
+    const settings = await home.openNavigationDialog("轉錄設定", "轉錄設定")
     const settingsHeight = await settings.evaluate((element) =>
       Number.parseFloat(getComputedStyle(element).height),
     )
     expect(settingsHeight).toBeCloseTo(guideHeight, 0)
-    await expect(settings.getByRole("tab")).toHaveCount(3)
-    await expect(settings.getByRole("tab", { name: "模型列表" })).toHaveCount(0)
-    const environmentPanel = settings.getByRole("tabpanel", { name: "環境變數" })
-    const environmentContent = environmentPanel.locator(
-      ".environment-settings-content",
-    )
-    const environmentPrompt = environmentContent.locator(
-      ":scope > .prompt-action-card",
-    )
-    const environmentTableScroll = environmentContent.locator(
-      ".environment-table-scroll-region",
-    )
-    await expect(
-      environmentPrompt.getByRole("heading", {
-        name: "請 Agent 檢查環境變數",
-      }),
-    ).toBeVisible()
-    await expect(
-      environmentPrompt.getByText(
-        ENVIRONMENT_PROMPT.description,
-        { exact: true },
-      ),
-    ).toBeVisible()
-    await expect(settings.getByText("只在本次服務中使用")).toHaveCount(0)
-    await expect(environmentContent.getByText("OpenAI SDK 尚未安裝")).toHaveCount(0)
-    await expect(environmentTableScroll).toBeVisible()
-    const environmentRow = environmentTableScroll
-      .getByRole("row")
-      .filter({ hasText: "OPENAI_API_KEY" })
-    const environmentInput = environmentRow.getByLabel(
-      "OPENAI_API_KEY 新值",
-      { exact: true },
-    )
-    await expect(environmentInput).toBeVisible()
-    expect(
-      await environmentPanel.evaluate(
-        (element) => getComputedStyle(element).overflowY,
-      ),
-    ).toBe("hidden")
-    expect(
-      await environmentTableScroll.evaluate(
-        (element) => getComputedStyle(element).overflowY,
-      ),
-    ).toBe("auto")
-    expect(
-      await environmentTableScroll.evaluate(
-        (element) => getComputedStyle(element).overflowX,
-      ),
-    ).toBe("hidden")
-    const environmentTableContainer = environmentTableScroll.locator(
-      ":scope > [data-slot='table-container']",
-    )
-    const environmentHorizontalOverflow = await Promise.all([
-      environmentTableScroll.evaluate(
-        (element) => element.scrollWidth - element.clientWidth,
-      ),
-      environmentTableContainer.evaluate(
-        (element) => element.scrollWidth - element.clientWidth,
-      ),
+    await expect(settings.getByRole("tab")).toHaveCount(0)
+    await expect(settings.getByRole("columnheader")).toHaveText([
+      "選用",
+      "類型",
+      "模型",
+      "狀態",
+      "操作",
     ])
-    expect(environmentHorizontalOverflow[0]).toBeLessThanOrEqual(1)
-    expect(environmentHorizontalOverflow[1]).toBeLessThanOrEqual(1)
-    expect(
-      await environmentTableContainer.evaluate((element) => {
-        element.scrollLeft = 100
-        return element.scrollLeft
-      }),
-    ).toBe(0)
-    const [environmentPromptTop, environmentRowHeight] = await Promise.all([
-      environmentPrompt.evaluate(
-        (element) => element.getBoundingClientRect().top,
-      ),
-      environmentTableScroll
-        .locator("tbody tr")
-        .first()
-        .evaluate((element) => element.getBoundingClientRect().height),
-    ])
-    const environmentScroll = await environmentTableScroll.evaluate((element) => {
+    const tableRegion = settings.locator(".model-table-scroll-region")
+    const tableScroll = tableRegion.locator('[data-slot="table-body"]')
+    const tableHeader = tableRegion.locator('[data-slot="table-header"]')
+    const headerTop = await tableHeader.evaluate(
+      (element) => element.getBoundingClientRect().top,
+    )
+    const layout = await tableRegion.locator("table.unified-model-table").evaluate((table) => ({
+      headers: [...table.querySelectorAll("th")].map((header) => header.getBoundingClientRect().width),
+      tableWidth: table.getBoundingClientRect().width,
+      regionWidth: table.closest(".model-table-scroll-region")?.getBoundingClientRect().width ?? 0,
+    }))
+    expect(layout.tableWidth).toBeLessThanOrEqual(layout.regionWidth + 1)
+    expect(layout.headers[2]).toBeGreaterThan(Math.max(...layout.headers.filter((_, index) => index !== 2)))
+    const scroll = await tableScroll.evaluate((element) => {
       const max = element.scrollHeight - element.clientHeight
       element.scrollTop = max
       return { max, actual: element.scrollTop }
     })
-    expect(environmentScroll.max).toBeGreaterThan(0)
-    expect(environmentScroll.actual).toBeGreaterThan(0)
-    expect(environmentRowHeight).toBeCloseTo(56, 0)
-    expect(
-      await environmentPrompt.evaluate(
+    expect(scroll.max).toBeGreaterThan(0)
+    expect(scroll.actual).toBeGreaterThan(0)
+    await expect
+      .poll(() => tableHeader.evaluate(
         (element) => element.getBoundingClientRect().top,
-      ),
-    ).toBeCloseTo(environmentPromptTop, 0)
-    await environmentTableScroll.evaluate((element) => {
-      element.scrollTop = 0
-    })
-    await environmentInput.fill("test-key-value")
-    await environmentRow.getByRole("button", { name: "套用" }).click()
-    await expect(environmentRow.getByText("本次服務已設定")).toBeVisible()
-    await expect(environmentInput).toHaveValue("")
-    await environmentRow.getByRole("button", { name: "清除" }).click()
-    await expect(environmentRow.getByText("尚未設定")).toBeVisible()
+      ))
+      .toBeCloseTo(headerTop, 0)
+    await tableScroll.evaluate((element) => { element.scrollTop = 0 })
 
-    const verifyModelPanel = async (
-      tabName: "本機模型" | "雲端模型",
-      promptTitle: string,
-    ) => {
-      await settings.getByRole("tab", { name: tabName }).click()
-      const panel = settings.getByRole("tabpanel", { name: tabName })
-      const content = panel.locator(".model-settings-content")
-      const promptCard = content.locator(":scope > .prompt-action-card")
-      const tableScroll = content.locator(".model-table-scroll-region")
-      const firstRow = tableScroll.locator("tbody tr").first()
-      await expect(promptCard).toHaveCount(1)
-      await expect(
-        promptCard.getByRole("heading", { name: promptTitle }),
-      ).toBeVisible()
-      await expect(tableScroll).toBeVisible()
-      expect(
-        await panel.evaluate((element) => getComputedStyle(element).overflowY),
-      ).toBe("hidden")
-      expect(
-        await content.evaluate(
-          (element) => getComputedStyle(element).overflowY,
-        ),
-      ).toBe("hidden")
-      expect(
-        await tableScroll.evaluate(
-          (element) => getComputedStyle(element).overflowY,
-        ),
-      ).toBe("auto")
-      const [promptTop, tableTop] = await Promise.all([
-        promptCard.evaluate((element) => element.getBoundingClientRect().top),
-        tableScroll.evaluate((element) => element.getBoundingClientRect().top),
-      ])
-      const rowHeight = await firstRow.evaluate(
-        (element) => element.getBoundingClientRect().height,
-      )
-      const scroll = await tableScroll.evaluate((element) => {
-        const max = element.scrollHeight - element.clientHeight
-        element.scrollTop = max
-        return { max, actual: element.scrollTop }
-      })
-      expect(scroll.max).toBeGreaterThan(0)
-      expect(scroll.actual).toBeGreaterThan(0)
-      expect(
-        await panel.evaluate(
-          (element) => element.scrollHeight - element.clientHeight,
-        ),
-      ).toBeLessThanOrEqual(1)
-      expect(
-        await promptCard.evaluate(
-          (element) => element.getBoundingClientRect().top,
-        ),
-      ).toBeCloseTo(promptTop, 0)
-      expect(
-        await tableScroll.evaluate(
-          (element) => element.getBoundingClientRect().top,
-        ),
-      ).toBeCloseTo(tableTop, 0)
-      await tableScroll.evaluate((element) => {
-        element.scrollTop = 0
-      })
-      return rowHeight
-    }
-
-    const localRowHeight = await verifyModelPanel(
-      "本機模型",
-      "請 Agent 準備本機模型",
-    )
-    await expect(settings.getByText("OpenAI Whisper medium")).toBeVisible()
-    await expect(settings.getByText("LOCAL MODEL", { exact: true })).toHaveCount(0)
-    await expect(settings.getByText("CLOUD MODEL", { exact: true })).toHaveCount(0)
-
-    const cloudRowHeight = await verifyModelPanel(
-      "雲端模型",
-      "請 Agent 檢查雲端模型",
-    )
-    expect(localRowHeight).toBeCloseTo(cloudRowHeight, 0)
-    expect(localRowHeight).toBeCloseTo(56, 0)
-    await expect(settings.getByText("CLOUD MODEL", { exact: true })).toHaveCount(0)
-    await expect(settings.getByText("LOCAL MODEL", { exact: true })).toHaveCount(0)
-    await expect(settings.getByText("OpenAI whisper-1")).toBeVisible()
-    const apiKeySelect = settings.getByRole("combobox", {
-      name: "OpenAI whisper-1 API Key",
-    })
-    await expect(apiKeySelect).toContainText("尚未設定")
-    await apiKeySelect.click()
-    await page.getByRole("option", { name: "設定 OPENAI_API_KEY" }).click()
-    await expect(
-      settings.getByRole("tab", { name: "環境變數" }),
-    ).toHaveAttribute("aria-selected", "true")
-    await expect(
-      settings.getByLabel("OPENAI_API_KEY 新值", { exact: true }),
-    ).toBeVisible()
+    const cloudRow = settings.getByRole("row").filter({ hasText: "OpenAI whisper-1" })
+    await expect(cloudRow.getByRole("button", { name: "選用 OpenAI whisper-1" })).toBeDisabled()
+    await cloudRow.getByRole("button", { name: "查看 OpenAI whisper-1 詳情" }).click()
+    await expect(page).toHaveURL(/\/settings\/models\/cloud\.openai\.whisper-1$/)
+    const details = page.getByRole("dialog", { name: "OpenAI whisper-1" })
+    await expect(details).toContainText("每次真正上傳前仍會另外詢問你的同意")
+    await details.getByLabel("OPENAI_API_KEY").fill("test-key-value")
+    await details.getByRole("button", { name: "設定 API Key" }).click()
+    await expect(details.getByRole("button", { name: "使用這個模型" })).toBeEnabled()
+    await details.getByRole("button", { name: "使用這個模型" }).click()
+    await expect(details.getByRole("button", { name: "目前選用" })).toBeDisabled()
+    await details.getByRole("button", { name: "關閉", exact: true }).click()
+    await expect(page).toHaveURL(/\/settings$/)
+    await expect(page.getByRole("dialog", { name: "轉錄設定" })).toBeVisible()
   })
 })

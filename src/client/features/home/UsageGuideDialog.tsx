@@ -4,9 +4,11 @@ import {
 } from "@/app/overlay-context"
 import { AppDialog } from "@/components/shared/AppDialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { MyPromptsContent } from "@/features/home/MyPromptsContent"
-import { UsageContent } from "@/features/home/UsageDialog"
-import { SupportedSitesContent } from "@/features/resources/SupportedSitesDialog"
+import {
+  AgentHandoffContent,
+  AddSingleMediaContent,
+  InitializationContent,
+} from "@/features/home/UsageDialog"
 
 export function UsageGuideDialog() {
   const overlay = useOverlay()
@@ -22,37 +24,33 @@ export function UsageGuideDialog() {
         open ? undefined : overlay.actions.close("usage-guide")
       }
       kicker="INSU GUIDE"
-      title="使用說明"
-      description="開始使用、我的提示與支援網站"
+      title="開始說明"
+      description="依序完成初始化、加入影音，再把提示交給 Agent"
       size="screen"
       layout="tabbed"
     >
       <Tabs
         className="app-dialog-tabs grouped-dialog-tabs"
-        value={active?.tab ?? "getting-started"}
+        value={active?.tab ?? "initialize"}
         onValueChange={(value) => selectTab(value as UsageGuideTab)}
       >
-        <TabsList variant="line" aria-label="使用說明分頁">
-          <TabsTrigger value="getting-started">開始使用</TabsTrigger>
-          <TabsTrigger value="my-prompts">我的提示</TabsTrigger>
-          <TabsTrigger value="supported-sites">支援網站</TabsTrigger>
+        <TabsList variant="line" aria-label="開始說明分頁">
+          <TabsTrigger value="initialize">1 初始化</TabsTrigger>
+          <TabsTrigger value="add-media">2 加入影音</TabsTrigger>
+          <TabsTrigger value="handoff">3 交給 Agent</TabsTrigger>
         </TabsList>
-        <TabsContent value="getting-started" className="grouped-dialog-panel">
-          {active?.tab === "getting-started" ? <UsageContent /> : null}
-        </TabsContent>
-        <TabsContent
-          value="my-prompts"
-          className="grouped-dialog-panel my-prompts-panel"
-        >
-          {active?.tab === "my-prompts" ? <MyPromptsContent /> : null}
-        </TabsContent>
-        <TabsContent
-          value="supported-sites"
-          className="grouped-dialog-panel supported-sites-panel"
-        >
-          {active?.tab === "supported-sites" ? (
-            <SupportedSitesContent />
+        <TabsContent value="initialize" className="grouped-dialog-panel">
+          {active?.tab === "initialize" ? (
+            <InitializationContent onContinue={() => selectTab("add-media")} />
           ) : null}
+        </TabsContent>
+        <TabsContent value="add-media" className="grouped-dialog-panel">
+          {active?.tab === "add-media" ? (
+            <AddSingleMediaContent onContinue={() => selectTab("handoff")} />
+          ) : null}
+        </TabsContent>
+        <TabsContent value="handoff" className="grouped-dialog-panel">
+          {active?.tab === "handoff" ? <AgentHandoffContent /> : null}
         </TabsContent>
       </Tabs>
     </AppDialog>

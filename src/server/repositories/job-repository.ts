@@ -8,7 +8,7 @@ import {
 } from "node:fs"
 import path from "node:path"
 
-import { eq } from "drizzle-orm"
+import { desc, eq } from "drizzle-orm"
 
 import type { AppDatabase } from "@server/db/client"
 import {
@@ -16,6 +16,7 @@ import {
   jobAssets,
   jobHistory,
   jobs,
+  mediaSources,
   mediaDownloadRuns,
   mediaRenditions,
   playbackStates,
@@ -25,13 +26,8 @@ import {
   subtitleRuns,
   subtitlePipelines,
 } from "@server/db/schema"
-import {
-  atomicWriteJson,
-  isRegularFile,
-  readJsonFile,
-  safeContainedFile,
-} from "@server/lib/files"
-import { STATUS_SCHEMA_VERSION } from "@server/runtime-contract"
+import { isRegularFile, readJsonFile, safeContainedFile } from "@server/lib/files"
+import { MEDIA_RECORD_SCHEMA_VERSION } from "@server/runtime-contract"
 import {
   activeMediaPath,
   mediaCatalogPath,
@@ -62,6 +58,20 @@ const LANGUAGE_PATTERN = /^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/
 const JOB_STAGE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
 const JOB_STATE_SET = new Set<string>(JOB_STATES)
 const SUBTITLE_PIPELINE_STAGE_SET = new Set<string>(SUBTITLE_PIPELINE_STAGES)
+const TIMING_PROCESSOR_CONTRACTS = {
+  local: { service: "openai-whisper", models: null },
+  openai: { service: "audio/transcriptions", models: new Set(["whisper-1"]) },
+  groq: {
+    service: "audio/transcriptions",
+    models: new Set(["whisper-large-v3", "whisper-large-v3-turbo"]),
+  },
+  elevenlabs: { service: "speech-to-text", models: new Set(["scribe_v2"]) },
+  xai: { service: "v1/stt", models: new Set<string>() },
+  openrouter: {
+    service: "audio/transcriptions",
+    models: new Set(["openai/whisper-large-v3"]),
+  },
+} as const
 const ACTIVE_STATES = new Set([
   "checking",
   "downloading",
@@ -90,6 +100,7 @@ interface RawStatus {
   videoId: string
   title: string
   sourceUrl: string
+  sourceKind: "page" | "embed" | "network-media"
   durationSeconds: number | null
   state: JobState
   stage: string
@@ -129,24 +140,42 @@ function isTimestamp(value: unknown) {
 function validProcessorIdentity(value: unknown, timingOnly = false) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const candidate = value as Record<string, unknown>
-  if (
-    Object.keys(candidate).some(
-      (key) => !["provider", "service", "model"].includes(key),
-    )
-  ) {
+  if (Object.keys(candidate).some((key) => !["provider", "service", "model"].includes(key))) {
     return false
   }
   const provider = candidate.provider
-  const model =
-    typeof candidate.model === "string" && candidate.model.trim()
-      ? candidate.model.trim()
-      : null
-  const service =
-    typeof candidate.service === "string" && candidate.service.trim()
-      ? candidate.service.trim()
-      : null
-  if (provider === "local" || provider === "openai") return Boolean(model)
-  return !timingOnly && provider === "agent" && Boolean(service)
+  if (typeof provider === "string" && provider in TIMING_PROCESSOR_CONTRACTS) {
+    if (!["provider", "service", "model"].every((key) => key in candidate)) return false
+    const contract = TIMING_PROCESSOR_CONTRACTS[
+      provider as keyof typeof TIMING_PROCESSOR_CONTRACTS
+    ]
+    if (candidate.service !== contract.service) return false
+    if (provider === "xai") return candidate.model === null
+    if (typeof candidate.model !== "string" || !candidate.model.trim()) return false
+    if (provider === "openrouter") {
+      return candidate.model === "openai/whisper-large-v3"
+    }
+    if (contract.models) {
+      return (contract.models as ReadonlySet<string>).has(candidate.model)
+    }
+    return /^[A-Za-z0-9._-]+$/.test(candidate.model)
+  }
+  return (
+    !timingOnly &&
+    provider === "agent" &&
+    candidate.service === "codex" &&
+    !("model" in candidate)
+  )
+}
+
+function validAgentProcessorIdentity(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  return (
+    Object.keys(candidate).every((key) => ["provider", "service"].includes(key)) &&
+    candidate.provider === "agent" &&
+    candidate.service === "codex"
+  )
 }
 
 export class JobRepository {
@@ -209,8 +238,18 @@ export class JobRepository {
   }
 
   playbackState(videoId: string): PlaybackState {
-    const statePath = path.join(this.jobDirectory(videoId), "ui-state.json")
-    if (!isRegularFile(statePath)) {
+    if (!VIDEO_ID_PATTERN.test(videoId)) throw new Error("invalid video ID")
+    const row = this.db
+      .select({
+        time: playbackStates.time,
+        duration: playbackStates.duration,
+        captionLanguage: playbackStates.captionLanguage,
+        updatedAt: playbackStates.updatedAt,
+      })
+      .from(playbackStates)
+      .where(eq(playbackStates.videoId, videoId))
+      .get()
+    if (!row) {
       return {
         time: 0,
         duration: null,
@@ -218,30 +257,7 @@ export class JobRepository {
         updatedAt: null,
       }
     }
-    const payload = readJsonFile<Record<string, unknown>>(statePath)
-    if (
-      Object.keys(payload).some(
-        (key) => !["time", "duration", "captionLanguage", "updatedAt"].includes(key),
-      ) ||
-      !["time", "duration", "captionLanguage", "updatedAt"].every(
-        (key) => key in payload,
-      ) ||
-      typeof payload.time !== "number" ||
-      !Number.isFinite(payload.time) ||
-      payload.time < 0 ||
-      (payload.duration !== null &&
-        (typeof payload.duration !== "number" ||
-          !Number.isFinite(payload.duration) ||
-          payload.duration <= 0 ||
-          payload.time > payload.duration + 5)) ||
-      (payload.captionLanguage !== null &&
-        (typeof payload.captionLanguage !== "string" ||
-          !LANGUAGE_PATTERN.test(payload.captionLanguage))) ||
-      (payload.updatedAt !== null && !isTimestamp(payload.updatedAt))
-    ) {
-      throw new Error("ui-state.json does not match the current schema")
-    }
-    return payload as unknown as PlaybackState
+    return row
   }
 
   savePlaybackState(
@@ -252,10 +268,7 @@ export class JobRepository {
       captionLanguage?: string | null
     },
   ) {
-    const directory = this.jobDirectory(videoId)
-    if (!existsSync(directory)) throw new Error("job not found")
-    // Ensure the filesystem fact source is projected before the foreign-keyed UI state.
-    this.summarize(videoId)
+    this.loadRawStatus(videoId)
     if (
       payload.captionLanguage !== undefined &&
       payload.captionLanguage !== null &&
@@ -288,7 +301,6 @@ export class JobRepository {
           : payload.captionLanguage,
       updatedAt: new Date().toISOString(),
     }
-    atomicWriteJson(path.join(directory, "ui-state.json"), normalized)
     this.db
       .insert(playbackStates)
       .values({ videoId, ...normalized })
@@ -301,15 +313,24 @@ export class JobRepository {
   }
 
   private loadRawStatus(videoId: string) {
-    const statusPath = path.join(this.jobDirectory(videoId), "status.json")
-    const status = readJsonFile<Record<string, unknown>>(statusPath)
-    if (status.schemaVersion !== STATUS_SCHEMA_VERSION) {
-      throw new Error(`status.json must use schemaVersion ${STATUS_SCHEMA_VERSION}`)
+    if (!VIDEO_ID_PATTERN.test(videoId)) throw new Error("invalid video ID")
+    const row = this.db
+      .select({ record: jobs.recordJson, revision: jobs.recordRevision })
+      .from(jobs)
+      .where(eq(jobs.videoId, videoId))
+      .get()
+    if (!row) throw new Error("job not found")
+    const status = row.record as Record<string, unknown>
+    if (status.schemaVersion !== MEDIA_RECORD_SCHEMA_VERSION) {
+      throw new Error(
+        `media item record must use schemaVersion ${MEDIA_RECORD_SCHEMA_VERSION}`,
+      )
     }
     if (
       typeof status.title !== "string" ||
       !status.title.trim() ||
       typeof status.sourceUrl !== "string" ||
+      !["page", "embed", "network-media"].includes(String(status.sourceKind)) ||
       typeof status.message !== "string" ||
       !status.message.trim() ||
       !isTimestamp(status.createdAt) ||
@@ -322,7 +343,7 @@ export class JobRepository {
           status.durationSeconds <= 0)) ||
       !isRecord(status.assets)
     ) {
-      throw new Error("status.json is missing required current-schema fields")
+      throw new Error("media item record is missing required current-schema fields")
     }
     if (status.process !== null) {
       if (
@@ -336,7 +357,7 @@ export class JobRepository {
           (key) => !["pid", "startedAt", "command"].includes(key),
         )
       ) {
-        throw new Error("status.json contains invalid process metadata")
+        throw new Error("media item record contains invalid process metadata")
       }
     }
     for (const [name, value] of Object.entries(status.assets)) {
@@ -355,18 +376,18 @@ export class JobRepository {
           (!Number.isInteger(value.bytes) || Number(value.bytes) < 0)) ||
         !isTimestamp(value.updatedAt)
       ) {
-        throw new Error("status.json contains invalid asset metadata")
+        throw new Error("media item record contains invalid asset metadata")
       }
     }
     if (!Array.isArray(status.subtitleArtifacts)) {
-      throw new Error("status.json must contain subtitleArtifacts")
+      throw new Error("media item record must contain subtitleArtifacts")
     }
     if (
       !status.activeSubtitleTracks ||
       typeof status.activeSubtitleTracks !== "object" ||
       Array.isArray(status.activeSubtitleTracks)
     ) {
-      throw new Error("status.json must contain activeSubtitleTracks")
+      throw new Error("media item record must contain activeSubtitleTracks")
     }
     for (const [language, trackId] of Object.entries(status.activeSubtitleTracks)) {
       if (
@@ -374,17 +395,17 @@ export class JobRepository {
         typeof trackId !== "string" ||
         !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(trackId)
       ) {
-        throw new Error("status.json contains an invalid active subtitle track")
+        throw new Error("media item record contains an invalid active subtitle track")
       }
     }
     if (status.videoId !== videoId) {
-      throw new Error("status.json videoId must match its directory")
+      throw new Error("media item record videoId must match its resource directory")
     }
     if (typeof status.state !== "string" || !JOB_STATE_SET.has(status.state)) {
-      throw new Error("status.json contains an unsupported state")
+      throw new Error("media item record contains an unsupported state")
     }
     if (typeof status.stage !== "string" || !JOB_STAGE_PATTERN.test(status.stage)) {
-      throw new Error("status.json must contain a semantic stage token")
+      throw new Error("media item record must contain a semantic stage token")
     }
     if (
       typeof status.progress !== "number" ||
@@ -392,10 +413,10 @@ export class JobRepository {
       status.progress < 0 ||
       status.progress > 100
     ) {
-      throw new Error("status.json progress must be between 0 and 100")
+      throw new Error("media item record progress must be between 0 and 100")
     }
     if (status.transcription === undefined) {
-      throw new Error("status.json must contain transcription")
+      throw new Error("media item record must contain transcription")
     }
     if (status.transcription !== null) {
       const transcription = status.transcription as unknown as Record<string, unknown>
@@ -406,15 +427,21 @@ export class JobRepository {
           (key) =>
             ![
               "provider",
+              "service",
               "model",
               "languageTag",
               "engineLanguage",
               "updatedAt",
             ].includes(key),
         ) ||
-        !["local", "openai"].includes(String(transcription.provider)) ||
-        typeof transcription.model !== "string" ||
-        !/^[A-Za-z0-9._-]+$/.test(transcription.model) ||
+        !validProcessorIdentity(
+          {
+            provider: transcription.provider,
+            service: transcription.service,
+            model: transcription.model,
+          },
+          true,
+        ) ||
         typeof transcription.languageTag !== "string" ||
         !LANGUAGE_PATTERN.test(transcription.languageTag) ||
         !isTimestamp(transcription.updatedAt) ||
@@ -423,11 +450,11 @@ export class JobRepository {
           : typeof transcription.engineLanguage !== "string" ||
             !/^[a-z]{2,3}$/.test(transcription.engineLanguage))
       ) {
-        throw new Error("status.json contains invalid transcription metadata")
+        throw new Error("media item record contains invalid transcription metadata")
       }
     }
     if (status.subtitlePipeline === undefined) {
-      throw new Error("status.json must contain subtitlePipeline")
+      throw new Error("media item record must contain subtitlePipeline")
     }
     if (status.subtitlePipeline !== null) {
       const pipeline = status.subtitlePipeline as Record<string, unknown>
@@ -477,15 +504,15 @@ export class JobRepository {
         (pipeline.timingProcessor !== undefined &&
           !validProcessorIdentity(pipeline.timingProcessor, true)) ||
         (pipeline.contentProcessor !== undefined &&
-          !validProcessorIdentity(pipeline.contentProcessor)) ||
+          !validAgentProcessorIdentity(pipeline.contentProcessor)) ||
         (pipeline.segmentationProcessor !== undefined &&
-          !validProcessorIdentity(pipeline.segmentationProcessor))
+          !validAgentProcessorIdentity(pipeline.segmentationProcessor))
       ) {
-        throw new Error("status.json contains an invalid subtitlePipeline")
+        throw new Error("media item record contains an invalid subtitlePipeline")
       }
     }
     if (!Array.isArray(status.history)) {
-      throw new Error("status.json must contain history")
+      throw new Error("media item record must contain history")
     }
     for (const entry of status.history) {
       if (
@@ -500,12 +527,12 @@ export class JobRepository {
         typeof entry.message !== "string" ||
         !entry.message.trim()
       ) {
-        throw new Error("status.json contains an invalid history entry")
+        throw new Error("media item record contains an invalid history entry")
       }
     }
     return {
       status: status as unknown as RawStatus,
-      modifiedAt: statSync(statusPath).mtimeMs,
+      modifiedAt: row.revision,
     }
   }
 
@@ -546,10 +573,15 @@ export class JobRepository {
       ...loaded.status.activeSubtitleTracks,
       [languageCode]: trackId,
     }
-    atomicWriteJson(
-      path.join(this.jobDirectory(videoId), "status.json"),
-      loaded.status,
-    )
+    this.db
+      .update(jobs)
+      .set({
+        recordJson: loaded.status as unknown as Record<string, unknown>,
+        recordRevision: loaded.modifiedAt + 1,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(jobs.videoId, videoId))
+      .run()
     return this.subtitleCatalog(videoId)
   }
 
@@ -646,6 +678,7 @@ export class JobRepository {
       videoId,
       title: status.title,
       sourceUrl: status.sourceUrl,
+      sourceKind: status.sourceKind,
       state,
       effectiveState,
       stage: status.stage,
@@ -711,11 +744,13 @@ export class JobRepository {
 
   list() {
     const summaries: JobSummary[] = []
-    for (const entry of readdirSync(this.jobsRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.isSymbolicLink() || !VIDEO_ID_PATTERN.test(entry.name)) {
-        continue
-      }
-      summaries.push(this.summarize(entry.name, false) as JobSummary)
+    const rows = this.db
+      .select({ videoId: jobs.videoId })
+      .from(jobs)
+      .orderBy(desc(jobs.updatedAt))
+      .all()
+    for (const row of rows) {
+      summaries.push(this.summarize(row.videoId, false) as JobSummary)
     }
     return summaries.sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),
@@ -794,7 +829,9 @@ export class JobRepository {
           thumbnailUrl: summary.thumbnailUrl,
           watchUrl: summary.watchUrl,
           hasLog: summary.hasLog,
-          statusModifiedAt: Math.round(statusModifiedAt),
+          durationSeconds: summary.durationSeconds,
+          recordJson: status as unknown as Record<string, unknown>,
+          recordRevision: Math.max(1, Math.round(statusModifiedAt)),
           projectedAt,
         })
         .onConflictDoUpdate({
@@ -816,13 +853,25 @@ export class JobRepository {
             thumbnailUrl: summary.thumbnailUrl,
             watchUrl: summary.watchUrl,
             hasLog: summary.hasLog,
-            statusModifiedAt: Math.round(statusModifiedAt),
+            durationSeconds: summary.durationSeconds,
             projectedAt,
           },
         })
         .run()
 
       transaction.delete(jobHistory).where(eq(jobHistory.videoId, summary.videoId)).run()
+      transaction.delete(mediaSources).where(eq(mediaSources.videoId, summary.videoId)).run()
+      transaction
+        .insert(mediaSources)
+        .values({
+          id: `${summary.videoId}:primary`,
+          videoId: summary.videoId,
+          sourceUrl: summary.sourceUrl,
+          sourceType: summary.sourceKind,
+          externalId: summary.videoId,
+          createdAt: summary.createdAt,
+        })
+        .run()
       const history = status.history
       if (history.length > 0) {
         transaction

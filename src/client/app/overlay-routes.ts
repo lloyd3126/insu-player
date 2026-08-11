@@ -1,4 +1,6 @@
 import type {
+  AddMediaTab,
+  ChromeExtensionTab,
   JobDetailTab,
   OverlayDestination,
   OverlayState,
@@ -6,16 +8,14 @@ import type {
 } from "@/app/overlay-context"
 
 const USAGE_GUIDE_TABS = new Set([
-  "getting-started",
-  "my-prompts",
-  "supported-sites",
+  "initialize",
+  "add-media",
+  "handoff",
 ])
-const FEATURE_SETTINGS_TABS = new Set([
-  "environment",
-  "local-models",
-  "cloud-models",
-])
+const CHROME_EXTENSION_TABS = new Set(["install", "connect", "usage"])
+const ADD_MEDIA_TABS = new Set(["sources", "downloads", "handoff"])
 const LIBRARY_VIEWS = new Set(["grid", "list"])
+const LIBRARY_STATUSES = new Set(["all", "active", "attention", "watchable", "ready"])
 const JOB_DETAIL_TABS = new Set([
   "about",
   "quality",
@@ -31,6 +31,7 @@ const SUBTITLE_MANAGEMENT_VIEWS = new Set([
   "segmentation",
 ])
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/
+const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,159}$/
 
 function decodeSegment(segment: string) {
   try {
@@ -69,23 +70,54 @@ function overlayDestinationFromLocation(
   if (segments.length === 0 || pathname === "/index.html") return null
 
   if (segments[0] === "guide" && segments.length <= 2) {
-    return {
-      type: "usage-guide",
-      tab:
-        setValue(USAGE_GUIDE_TABS, segments[1]) ?? "getting-started",
-    }
+    const tab = segments.length === 1
+      ? "initialize"
+      : setValue<"initialize" | "add-media" | "handoff">(
+          USAGE_GUIDE_TABS,
+          segments[1],
+        )
+    return tab ? { type: "usage-guide", tab } : null
   }
-  if (segments[0] === "settings" && segments.length <= 2) {
-    return {
-      type: "feature-settings",
-      tab:
-        setValue(FEATURE_SETTINGS_TABS, segments[1]) ?? "environment",
-    }
+  if (segments[0] === "prompts" && segments.length === 1) {
+    return { type: "my-prompts" }
   }
+  if (segments[0] === "supported-sites" && segments.length === 1) {
+    return { type: "supported-sites" }
+  }
+  if (segments[0] === "extension" && segments.length <= 2) {
+    const tab =
+      setValue<ChromeExtensionTab>(CHROME_EXTENSION_TABS, segments[1]) ??
+      (segments.length === 1 ? "install" : null)
+    return tab ? { type: "chrome-extension", tab } : null
+  }
+  if (segments[0] === "settings") {
+    if (segments.length === 1) return { type: "transcription-settings" }
+    if (
+      segments.length === 3 &&
+      segments[1] === "models" &&
+      MODEL_ID_PATTERN.test(segments[2])
+    ) {
+      return { type: "transcription-settings", modelId: segments[2] }
+    }
+    return null
+  }
+  if (segments[0] === "library" && segments[1] === "add" && segments.length === 3) {
+    const tab = setValue<AddMediaTab>(ADD_MEDIA_TABS, segments[2])
+    return tab ? { type: "add-media", tab } : null
+  }
+  if (segments[0] === "library" && segments[1] === "add") return null
   if (segments[0] === "library" && segments.length <= 2) {
+    const params = new URLSearchParams(search)
+    const query = params.get("q")?.trim().slice(0, 200)
+    const status = setValue<"all" | "active" | "attention" | "watchable" | "ready">(
+      LIBRARY_STATUSES,
+      params.get("status") ?? undefined,
+    )
     return {
       type: "library",
       view: setValue(LIBRARY_VIEWS, segments[1]),
+      ...(query ? { query } : {}),
+      ...(status && status !== "all" ? { status } : {}),
     }
   }
   if (segments[0] === "jobs" && segments[1] && segments.length <= 4) {
@@ -114,11 +146,19 @@ function overlayDestinationFromLocation(
     }
   }
   if (segments[0] === "player" && segments[1] && segments.length === 2) {
-    const caption = new URLSearchParams(search).get("caption")?.trim()
+    const params = new URLSearchParams(search)
+    const caption = params.get("caption")?.trim()
+    const rawTime = params.get("time")
+    const parsedTime = rawTime === null ? Number.NaN : Number(rawTime)
+    const time =
+      Number.isFinite(parsedTime) && parsedTime >= 0 && parsedTime <= 604_800
+        ? Math.round(parsedTime * 1000) / 1000
+        : undefined
     return {
       type: "player",
       videoId: segments[1],
       caption: caption || undefined,
+      ...(time === undefined ? {} : { time }),
     }
   }
   if (segments[0] === "policy" && segments.length === 1) {
@@ -166,11 +206,29 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
     case "usage-guide":
       path = `/guide/${overlay.tab}`
       break
-    case "feature-settings":
-      path = `/settings/${overlay.tab}`
+    case "my-prompts":
+      path = "/prompts"
+      break
+    case "supported-sites":
+      path = "/supported-sites"
+      break
+    case "chrome-extension":
+      path = `/extension/${overlay.tab}`
+      break
+    case "transcription-settings":
+      path = overlay.modelId
+        ? `/settings/models/${encodeURIComponent(overlay.modelId)}`
+        : "/settings"
       break
     case "library":
       path = overlay.view ? `/library/${overlay.view}` : "/library"
+      if (overlay.query) search.set("q", overlay.query)
+      if (overlay.status && overlay.status !== "all") {
+        search.set("status", overlay.status)
+      }
+      break
+    case "add-media":
+      path = `/library/add/${overlay.tab}`
       break
     case "detail":
       path =
@@ -184,6 +242,7 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
     case "player":
       path = `/player/${encodeURIComponent(overlay.videoId)}`
       if (overlay.caption) search.set("caption", overlay.caption)
+      if (overlay.time !== undefined) search.set("time", String(overlay.time))
       break
     case "policy":
       path = "/policy"

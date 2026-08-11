@@ -33,6 +33,11 @@ class TranscriptionTests(unittest.TestCase):
         self.assertEqual(transcribe_media.engine_language_code("fil-PH"), "tl")
         self.assertIsNone(transcribe_media.engine_language_code("und"))
         self.assertIsNone(transcribe_media.engine_language_code(None))
+        self.assertEqual(
+            transcribe_media.provider_language_parameter("xai", "en-US"), "en"
+        )
+        with self.assertRaisesRegex(ValueError, "xAI speech-to-text"):
+            transcribe_media.provider_language_parameter("xai", "yue-HK")
         with self.assertRaisesRegex(ValueError, "does not accept language"):
             transcribe_media.engine_language_code("yue-HK")
         with self.assertRaisesRegex(ValueError, "invalid BCP 47"):
@@ -68,13 +73,17 @@ class TranscriptionTests(unittest.TestCase):
         )
 
     def test_openai_requires_explicit_upload_consent_and_environment_key(self) -> None:
-        args = Namespace(consent_to_upload=False, model="whisper-1")
-        with self.assertRaisesRegex(RuntimeError, "consent-to-upload"):
-            transcribe_media.transcribe_openai(args)
-        args.consent_to_upload = True
+        args = Namespace(
+            provider="openai",
+            consent_to_audio_upload=False,
+            model="whisper-1",
+        )
+        with self.assertRaisesRegex(RuntimeError, "consent-to-audio-upload"):
+            transcribe_media.transcribe_cloud(args)
+        args.consent_to_audio_upload = True
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY"):
-                transcribe_media.transcribe_openai(args)
+                transcribe_media.transcribe_cloud(args)
 
     def test_openai_requests_segment_and_word_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -102,7 +111,8 @@ class TranscriptionTests(unittest.TestCase):
             fake_client = SimpleNamespace(audio=SimpleNamespace(transcriptions=FakeTranscriptions()))
             fake_openai = SimpleNamespace(OpenAI=lambda: fake_client)
             args = Namespace(
-                consent_to_upload=True,
+                provider="openai",
+                consent_to_audio_upload=True,
                 model="whisper-1",
                 language="en-US",
                 output_dir=root,
@@ -115,14 +125,211 @@ class TranscriptionTests(unittest.TestCase):
                 patch.dict(sys.modules, {"openai": fake_openai}),
                 patch.object(transcribe_media, "prepare_api_chunks", return_value=[chunk]),
             ):
-                segments, words, language, chunks = transcribe_media.transcribe_openai(args)
+                segments, words, language, engine_language, chunks = (
+                    transcribe_media.transcribe_cloud(args)
+                )
 
             self.assertEqual(requests[0]["timestamp_granularities"], ["segment", "word"])
             self.assertEqual(requests[0]["language"], "en")
             self.assertEqual(words[-1]["word"], "world.")
             self.assertEqual(segments[0]["text"], "Hello world.")
             self.assertEqual(language, "en-US")
-            self.assertEqual(chunks, 1)
+            self.assertEqual(engine_language, "en")
+            self.assertEqual(len(chunks), 1)
+
+    def test_every_cloud_contract_requires_word_timing(self) -> None:
+        contracts = {
+            "openai": "whisper-1",
+            "groq": "whisper-large-v3",
+            "elevenlabs": "scribe_v2",
+            "xai": None,
+            "openrouter": "openai/whisper-large-v3",
+        }
+        for provider, model in contracts.items():
+            identity = transcribe_media.processor_identity(provider, model)
+            self.assertEqual(identity["provider"], provider)
+            self.assertEqual(identity["model"], model)
+        with self.assertRaisesRegex(ValueError, "word timing is locked"):
+            transcribe_media.validate_model("openrouter", "groq/whisper-large-v3")
+        with self.assertRaisesRegex(ValueError, "word timestamps"):
+            transcribe_media.normalize_words([])
+
+    def test_every_cloud_provider_rejects_a_response_without_words(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            input_path = root / "audio.m4a"
+            chunk = root / "chunk.mp3"
+            ffmpeg = root / "ffmpeg"
+            for path in (input_path, chunk, ffmpeg):
+                path.write_bytes(b"audio")
+            contracts = {
+                "openai": ("whisper-1", "OPENAI_API_KEY"),
+                "groq": ("whisper-large-v3", "GROQ_API_KEY"),
+                "elevenlabs": ("scribe_v2", "ELEVENLABS_API_KEY"),
+                "xai": (None, "XAI_API_KEY"),
+                "openrouter": ("openai/whisper-large-v3", "OPENROUTER_API_KEY"),
+            }
+            for provider, (model, key_name) in contracts.items():
+                output = root / provider
+                output.mkdir()
+                language_payload = (
+                    {"language_code": "en"}
+                    if provider == "elevenlabs"
+                    else {"language": "English" if provider == "xai" else "en"}
+                )
+                args = Namespace(
+                    provider=provider,
+                    consent_to_audio_upload=True,
+                    model=model,
+                    language=None,
+                    output_dir=output,
+                    input=input_path,
+                    ffmpeg=ffmpeg,
+                    chunk_seconds=600,
+                )
+                with (
+                    self.subTest(provider=provider),
+                    patch.dict(os.environ, {key_name: "test-key"}, clear=True),
+                    patch.object(transcribe_media, "prepare_api_chunks", return_value=[chunk]),
+                    patch.object(
+                        transcribe_media,
+                        "transcribe_chunk",
+                        return_value={
+                            **language_payload,
+                            "duration": 1.0,
+                            "segments": [
+                                {"start": 0.0, "end": 1.0, "text": "No words"}
+                            ],
+                        },
+                    ),
+                ):
+                    with self.assertRaisesRegex(ValueError, "word timestamps"):
+                        transcribe_media.transcribe_cloud(args)
+
+    def test_groq_adapter_requests_word_timestamps(self) -> None:
+        from transcription_providers import groq_provider
+
+        with tempfile.TemporaryDirectory() as temporary:
+            audio_path = Path(temporary) / "audio.mp3"
+            audio_path.write_bytes(b"audio")
+            requests: list[dict[str, object]] = []
+
+            class FakeTranscriptions:
+                def create(self, *, file: object, **request: object) -> dict[str, object]:
+                    del file
+                    requests.append(request)
+                    return {"words": [{"text": "hello", "start": 0, "end": 1}]}
+
+            fake_groq = SimpleNamespace(
+                Groq=lambda: SimpleNamespace(
+                    audio=SimpleNamespace(transcriptions=FakeTranscriptions())
+                )
+            )
+            with patch.dict(sys.modules, {"groq": fake_groq}):
+                groq_provider.transcribe(
+                    audio_path, model="whisper-large-v3", language="en"
+                )
+
+            self.assertEqual(requests[0]["response_format"], "verbose_json")
+            self.assertEqual(
+                requests[0]["timestamp_granularities"], ["segment", "word"]
+            )
+
+    def test_elevenlabs_adapter_requests_word_timestamps(self) -> None:
+        from transcription_providers import elevenlabs_provider
+
+        with tempfile.TemporaryDirectory() as temporary:
+            audio_path = Path(temporary) / "audio.mp3"
+            audio_path.write_bytes(b"audio")
+            requests: list[dict[str, object]] = []
+
+            class FakeSpeechToText:
+                def convert(self, *, file: object, **request: object) -> dict[str, object]:
+                    del file
+                    requests.append(request)
+                    return {"words": [{"text": "hello", "start": 0, "end": 1}]}
+
+            fake_client_module = SimpleNamespace(
+                ElevenLabs=lambda: SimpleNamespace(speech_to_text=FakeSpeechToText())
+            )
+            with patch.dict(
+                sys.modules,
+                {
+                    "elevenlabs": SimpleNamespace(),
+                    "elevenlabs.client": fake_client_module,
+                },
+            ):
+                elevenlabs_provider.transcribe(
+                    audio_path, model="scribe_v2", language="en"
+                )
+
+            self.assertEqual(requests[0]["timestamps_granularity"], "word")
+
+    def test_xai_adapter_keeps_file_after_options_and_returns_words(self) -> None:
+        from transcription_providers import xai_provider
+
+        with tempfile.TemporaryDirectory() as temporary:
+            audio_path = Path(temporary) / "audio.mp3"
+            audio_path.write_bytes(b"audio")
+            requests: list[dict[str, object]] = []
+
+            class FakeResponse:
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict[str, object]:
+                    return {"words": [{"text": "hello", "start": 0, "end": 1}]}
+
+            def fake_post(url: str, **request: object) -> FakeResponse:
+                requests.append({"url": url, **request})
+                return FakeResponse()
+
+            with (
+                patch.dict(os.environ, {"XAI_API_KEY": "test-key"}, clear=True),
+                patch.dict(sys.modules, {"httpx": SimpleNamespace(post=fake_post)}),
+            ):
+                payload = xai_provider.transcribe(audio_path, model=None, language="en")
+
+            self.assertEqual(
+                requests[0]["data"],
+                [("format", "true"), ("language", "en"), ("filler_words", "true")],
+            )
+            self.assertIn("file", requests[0]["files"])
+            self.assertEqual(payload["words"][0]["text"], "hello")
+
+    def test_openrouter_adapter_requests_and_requires_word_timestamps(self) -> None:
+        from transcription_providers import openrouter_provider
+
+        with tempfile.TemporaryDirectory() as temporary:
+            audio_path = Path(temporary) / "audio.mp3"
+            audio_path.write_bytes(b"audio")
+            clients: list[dict[str, object]] = []
+            requests: list[dict[str, object]] = []
+
+            class FakeTranscriptions:
+                def create(self, *, file: object, **request: object) -> dict[str, object]:
+                    del file
+                    requests.append(request)
+                    return {"words": [{"word": "hello", "start": 0, "end": 1}]}
+
+            def fake_openai(**options: object) -> SimpleNamespace:
+                clients.append(options)
+                return SimpleNamespace(
+                    audio=SimpleNamespace(transcriptions=FakeTranscriptions())
+                )
+
+            with (
+                patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}, clear=True),
+                patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=fake_openai)}),
+            ):
+                openrouter_provider.transcribe(
+                    audio_path, model="openai/whisper-large-v3", language="en"
+                )
+
+            self.assertEqual(clients[0]["base_url"], "https://openrouter.ai/api/v1")
+            self.assertEqual(
+                requests[0]["timestamp_granularities"], ["segment", "word"]
+            )
 
     def test_local_provider_writes_normalized_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -166,9 +373,11 @@ printf '%s\n' '{"language":"en","segments":[{"start":0.0,"end":2.0,"text":"Test 
                 check=True,
             )
             payload = json.loads((output / "transcript.json").read_text(encoding="utf-8"))
-            self.assertEqual(payload["schemaVersion"], 2)
-            self.assertEqual(payload["provider"], "local")
-            self.assertEqual(payload["model"], "tiny")
+            self.assertEqual(payload["schemaVersion"], 3)
+            self.assertEqual(
+                payload["processor"],
+                {"provider": "local", "service": "openai-whisper", "model": "tiny"},
+            )
             self.assertEqual(payload["language"], "en")
             self.assertEqual(payload["engineLanguage"], "en")
             self.assertEqual([word["word"] for word in payload["words"]], ["Test", "line."])

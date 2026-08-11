@@ -2,19 +2,20 @@
 
 ## Purpose
 
-Use a Codex current-task heartbeat to revisit an already-started INSU Player operation without keeping the initiating turn blocked. INSU Player does not own the scheduler. Its durable job files remain the source of truth.
+Use a Codex current-task heartbeat to revisit an already-started INSU Player operation without keeping the initiating turn blocked. INSU Player does not own the scheduler. Its SQLite operation records remain the source of truth.
 
 ## Sources of truth
 
 For one validated project-local workspace and video ID, inspect only:
 
-- `jobs/<video-id>/status.json`
-- `jobs/<video-id>/media-work/catalog.json` for rendition operations
+- `app.db` media item, operation, event, and registered artifact rows for the exact video ID
+- `jobs/<video-id>/media-work/catalog.json` only to validate registered rendition files
 - `jobs/<video-id>/logs/workflow.log` only when diagnosis is required
 - `jobs/<video-id>/media-work/runs/<run-id>/workflow.log` only for the selected rendition run
 - `.insu-player-server.json` only to confirm the selected workspace's localhost endpoint
+- the pinned processor identity on the current operation or subtitle pipeline, which must match the singleton transcription selection captured when the run started
 
-Do not use `app.db` to decide whether work should resume. It is a rebuildable query projection.
+Do not use job-directory JSON as a fallback workflow state. A missing or invalid current SQLite record fails closed and requires a rebuild.
 
 ## Scheduling boundary
 
@@ -56,10 +57,12 @@ One automatic resume is permitted only when all of the following hold:
 
 1. The job and workspace identities are unchanged.
 2. The original operation is idempotent and documented as resumable by `$watch-video`.
-3. No new API upload, quality-floor exception, deletion, provider change, language change, or account access is required.
+3. No new API upload, quality-floor exception, deletion, transcription selection change, language change, or account access is required.
 4. The same operation has not already been automatically resumed by this heartbeat.
 
 After one resume, a second interruption or equivalent failure requires user attention. The heartbeat must stop rather than retry indefinitely.
+
+The heartbeat never re-resolves a provider or model from conversation text and never passes a provider override. If the user changed the feature-setting selection after this run started, the existing run keeps its pinned processor. A retry that would require a different model is a new user decision rather than an automatic resume.
 
 ## API and secret handling
 

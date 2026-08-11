@@ -22,45 +22,126 @@ export interface SupportedSitesResponse {
   message: string
 }
 
-export interface LocalModel {
-  name: string
+export type TranscriptionProvider =
+  | "local"
+  | "openai"
+  | "groq"
+  | "elevenlabs"
+  | "xai"
+  | "openrouter"
+
+export type CloudTranscriptionProvider = Exclude<TranscriptionProvider, "local">
+
+export type TranscriptionModelStatus =
+  | "ready"
+  | "not-downloaded"
+  | "downloading"
+  | "validating"
+  | "redownload-required"
+  | "download-failed"
+  | "sdk-missing"
+  | "credential-missing"
+
+interface TranscriptionModelBase {
+  id: string
   displayName: string
-  sizeBytes: number
+  provider: TranscriptionProvider
+  providerName: string
+  service: string
+  model: string | null
+  timingUnitKind: "word"
+  selected: boolean
   ready: boolean
+  status: TranscriptionModelStatus
+  requiresAudioUpload: boolean
+  requiresPerRunConsent: boolean
 }
 
-export interface ModelInventoryResponse {
+export interface LocalTranscriptionModel extends TranscriptionModelBase {
+  type: "local"
+  provider: "local"
   local: {
-    providerInstalled: boolean
-    packageVersion: string | null
-    modelCount: number
-    totalSizeBytes: number
-    models: LocalModel[]
-  }
-  api: {
-    providerInstalled: boolean
-    packageVersion: string | null
-    keyConfigured: boolean
-    models: Array<{
-      name: string
-      displayName: string
-      installed: boolean
-      apiKeyName: string
-      apiKeyConfigured: boolean
-    }>
+    runtimeInstalled: boolean
+    languageSupport: "multilingual" | "english-only"
+    approximateBytes: number
+    memoryLabel: string
+    installed: boolean
+    valid: boolean
+    sizeBytes: number | null
+    download: {
+      state: "idle" | "downloading" | "validating" | "failed"
+      progress: number
+      downloadedBytes: number
+      totalBytes: number
+      message: string
+      errorCode: string | null
+    }
   }
 }
 
-export interface EnvironmentVariableStatus {
-  name: string
-  label: string
-  description: string
+export interface CloudTranscriptionModel extends TranscriptionModelBase {
+  type: "cloud"
+  provider: CloudTranscriptionProvider
+  cloud: {
+    sdkInstalled: boolean
+    credentialConfigured: boolean
+    credentialName: string
+    uploadDescription: string
+  }
+}
+
+export type TranscriptionModel =
+  | LocalTranscriptionModel
+  | CloudTranscriptionModel
+
+export interface TranscriptionProviderStatus {
+  id: CloudTranscriptionProvider
+  displayName: string
+  credentialName: string
   configured: boolean
-  source: string | null
-  providerInstalled: boolean
+  source: "startup" | "session" | null
+  sdkInstalled: boolean
+  modelIds: string[]
 }
 
-export interface EnvironmentStatusResponse {
-  scope: "process"
-  variables: EnvironmentVariableStatus[]
+export interface TranscriptionModelCatalogResponse {
+  models: TranscriptionModel[]
+  providers: TranscriptionProviderStatus[]
+  selectedModelId: string | null
+  updatedAt: string | null
+}
+
+export interface TranscriptionModelDetailResponse {
+  model: TranscriptionModel
+  provider: TranscriptionProviderStatus | null
+}
+
+export interface RuntimeCapability {
+  key: string
+  label: string
+  state: "ready" | "missing" | "checking"
+  detail: string
+  version: string | null
+  checkedAt: string
+}
+
+export interface RuntimeStatusResponse {
+  initialized: boolean
+  capabilities: RuntimeCapability[]
+  activeSetup: {
+    id: string
+    state: string
+    stage: string
+    progress: number
+    message: string
+    updatedAt: string
+  } | null
+}
+
+export interface AgentIntentResponse {
+  id: string
+  kind: string
+  state: "copied"
+  createdAt: string
+  expiresAt: string
 }

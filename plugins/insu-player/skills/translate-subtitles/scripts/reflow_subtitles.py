@@ -151,35 +151,60 @@ def validate_content(value: object, label: str) -> str:
     return value.strip()
 
 
+TIMING_PROCESSOR_CONTRACTS: dict[str, tuple[str, set[str] | None]] = {
+    "local": ("openai-whisper", None),
+    "openai": ("audio/transcriptions", {"whisper-1"}),
+    "groq": ("audio/transcriptions", {"whisper-large-v3", "whisper-large-v3-turbo"}),
+    "elevenlabs": ("speech-to-text", {"scribe_v2"}),
+    "xai": ("v1/stt", set()),
+    "openrouter": ("audio/transcriptions", {"openai/whisper-large-v3"}),
+}
+
+
 def processor_identity(
     value: object,
     label: str,
     *,
     timing_only: bool = False,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be recorded before rendering")
     unknown = set(value) - {"provider", "service", "model", "updatedAt"}
     if unknown:
         raise ValueError(f"{label} contains unsupported fields: {sorted(unknown)}")
     provider = value.get("provider")
-    allowed = {"local", "openai"} if timing_only else {"local", "openai", "agent"}
+    allowed = set(TIMING_PROCESSOR_CONTRACTS) if timing_only else {"agent"}
     if provider not in allowed:
         raise ValueError(f"{label}.provider is unsupported")
     service = value.get("service")
     model = value.get("model")
-    if provider in {"local", "openai"}:
-        validate_content(model, f"{label}.model")
+    if provider in TIMING_PROCESSOR_CONTRACTS:
+        expected_service, allowed_models = TIMING_PROCESSOR_CONTRACTS[provider]
+        if service != expected_service:
+            raise ValueError(f"{label} must use {provider} / {expected_service}")
+        if allowed_models is not None and model not in allowed_models:
+            raise ValueError(f"{label}.model is unsupported")
+        if allowed_models is None:
+            validate_content(model, f"{label}.model")
+            pattern = (
+                r"^[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$"
+                if provider == "openrouter"
+                else r"^[A-Za-z0-9._-]+$"
+            )
+            if not re.fullmatch(pattern, str(model)):
+                raise ValueError(f"{label}.model is invalid")
     if provider == "agent":
-        validate_content(service, f"{label}.service")
+        if service != "codex" or model is not None:
+            raise ValueError(f"{label} must use agent / codex")
     for field_value, field_name in ((service, "service"), (model, "model")):
         if field_value is not None and not isinstance(field_value, str):
             raise ValueError(f"{label}.{field_name} must be text")
-    return {
-        key: str(value[key])
-        for key in ("provider", "service", "model", "updatedAt")
-        if value.get(key) is not None
-    }
+    identity = {"provider": provider, "service": service, "model": model}
+    if provider == "agent":
+        identity.pop("model")
+    if value.get("updatedAt") is not None:
+        identity["updatedAt"] = str(value["updatedAt"])
+    return identity
 
 
 def token_is_sentence_end(token: str) -> bool:
@@ -191,21 +216,32 @@ def token_is_sentence_end(token: str) -> bool:
     return bool(SENTENCE_END_PATTERN.search(token))
 
 
-def model_transcript_units(path: Path) -> tuple[list[TimedUnit], str, str, str | None]:
+def model_transcript_units(path: Path) -> tuple[list[TimedUnit], dict[str, Any], str]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid model transcript: {path}") from error
     if not isinstance(payload, dict):
         raise ValueError("model transcript must be an object")
-    if payload.get("schemaVersion") != 2:
-        raise ValueError("model transcript must use schemaVersion 2")
-    provider = payload.get("provider")
-    model = payload.get("model")
-    if provider not in {"local", "openai"}:
-        raise ValueError("model transcript provider must be local or openai")
-    if not isinstance(model, str) or not model.strip():
-        raise ValueError("model transcript has no model name")
+    if payload.get("schemaVersion") != 3:
+        raise ValueError("model transcript must use schemaVersion 3")
+    expected_fields = {
+        "schemaVersion",
+        "processor",
+        "language",
+        "engineLanguage",
+        "timingUnitKind",
+        "durationSeconds",
+        "chunks",
+        "segments",
+        "words",
+        "text",
+    }
+    if set(payload) != expected_fields:
+        raise ValueError("model transcript fields do not match schemaVersion 3")
+    processor = processor_identity(payload.get("processor"), "model transcript processor", timing_only=True)
+    if payload.get("timingUnitKind") != "word":
+        raise ValueError("model transcript must use word timing")
     transcript_language = payload.get("language")
     transcript_language = validate_language(transcript_language, "transcript language")
     if transcript_language == "und":
@@ -249,29 +285,15 @@ def model_transcript_units(path: Path) -> tuple[list[TimedUnit], str, str, str |
     for previous, current in zip(units, units[1:]):
         if current.start_ms < previous.start_ms:
             raise ValueError("model transcript timed units are not ordered")
-    return units, provider, model.strip(), transcript_language
+    return units, processor, transcript_language
 
 
-def sentence_segments(units: list[TimedUnit]) -> list[dict[str, object]]:
+def segments_from_groups(groups: list[list[TimedUnit]], units: list[TimedUnit]) -> list[dict[str, object]]:
     unit_positions = {unit.identifier: index for index, unit in enumerate(units)}
-    grouped: list[list[TimedUnit]] = []
-    current: list[TimedUnit] = []
-    for unit in units:
-        if SOUND_LABEL_PATTERN.fullmatch(unit.text):
-            if current:
-                grouped.append(current)
-                current = []
-            grouped.append([unit])
-            continue
-        current.append(unit)
-        if token_is_sentence_end(unit.text):
-            grouped.append(current)
-            current = []
-    if current:
-        grouped.append(current)
-
     segments: list[dict[str, object]] = []
-    for index, sentence_units in enumerate(grouped, start=1):
+    for index, sentence_units in enumerate(groups, start=1):
+        if not sentence_units:
+            raise ValueError("complete-sentence group must not be empty")
         start_ms = sentence_units[0].start_ms
         last_unit = sentence_units[-1]
         end_ms = last_unit.fallback_end_ms
@@ -295,13 +317,52 @@ def sentence_segments(units: list[TimedUnit]) -> list[dict[str, object]]:
     return segments
 
 
+def segments_from_end_units(units: list[TimedUnit], end_unit_ids: list[str]) -> list[dict[str, object]]:
+    positions = {unit.identifier: index for index, unit in enumerate(units)}
+    if not end_unit_ids or end_unit_ids[-1] != units[-1].identifier:
+        raise ValueError("sentence boundaries must end at the final timed unit")
+    groups: list[list[TimedUnit]] = []
+    start_position = 0
+    for end_unit_id in end_unit_ids:
+        if end_unit_id not in positions:
+            raise ValueError(f"sentence boundary references an unknown timed unit: {end_unit_id}")
+        end_position = positions[end_unit_id]
+        if end_position < start_position:
+            raise ValueError("sentence boundaries must be unique and chronological")
+        groups.append(units[start_position : end_position + 1])
+        start_position = end_position + 1
+    if start_position != len(units):
+        raise ValueError("sentence boundaries do not cover every timed unit")
+    return segments_from_groups(groups, units)
+
+
+def sentence_segments(units: list[TimedUnit]) -> list[dict[str, object]]:
+    grouped: list[list[TimedUnit]] = []
+    current: list[TimedUnit] = []
+    for unit in units:
+        if SOUND_LABEL_PATTERN.fullmatch(unit.text):
+            if current:
+                grouped.append(current)
+                current = []
+            grouped.append([unit])
+            continue
+        current.append(unit)
+        if token_is_sentence_end(unit.text):
+            grouped.append(current)
+            current = []
+    if current:
+        grouped.append(current)
+
+    return segments_from_groups(grouped, units)
+
+
 def proofread_source_segments(
     path: Path,
     *,
     expected_language: str,
     expected_timing_artifact: str,
-    transcript_segments: list[dict[str, object]],
-) -> tuple[list[dict[str, object]], list[str], str]:
+    units: list[TimedUnit],
+) -> tuple[list[dict[str, object]], list[str], str, dict[str, str]]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -316,9 +377,19 @@ def proofread_source_segments(
         raise ValueError("proofread content source language does not match the transcript")
     if payload.get("timingSourceArtifactId") != expected_timing_artifact:
         raise ValueError("proofread content source uses a different timing artifact")
+    processor_identity(payload.get("contentProcessor"), "proofread contentProcessor")
     raw_segments = payload.get("segments")
-    if not isinstance(raw_segments, list) or len(raw_segments) != len(transcript_segments):
-        raise ValueError("proofread content source does not match the transcript sentences")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise ValueError("proofread content source has no reviewed sentences")
+    review = sentence_review(payload.get("sentenceReview"))
+    end_unit_ids = [
+        str(raw_segment.get("sourceUnitEnd"))
+        for raw_segment in raw_segments
+        if isinstance(raw_segment, dict)
+    ]
+    if len(end_unit_ids) != len(raw_segments):
+        raise ValueError("proofread content source contains an invalid sentence")
+    transcript_segments = segments_from_end_units(units, end_unit_ids)
     translated_source: list[dict[str, object]] = []
     for transcript_segment, raw_segment in zip(
         transcript_segments, raw_segments, strict=True
@@ -356,7 +427,50 @@ def proofread_source_segments(
     ):
         raise ValueError("proofread content source references are invalid")
     checksum = hashlib.sha256(path.read_bytes()).hexdigest()
-    return translated_source, list(references), checksum
+    return translated_source, list(references), checksum, review
+
+
+def sentence_review(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError("sentenceReview must be recorded by Agent before content work")
+    if set(value) != {"provider", "service", "reviewedAt"}:
+        raise ValueError("sentenceReview fields do not match the current contract")
+    if value.get("provider") != "agent" or value.get("service") != "codex":
+        raise ValueError("sentenceReview must use agent / codex")
+    reviewed_at = value.get("reviewedAt")
+    if not isinstance(reviewed_at, str) or not reviewed_at.endswith("Z"):
+        raise ValueError("sentenceReview.reviewedAt is invalid")
+    return {"provider": "agent", "service": "codex", "reviewedAt": reviewed_at}
+
+
+def validate_sentence_partition(payload: dict[str, Any], segments: list[dict[str, object]]) -> None:
+    source_transcript = payload.get("sourceTranscript")
+    if not isinstance(source_transcript, str) or not source_transcript:
+        raise ValueError("subtitle revision manifest has no source transcript")
+    units, _, _ = model_transcript_units(Path(source_transcript))
+    positions = {unit.identifier: index for index, unit in enumerate(units)}
+    expected_start = 0
+    for index, segment in enumerate(segments, start=1):
+        identifier = str(segment.get("id"))
+        if identifier != f"S{index:04d}":
+            raise ValueError("complete-sentence IDs must be sequential")
+        start_id = segment.get("sourceUnitStart")
+        end_id = segment.get("sourceUnitEnd")
+        if start_id not in positions or end_id not in positions:
+            raise ValueError(f"{identifier} references an unknown timed unit")
+        start_position = positions[str(start_id)]
+        end_position = positions[str(end_id)]
+        if start_position != expected_start or end_position < start_position:
+            raise ValueError(f"{identifier} does not partition timed units continuously")
+        unit_count = end_position - start_position + 1
+        duration_ms = units[end_position].fallback_end_ms - units[start_position].start_ms
+        if unit_count > 160 or duration_ms > 60_000:
+            raise ValueError(
+                f"SOURCE_SENTENCE_IMPLAUSIBLE: {identifier} spans {unit_count} units and {duration_ms} ms"
+            )
+        expected_start = end_position + 1
+    if expected_start != len(units):
+        raise ValueError("complete sentences do not cover every timed unit")
 
 
 def render_vtt(
@@ -444,6 +558,7 @@ def manifest_view(payload: object) -> ManifestView:
             timing_only=True,
         )
         processor_identity(payload.get("contentProcessor"), "contentProcessor")
+        sentence_review(payload.get("sentenceReview"))
     else:
         raise ValueError(f"subtitle revision manifest must use schemaVersion {SCHEMA_VERSION}")
 
@@ -470,6 +585,7 @@ def manifest_view(payload: object) -> ManifestView:
         validate_content(raw_segment.get(output_key), f"{identifier}.{output_key}")
         previous_end = end_ms
         segments.append(raw_segment)
+    validate_sentence_partition(payload, segments)
     return ManifestView(
         str(mode),
         source_language,
@@ -529,7 +645,7 @@ def validate_pair(source_path: Path, target_path: Path, punctuation_policy: str 
 
 
 def prepare(args: argparse.Namespace) -> int:
-    units, provider, model, transcript_language = model_transcript_units(args.source_transcript)
+    units, timing_processor, transcript_language = model_transcript_units(args.source_transcript)
     source_language = validate_language(args.source_language or transcript_language, "source language")
     output_language = validate_language(args.output_language, "output language")
     if args.mode == "proofread" and source_language != output_language:
@@ -541,6 +657,7 @@ def prepare(args: argparse.Namespace) -> int:
     source_content_kind = "model-transcript"
     source_content_manifest: str | None = None
     source_content_checksum: str | None = None
+    inherited_sentence_review: dict[str, str] | None = None
     references = list(args.reference_artifact)
     if (
         args.source_content_manifest is None
@@ -556,11 +673,11 @@ def prepare(args: argparse.Namespace) -> int:
             raise ValueError(
                 "translation from proofreading requires --source-content-artifact"
             )
-        segments, references, source_content_checksum = proofread_source_segments(
+        segments, references, source_content_checksum, inherited_sentence_review = proofread_source_segments(
             args.source_content_manifest,
             expected_language=source_language,
             expected_timing_artifact=args.timing_source_artifact,
-            transcript_segments=segments,
+            units=units,
         )
         source_content_kind = "proofread"
         source_content_manifest = str(args.source_content_manifest)
@@ -581,8 +698,9 @@ def prepare(args: argparse.Namespace) -> int:
         "sourceContentManifest": source_content_manifest,
         "sourceContentChecksum": source_content_checksum,
         "referenceArtifactIds": references,
-        "timingProcessor": {"provider": provider, "model": model},
+        "timingProcessor": timing_processor,
         "contentProcessor": None,
+        "sentenceReview": inherited_sentence_review,
         "outputProfile": {"punctuationPolicy": args.punctuation_policy},
         "rules": {
             "contentUnit": "complete source sentence",
@@ -605,19 +723,71 @@ def record_content_processor(args: argparse.Namespace) -> int:
     payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
         raise ValueError(f"content processor metadata requires a schemaVersion {SCHEMA_VERSION} manifest")
+    sentence_review(payload.get("sentenceReview"))
     metadata: dict[str, str] = {
-        "provider": args.provider,
+        "provider": "agent",
+        "service": "codex",
         "updatedAt": utc_now(),
     }
-    if args.service is not None:
-        metadata["service"] = validate_content(args.service, "content processor service")
-    if args.model is not None:
-        metadata["model"] = validate_content(args.model, "content processor model")
     metadata = processor_identity(metadata, "contentProcessor")
     payload["contentProcessor"] = metadata
     atomic_write_text(args.manifest, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    identity = metadata.get("model") or metadata.get("service") or args.provider
-    print(f"Recorded {args.provider} content processor {identity}: {args.manifest}")
+    print(f"Recorded agent content processor codex: {args.manifest}")
+    return 0
+
+
+def record_sentence_review(args: argparse.Namespace) -> int:
+    payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError(
+            f"sentence review requires a schemaVersion {SCHEMA_VERSION} manifest"
+        )
+    if payload.get("sourceContentKind") == "proofread":
+        raise ValueError("translation inherits sentence review from proofreading")
+    boundaries = json.loads(args.boundaries.read_text(encoding="utf-8"))
+    if not isinstance(boundaries, dict) or set(boundaries) != {
+        "schemaVersion",
+        "boundaryAfterUnitIds",
+    }:
+        raise ValueError("sentence boundary file fields do not match the current contract")
+    if boundaries.get("schemaVersion") != 1:
+        raise ValueError("sentence boundary file must use schemaVersion 1")
+    raw_ids = boundaries.get("boundaryAfterUnitIds")
+    if not isinstance(raw_ids, list) or not all(isinstance(value, str) for value in raw_ids):
+        raise ValueError("boundaryAfterUnitIds must be a list of timed-unit IDs")
+    units, _, _ = model_transcript_units(Path(str(payload.get("sourceTranscript"))))
+    existing_segments = payload.get("segments")
+    if not isinstance(existing_segments, list) or any(
+        not isinstance(segment, dict)
+        or str(segment.get("draftOutputText", "")).strip()
+        or str(segment.get("outputText", "")).strip()
+        for segment in existing_segments
+    ):
+        raise ValueError("sentence boundaries must be reviewed before content text is written")
+    payload["segments"] = segments_from_end_units(units, list(raw_ids))
+    payload["sentenceReview"] = {
+        "provider": "agent",
+        "service": "codex",
+        "reviewedAt": utc_now(),
+    }
+    atomic_write_text(
+        args.manifest,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
+    if args.source_output is not None:
+        punctuation_policy = str(
+            payload.get("outputProfile", {}).get("punctuationPolicy", "preserve")
+        )
+        atomic_write_text(
+            args.source_output,
+            render_vtt(
+                payload["segments"],
+                str(payload["sourceLanguage"]),
+                "sourceText",
+                punctuation_policy,
+            ),
+        )
+    print(f"Recorded Agent-reviewed sentence boundaries: {args.manifest}")
     return 0
 
 
@@ -669,12 +839,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     processor_parser = subparsers.add_parser("record-content-processor")
     processor_parser.add_argument("--manifest", required=True, type=Path)
-    processor_parser.add_argument(
-        "--provider", required=True, choices=("local", "openai", "agent")
-    )
-    processor_parser.add_argument("--service")
-    processor_parser.add_argument("--model")
     processor_parser.set_defaults(handler=record_content_processor)
+
+    sentence_parser = subparsers.add_parser("record-sentence-review")
+    sentence_parser.add_argument("--manifest", required=True, type=Path)
+    sentence_parser.add_argument("--boundaries", required=True, type=Path)
+    sentence_parser.add_argument("--source-output", type=Path)
+    sentence_parser.set_defaults(handler=record_sentence_review)
 
     render_parser = subparsers.add_parser("render")
     render_parser.add_argument("--manifest", required=True, type=Path)

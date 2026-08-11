@@ -111,24 +111,38 @@ function SubtitleManagementProvider({
     },
     [job.videoId, onPreviewArtifactChange, queryClient],
   )
+  const contextValue = useMemo<SubtitleManagementContextValue | null>(
+    () =>
+      catalog.data
+        ? {
+            state: { catalog: catalog.data, view, previewArtifactId },
+            actions: {
+              selectView: onViewChange,
+              openPreview,
+              closePreview,
+              artifactRemoved,
+            },
+            meta: { job },
+          }
+        : null,
+    [
+      artifactRemoved,
+      catalog.data,
+      closePreview,
+      job,
+      onViewChange,
+      openPreview,
+      previewArtifactId,
+      view,
+    ],
+  )
 
   if (catalog.isPending) return <LoadingState label="正在準備字幕版本" />
   if (catalog.isError) return <ErrorState message={catalog.error.message} />
-  if (!catalog.data) return null
+  if (!contextValue) return null
 
   return (
-    <SubtitleManagementContext
-      value={{
-        state: { catalog: catalog.data, view, previewArtifactId },
-        actions: {
-          selectView: onViewChange,
-          openPreview,
-          closePreview,
-          artifactRemoved,
-        },
-        meta: { job },
-      }}
-    >
+    <SubtitleManagementContext value={contextValue}>
       {children}
     </SubtitleManagementContext>
   )

@@ -1,4 +1,19 @@
-export const PROCESSOR_PROVIDERS = ["local", "openai", "agent"] as const
+export const TIMING_PROCESSOR_PROVIDERS = [
+  "local",
+  "openai",
+  "groq",
+  "elevenlabs",
+  "xai",
+  "openrouter",
+] as const
+
+export type TimingProcessorProvider =
+  (typeof TIMING_PROCESSOR_PROVIDERS)[number]
+
+export const PROCESSOR_PROVIDERS = [
+  ...TIMING_PROCESSOR_PROVIDERS,
+  "agent",
+] as const
 
 export type ProcessorProvider = (typeof PROCESSOR_PROVIDERS)[number]
 
@@ -8,12 +23,14 @@ export interface ProcessorIdentity {
   model?: string | null
 }
 
-export const TIMING_PROCESSOR_PROVIDERS = ["local", "openai"] as const
-
-export type TimingProcessorProvider =
-  (typeof TIMING_PROCESSOR_PROVIDERS)[number]
-
 export interface TimingProcessorIdentity extends ProcessorIdentity {
   provider: TimingProcessorProvider
-  model: string
+  service: string
+  model: string | null
+}
+
+export interface AgentProcessorIdentity extends ProcessorIdentity {
+  provider: "agent"
+  service: "codex"
+  model?: never
 }

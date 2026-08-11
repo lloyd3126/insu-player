@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from current_database import create_current_database, write_media_record
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,8 +29,21 @@ inspect_player_job = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(inspect_player_job)
 
 
-def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def database_snapshot(path: Path) -> dict[str, list[tuple[object, ...]]]:
+    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    try:
+        tables = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        ]
+        return {
+            table: connection.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
+            for table in tables
+        }
+    finally:
+        connection.close()
 
 
 class MonitorPlayerJobTests(unittest.TestCase):
@@ -39,17 +54,20 @@ class MonitorPlayerJobTests(unittest.TestCase):
         self.video_id = "video_123"
         self.job_dir = self.workspace / "jobs" / self.video_id
         self.job_dir.mkdir(parents=True)
-        self.status_path = self.job_dir / "status.json"
+        self.database_path = create_current_database(self.workspace)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
     def write_status(self, **updates: object) -> dict[str, object]:
-        status = inspect_player_job.JOB_STATE.default_status(self.job_dir, self.video_id)
-        status.update(updates)
-        self.status_path.write_text(
-            json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        status = inspect_player_job.JOB_STATE.default_status(
+            self.job_dir,
+            self.video_id,
+            source_url="https://example.test/video",
+            source_kind="page",
         )
+        status.update(updates)
+        write_media_record(self.workspace, status)
         return status
 
     def write_catalog(self, operation: dict[str, object] | None) -> Path:
@@ -197,7 +215,7 @@ class MonitorPlayerJobTests(unittest.TestCase):
 
     def test_cli_is_read_only(self) -> None:
         self.write_status(state="ready", stage="complete", progress=100, updatedAt=self.now_text())
-        before = digest(self.status_path)
+        before = database_snapshot(self.database_path)
 
         result = subprocess.run(
             [
@@ -218,13 +236,13 @@ class MonitorPlayerJobTests(unittest.TestCase):
 
         payload = json.loads(result.stdout)
         self.assertEqual(payload["classification"], "complete")
-        self.assertEqual(before, digest(self.status_path))
+        self.assertEqual(before, database_snapshot(self.database_path))
 
     def test_rejects_legacy_schema_and_paths_outside_project(self) -> None:
         status = self.write_status(state="ready", stage="complete", progress=100)
         status["schemaVersion"] = 3
-        self.status_path.write_text(json.dumps(status), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "schemaVersion 6"):
+        write_media_record(self.workspace, status)
+        with self.assertRaisesRegex(ValueError, "schemaVersion 2"):
             self.snapshot()
 
         outside = Path(self.temporary.name) / "outside"

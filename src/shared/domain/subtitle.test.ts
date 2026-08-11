@@ -20,6 +20,26 @@ Next&nbsp;sentence
     expect(cleanCueText("  <b>One</b>   two  ")).toBe("One two")
   })
 
+  test("keeps WebVTT cue identifiers out of visible subtitle text", () => {
+    const cues = parseWebVtt(`WEBVTT
+Kind: captions
+Language: zh-TW
+
+S0001-P01
+00:00:00.000 --> 00:00:03.020
+嗨 創業學校的創辦人們
+
+S0001-P02
+00:00:03.020 --> 00:00:09.640
+我是 Jeff Ralston YC 的總裁
+`)
+
+    expect(cues).toEqual([
+      { start: 0, end: 3.02, text: "嗨 創業學校的創辦人們" },
+      { start: 3.02, end: 9.64, text: "我是 Jeff Ralston YC 的總裁" },
+    ])
+  })
+
   test("uses the English sentence timeline for bilingual comparison", () => {
     const aligned = alignCaptionTracks([
       {

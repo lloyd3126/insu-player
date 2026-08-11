@@ -75,10 +75,10 @@ caption_set_paths() {
   CAPTION_WEB_SERVER="$CAPTION_SKILL_SCRIPT_DIR/../assets/server/insu-player-server.js"
   CAPTION_WEB_MIGRATIONS="$CAPTION_SKILL_SCRIPT_DIR/../assets/server/drizzle"
   CAPTION_LIBRARY_APP="$CAPTION_SKILL_SCRIPT_DIR/../assets/library/app"
-  CAPTION_ENVIRONMENT_SESSION="$CAPTION_SKILL_SCRIPT_DIR/environment_session.py"
+  CAPTION_PROVIDER_CREDENTIAL_SESSION="$CAPTION_SKILL_SCRIPT_DIR/provider_credential_session.py"
   CAPTION_LIBRARY_PID="$CAPTION_WORKSPACE/.insu-player-server.pid"
   CAPTION_LIBRARY_DESCRIPTOR="$CAPTION_WORKSPACE/.insu-player-server.json"
-  CAPTION_ENVIRONMENT_DESCRIPTOR="$CAPTION_WORKSPACE/.insu-environment-session.json"
+  CAPTION_PROVIDER_DESCRIPTOR="$CAPTION_WORKSPACE/.insu-provider-session.json"
 
   export UV_CACHE_DIR="$CAPTION_UV_CACHE"
   export UV_PYTHON_INSTALL_DIR="$CAPTION_UV_PYTHON"
@@ -112,28 +112,50 @@ caption_require_runtime() {
   [ -x "$CAPTION_FFMPEG" ] || caption_die "workflow-local FFmpeg is missing: run setup-environment.sh first"
 }
 
-caption_configured_provider() {
-  local provider
-  provider=$(caption_state_value "$CAPTION_STATE" TRANSCRIPTION_PROVIDER)
-  printf '%s\n' "${provider:-local}"
+caption_provider_api_key() {
+  case "$1" in
+    openai) printf 'OPENAI_API_KEY\n' ;;
+    groq) printf 'GROQ_API_KEY\n' ;;
+    elevenlabs) printf 'ELEVENLABS_API_KEY\n' ;;
+    xai) printf 'XAI_API_KEY\n' ;;
+    openrouter) printf 'OPENROUTER_API_KEY\n' ;;
+    *) caption_die "provider does not use an API key: $1" ;;
+  esac
 }
 
 caption_require_provider() {
   local provider="$1"
   case "$provider" in
     local)
-      [ -x "$CAPTION_WHISPER" ] || caption_die "local Whisper is missing: rerun setup-environment.sh --provider local"
+      [ -x "$CAPTION_WHISPER" ] || caption_die "local Whisper is missing: rerun setup-environment.sh"
       ;;
     openai)
-      "$CAPTION_PYTHON" -c 'import openai' >/dev/null 2>&1 || caption_die "OpenAI SDK is missing: rerun setup-environment.sh --provider openai"
-      if [ -z "${OPENAI_API_KEY:-}" ]; then
-        [ -f "$CAPTION_ENVIRONMENT_SESSION" ] || caption_die "OPENAI_API_KEY is not set in the current process or INSU session"
-        "$CAPTION_PYTHON" "$CAPTION_ENVIRONMENT_SESSION" --workspace "$CAPTION_WORKSPACE" --name OPENAI_API_KEY check >/dev/null 2>&1 || \
-          caption_die "OPENAI_API_KEY is not set in the current process or INSU session"
-      fi
+      "$CAPTION_PYTHON" -c 'import openai' >/dev/null 2>&1 || caption_die "OpenAI SDK is missing: rerun setup-environment.sh"
       ;;
-    *) caption_die "provider must be local or openai" ;;
+    groq)
+      "$CAPTION_PYTHON" -c 'import groq' >/dev/null 2>&1 || caption_die "Groq SDK is missing: rerun setup-environment.sh"
+      ;;
+    elevenlabs)
+      "$CAPTION_PYTHON" -c 'import elevenlabs' >/dev/null 2>&1 || caption_die "ElevenLabs SDK is missing: rerun setup-environment.sh"
+      ;;
+    xai)
+      "$CAPTION_PYTHON" -c 'import httpx' >/dev/null 2>&1 || caption_die "HTTP client is missing: rerun setup-environment.sh"
+      ;;
+    openrouter)
+      "$CAPTION_PYTHON" -c 'import openai' >/dev/null 2>&1 || caption_die "OpenAI SDK is missing for OpenRouter: rerun setup-environment.sh"
+      ;;
+    *) caption_die "unsupported timing provider: $provider" ;;
   esac
+  if [ "$provider" != "local" ]; then
+    local key_name
+    key_name=$(caption_provider_api_key "$provider")
+    local key_value="${!key_name:-}"
+    if [ -z "$key_value" ]; then
+      [ -f "$CAPTION_PROVIDER_CREDENTIAL_SESSION" ] || caption_die "$key_name is not set in the current process or INSU session"
+      "$CAPTION_PYTHON" "$CAPTION_PROVIDER_CREDENTIAL_SESSION" --workspace "$CAPTION_WORKSPACE" --provider "$provider" check >/dev/null 2>&1 || \
+        caption_die "$key_name is not set in the current process or INSU session"
+    fi
+  fi
 }
 
 caption_require_python() {

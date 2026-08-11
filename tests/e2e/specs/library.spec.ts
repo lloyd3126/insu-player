@@ -3,6 +3,29 @@ import { expect, test } from "@playwright/test"
 import { HomePage } from "../pages/home.page"
 
 test.describe("library and details @critical", () => {
+  test("serves a browser-only card library without the homepage or Agent controls", async ({
+    page,
+  }) => {
+    await page.goto("/extension/library")
+    await expect(page.getByRole("heading", { name: "我的影音" })).toBeVisible()
+    await expect(page.locator(".hero, .primary-nav, .prompt-action-card")).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "轉錄設定" })).toHaveCount(0)
+    const card = page.locator(".video-grid-card").filter({
+      hasText: "雙語測試影音",
+    })
+    await expect(card).toBeVisible()
+    await card.getByRole("button", { name: "觀看 雙語測試影音" }).first().click()
+    const player = page.getByRole("dialog", { name: "雙語測試影音" })
+    await expect(player).toBeVisible()
+    await expect(player.locator("iframe")).toHaveAttribute(
+      "src",
+      /\/watch\/demo-video\/?\?embed=1&caption=zh-TW/,
+    )
+    await player.getByRole("button", { name: "關閉播放器" }).click()
+    await expect(player).toBeHidden()
+    await expect(page).toHaveURL(/\/extension\/library$/)
+  })
+
   test("keeps keyboard focus inside the lazy dialog loading state", async ({
     page,
   }) => {
@@ -21,12 +44,12 @@ test.describe("library and details @critical", () => {
     })
 
     try {
-      await page.goto("/guide/getting-started", {
+      await page.goto("/guide/initialize", {
         waitUntil: "domcontentloaded",
       })
       await expect.poll(() => bundleRequested).toBe(true)
       const loading = page.getByRole("dialog", {
-        name: "正在開啟使用說明",
+        name: "正在開啟開始說明",
       })
       await expect(loading).toBeVisible()
       await expect(loading).toBeFocused()
@@ -38,7 +61,7 @@ test.describe("library and details @critical", () => {
       releaseBundle()
     }
 
-    await expect(page.getByRole("dialog", { name: "使用說明" })).toBeVisible()
+    await expect(page.getByRole("dialog", { name: "開始說明" })).toBeVisible()
   })
 
   test("does not reveal the homepage while the player modal loads", async ({
@@ -149,17 +172,14 @@ test.describe("library and details @critical", () => {
     const home = new HomePage(page)
     await home.goto()
 
-    const guide = await home.openNavigationDialog("使用說明", "使用說明")
-    await guide.getByRole("tab", { name: "我的提示" }).click()
-    await expect(page).toHaveURL(/\/guide\/my-prompts$/)
+    await home.openNavigationDialog("我的提示", "我的提示")
+    await expect(page).toHaveURL(/\/prompts$/)
     await page.reload()
     await expect(
-      page.getByRole("dialog", { name: "使用說明" }).getByRole("tab", {
-        name: "我的提示",
-      }),
-    ).toHaveAttribute("aria-selected", "true")
+      page.getByRole("dialog", { name: "我的提示" }),
+    ).toBeVisible()
 
-    await page.getByRole("dialog", { name: "使用說明" }).getByRole("button", {
+    await page.getByRole("dialog", { name: "我的提示" }).getByRole("button", {
       name: "關閉",
     }).click()
     const library = await home.openLibrary()
@@ -355,7 +375,7 @@ test.describe("library and details @critical", () => {
     await expect(page).toHaveURL(new RegExp(`${playerPath.replaceAll("?", "\\?")}$`))
 
     await player.getByRole("button", { name: "關閉" }).click()
-    const returnedLibrary = page.getByRole("dialog", { name: "影音中心" })
+    const returnedLibrary = page.getByRole("dialog", { name: "影片中心" })
     await expect(returnedLibrary).toBeVisible()
     await expect(
       returnedLibrary.getByRole("tab", { name: "詳細資訊" }),
@@ -370,7 +390,7 @@ test.describe("library and details @critical", () => {
     const directPlayer = page.getByRole("dialog", { name: "雙語測試影音" })
     await expect(directPlayer).toBeVisible()
     await directPlayer.getByRole("button", { name: "關閉" }).click()
-    await expect(page.getByRole("dialog", { name: "影音中心" })).toBeVisible()
+    await expect(page.getByRole("dialog", { name: "影片中心" })).toBeVisible()
     await expect(page).toHaveURL(/\/library$/)
   })
 
@@ -446,7 +466,7 @@ test.describe("library and details @critical", () => {
     })
     await expect(removal).toBeHidden()
     await expect(page).toHaveURL(/\/library$/)
-    await expect(page.getByRole("dialog", { name: "影音中心" })).toBeVisible()
+    await expect(page.getByRole("dialog", { name: "影片中心" })).toBeVisible()
   })
 
   test("defaults to a YouTube-style grid when media exists", async ({ page }) => {
@@ -852,7 +872,15 @@ test.describe("library and details @critical", () => {
     await proofreadPreview.getByRole("button", { name: "關閉" }).click()
 
     await detail.getByRole("tab", { name: "影音摘要" }).click()
-    await expect(detail.getByText("影音摘要尚未設定")).toBeVisible()
+    const summaryPanel = detail.getByRole("tabpanel", { name: "影音摘要" })
+    await expect(
+      summaryPanel.getByRole("heading", { name: "請 Agent 建立文字摘要" }),
+    ).toBeVisible()
+    await expect(
+      summaryPanel.getByRole("heading", { name: "請 Agent 建立心智圖" }),
+    ).toBeVisible()
+    await expect(summaryPanel.getByText("尚未建立文字摘要")).toBeVisible()
+    await expect(summaryPanel.getByText("尚未建立心智圖")).toBeVisible()
 
     await detail.getByRole("tab", { name: "字幕管理" }).click()
     await subtitlePanel.getByRole("tab", { name: "翻譯字幕" }).click()
@@ -933,7 +961,10 @@ test.describe("library and details @critical", () => {
     await segmentedPreview.getByRole("button", { name: "關閉" }).click()
 
     await detail.getByRole("tab", { name: "影音筆記" }).click()
-    await expect(detail.getByText("影音筆記尚未設定")).toBeVisible()
+    await expect(detail.getByText("尚未建立影音筆記")).toBeVisible()
+    await expect(
+      detail.getByRole("button", { name: "新增筆記" }),
+    ).toBeVisible()
 
     await detail.getByRole("tab", { name: "執行紀錄" }).click()
     const activityPanel = detail.getByRole("tabpanel", {

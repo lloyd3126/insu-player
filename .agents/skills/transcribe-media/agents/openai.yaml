@@ -1,4 +1,4 @@
 interface:
   display_name: "媒體轉錄"
-  short_description: "使用本機 Whisper 或 OpenAI API 產生字幕"
+  short_description: "用本機 Whisper 或嚴格 word timing 雲端 STT 產生轉錄"
   default_prompt: "Use $transcribe-media to transcribe this authorized media file with timestamps."

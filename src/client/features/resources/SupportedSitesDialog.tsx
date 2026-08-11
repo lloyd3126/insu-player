@@ -3,6 +3,8 @@ import { SearchIcon } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
 
 import { api } from "@/api/client"
+import { useOverlay } from "@/app/overlay-context"
+import { AppDialog } from "@/components/shared/AppDialog"
 import {
   EmptyState,
   ErrorState,
@@ -123,5 +125,26 @@ export function SupportedSitesContent() {
         </>
       ) : null}
     </div>
+  )
+}
+
+export function SupportedSitesDialog() {
+  const overlay = useOverlay()
+  const active = overlay.state?.type === "supported-sites"
+
+  return (
+    <AppDialog
+      open={active}
+      onOpenChange={(open) =>
+        open ? undefined : overlay.actions.close("supported-sites")
+      }
+      kicker="SUPPORTED SOURCES"
+      title="支援網站"
+      description="搜尋目前 yt-dlp 可辨識的平台與來源"
+      size="screen"
+      layout="tabbed"
+    >
+      <SupportedSitesContent />
+    </AppDialog>
   )
 }

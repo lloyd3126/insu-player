@@ -12,13 +12,11 @@ import { overlayFromLocation, pathForOverlay } from "@/app/overlay-routes"
 import type { SubtitleArtifactKind } from "@shared/contracts/subtitle-catalog"
 
 export type UsageGuideTab =
-  | "getting-started"
-  | "my-prompts"
-  | "supported-sites"
-export type FeatureSettingsTab =
-  | "environment"
-  | "local-models"
-  | "cloud-models"
+  | "initialize"
+  | "add-media"
+  | "handoff"
+export type ChromeExtensionTab = "install" | "connect" | "usage"
+export type AddMediaTab = "sources" | "downloads" | "handoff"
 export type LibraryView = "grid" | "list"
 export type JobDetailTab =
   | "about"
@@ -43,9 +41,18 @@ export type JobDetailDestination =
 
 export type OverlayDestination =
   | { type: "usage-guide"; tab: UsageGuideTab }
-  | { type: "feature-settings"; tab: FeatureSettingsTab }
-  | { type: "library"; view: LibraryView | null }
-  | { type: "player"; videoId: string; caption?: string }
+  | { type: "my-prompts" }
+  | { type: "supported-sites" }
+  | { type: "chrome-extension"; tab: ChromeExtensionTab }
+  | { type: "transcription-settings"; modelId?: string }
+  | {
+      type: "library"
+      view: LibraryView | null
+      query?: string
+      status?: "all" | "active" | "attention" | "watchable" | "ready"
+    }
+  | { type: "add-media"; tab: AddMediaTab }
+  | { type: "player"; videoId: string; caption?: string; time?: number }
   | JobDetailDestination
   | { type: "policy"; required: boolean }
 
@@ -123,7 +130,7 @@ export function OverlayProvider({ children }: { children: React.ReactNode }) {
       const currentLocation = locationRef.current
       const currentPath = `${currentLocation.pathname}${currentLocation.search}`
       const fallback =
-        current?.type === "player" || current?.type === "detail"
+        current?.type === "player" || current?.type === "detail" || current?.type === "add-media"
           ? "/library"
           : "/"
       const destination =

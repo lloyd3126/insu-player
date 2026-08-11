@@ -19,8 +19,7 @@ import {
 } from "@/components/shared/AsyncState"
 import { CaptionLanguageSelect } from "@/components/shared/CaptionLanguageSelect"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardHeader, CardTitle } from "@/components/ui/card"
+import { MediaCard } from "@/features/library/MediaCard"
 import { Input } from "@/components/ui/input"
 import {
   VideoCardRemovalDialog,
@@ -58,7 +57,7 @@ import { getJobPreferredCaption, NO_CAPTION } from "@/lib/captions"
 import { cn } from "@/lib/utils"
 import type { JobSummary } from "@shared/contracts/job"
 import { ACTIVE_STATES, ATTENTION_STATES } from "@shared/domain/job-status"
-import { formatBytes, formatDuration } from "@shared/domain/format"
+import { formatBytes } from "@shared/domain/format"
 
 type Filter = "all" | "active" | "attention" | "watchable" | "ready"
 const FILTERS = [
@@ -205,7 +204,6 @@ function JobRow({ job }: { job: JobSummary }) {
 function JobGridCard({ job }: { job: JobSummary }) {
   const { actions } = useOverlay()
   const caption = getJobPreferredCaption(job)
-  const duration = formatDuration(job.durationSeconds)
   const loadJobDialog = job.watchable
     ? loadPlayerDialog
     : loadJobDetailDialog
@@ -222,40 +220,13 @@ function JobGridCard({ job }: { job: JobSummary }) {
     })
   }
   return (
-    <Card className="video-grid-card" size="sm">
-      <Button
-        variant="ghost"
-        className="video-grid-card__action"
-        aria-label={`${job.watchable ? "觀看" : "查看"} ${job.title}`}
-        onPointerEnter={() => void loadJobDialog()}
-        onFocus={() => void loadJobDialog()}
-        onPointerDown={() => void loadJobDialog()}
-        onClick={openJob}
-      >
-        <div className="video-grid-card__thumbnail">
-          {job.thumbnailUrl ? (
-            <img src={job.thumbnailUrl} alt="" loading="lazy" />
-          ) : (
-            <span>INSU</span>
-          )}
-          {duration ? (
-            <Badge
-              aria-hidden="true"
-              className="video-grid-card__duration"
-              variant="secondary"
-            >
-              {duration}
-            </Badge>
-          ) : null}
-        </div>
-        <CardHeader>
-          <CardTitle role="heading" aria-level={4} title={job.title}>
-            {job.title}
-          </CardTitle>
-        </CardHeader>
-      </Button>
+    <MediaCard
+      job={job}
+      actionLabel={job.watchable ? "觀看" : "查看"}
+      onOpen={openJob}
+    >
       <VideoCardRemovalDialog videoId={job.videoId} title={job.title} />
-    </Card>
+    </MediaCard>
   )
 }
 
@@ -277,7 +248,7 @@ function Metrics({ jobs }: { jobs: JobSummary[] }) {
     ["媒體容量", formatBytes(totalSize), "LOCAL STORAGE"],
   ] as const
   return (
-    <section className="metrics" aria-label="影音中心摘要">
+    <section className="metrics" aria-label="影片中心摘要">
       {metrics.map(([label, value, caption]) => (
         <article key={label}>
           <span>{label}</span>
@@ -292,11 +263,27 @@ function Metrics({ jobs }: { jobs: JobSummary[] }) {
 export function LibraryDialog() {
   const overlay = useOverlay()
   const query = useJobsQuery()
-  const [search, setSearch] = useState("")
-  const [filter, setFilter] = useState<Filter>("all")
   const jobs = query.data?.jobs ?? EMPTY_JOBS
   const active = overlay.state?.type === "library" ? overlay.state : null
+  const search = active?.query ?? ""
+  const filter = (active?.status ?? "all") as Filter
   const selectedView = active?.view ?? (jobs.length > 0 ? "grid" : "list")
+  const updateLibrary = (patch: {
+    view?: LibraryView
+    query?: string
+    status?: Filter
+  }) => {
+    if (!active) return
+    overlay.actions.open(
+      {
+        type: "library",
+        view: patch.view ?? selectedView,
+        query: patch.query ?? search,
+        status: patch.status ?? filter,
+      },
+      { replace: true },
+    )
+  }
   const searched = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase("zh-TW")
     return jobs.filter(
@@ -312,7 +299,7 @@ export function LibraryDialog() {
   )
   const feedback = (visibleCount: number) => (
     <>
-      {query.isPending ? <LoadingState label="正在讀取影音中心" /> : null}
+      {query.isPending ? <LoadingState label="正在讀取影片中心" /> : null}
       {query.isError ? <ErrorState message={query.error.message} /> : null}
       {query.isSuccess && jobs.length === 0 ? (
         <EmptyState
@@ -334,7 +321,7 @@ export function LibraryDialog() {
       open={Boolean(active)}
       onOpenChange={(open) => (open ? undefined : overlay.actions.close("library"))}
       kicker="LOCAL LIBRARY · LIVE"
-      title="影音中心"
+      title="影片中心"
       description="瀏覽我的影音，或查看處理狀態與字幕詳細資訊"
       size="screen"
       layout="tabbed"
@@ -346,10 +333,12 @@ export function LibraryDialog() {
           overlay.actions.open({
             type: "library",
             view: value as LibraryView,
+            query: search,
+            status: filter,
           })
         }
       >
-        <TabsList variant="line" aria-label="影音中心分頁">
+        <TabsList variant="line" aria-label="影片中心分頁">
           <TabsTrigger value="grid">我的影音</TabsTrigger>
           <TabsTrigger value="list">詳細資訊</TabsTrigger>
         </TabsList>
@@ -361,7 +350,7 @@ export function LibraryDialog() {
           <LibrarySearch
             className="library-media-search"
             value={search}
-            onChange={setSearch}
+            onChange={(value) => updateLibrary({ query: value })}
           />
           {feedback(searched.length)}
           {searched.length > 0 ? (
@@ -381,11 +370,16 @@ export function LibraryDialog() {
           <section className="library-panel" aria-label="影音詳細資訊">
             <div className="library-toolbar">
               <div className="library-toolbar__controls">
-                <LibrarySearch value={search} onChange={setSearch} />
+                <LibrarySearch
+                  value={search}
+                  onChange={(value) => updateLibrary({ query: value })}
+                />
                 <Select
                   items={FILTERS}
                   value={filter}
-                  onValueChange={(value) => setFilter(value as Filter)}
+                  onValueChange={(value) =>
+                    updateLibrary({ status: value as Filter })
+                  }
                 >
                   <SelectTrigger aria-label="篩選狀態">
                     <SelectValue />

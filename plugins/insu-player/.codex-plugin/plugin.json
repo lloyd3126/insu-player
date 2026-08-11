@@ -14,14 +14,16 @@
     "category": "Productivity",
     "capabilities": [
       "本機影片庫",
-      "本機 Whisper 或 OpenAI API 轉錄",
-      "多語模型時間、完整句翻譯與 Target-first 字幕切分",
+      "本機 Whisper 或五種雲端 STT 音訊轉錄",
+      "Agent 完整句翻譯、Target-first 字幕切分與語義對齊",
+      "版本化影音摘要與 Markmap 心智圖",
       "長時間工作排程追蹤與同 task 復原",
+      "Chrome 目前分頁、嵌入影音與已結束 HLS 的本機下載佇列",
       "同源播放器與續播進度",
       "安全更新與完整移除"
     ],
     "defaultPrompt": [
-      "使用 $watch-video 初始化 INSU Player。先開啟專案首頁，再安裝所有依賴、OpenAI SDK、SQLite 與 Whisper medium。完成後停在首頁，請我點「開始使用」並貼上網址，不要直接詢問網址或技術選項。"
+      "使用 $watch-video 初始化 INSU Player。先開啟專案首頁，再安裝所有依賴、雲端 STT SDK、SQLite 與 Whisper medium。完成後停在首頁，請我打開「開始說明 → 加入影音」並貼上網址，不要直接詢問網址或技術選項。"
     ],
     "brandColor": "#8B7CF6",
     "composerIcon": "./skills/watch-video/assets/library/taiwan-whistling-thrush.png",

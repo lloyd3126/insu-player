@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create timestamped transcript artifacts with local Whisper or OpenAI."""
+"""Create strict word-timed transcript artifacts with local or cloud STT."""
 
 from __future__ import annotations
 
@@ -7,15 +7,29 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from transcription_providers import (  # noqa: E402
+    CLOUD_PROVIDERS,
+    PROVIDER_API_KEYS,
+    processor_identity,
+    transcribe_chunk,
+    validate_model,
+)
 
 API_FILE_LIMIT = 25 * 1024 * 1024
 DEFAULT_CHUNK_SECONDS = 600
-TRANSCRIPT_SCHEMA_VERSION = 2
+TRANSCRIPT_SCHEMA_VERSION = 3
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 
 # Current Whisper language parameters. This is a model capability boundary, not
@@ -36,6 +50,35 @@ WHISPER_LANGUAGE_PARAMETERS = {
     "jv": "jw",
     "nb": "no",
 }
+
+XAI_LANGUAGE_NAMES = {
+    "arabic": "ar",
+    "czech": "cs",
+    "danish": "da",
+    "dutch": "nl",
+    "english": "en",
+    "filipino": "fil",
+    "french": "fr",
+    "german": "de",
+    "hindi": "hi",
+    "indonesian": "id",
+    "italian": "it",
+    "japanese": "ja",
+    "korean": "ko",
+    "macedonian": "mk",
+    "malay": "ms",
+    "persian": "fa",
+    "polish": "pl",
+    "portuguese": "pt",
+    "romanian": "ro",
+    "russian": "ru",
+    "spanish": "es",
+    "swedish": "sv",
+    "thai": "th",
+    "turkish": "tr",
+    "vietnamese": "vi",
+}
+XAI_LANGUAGE_CODES = set(XAI_LANGUAGE_NAMES.values())
 
 
 def canonical_language_tag(language: str | None) -> str | None:
@@ -77,6 +120,35 @@ def engine_language_code(language: str | None) -> str | None:
             "choose a supported timing model or use automatic detection"
         )
     return parameter
+
+
+def provider_language_parameter(provider: str, language: str | None) -> str | None:
+    canonical = canonical_language_tag(language)
+    if canonical is None or canonical == "und":
+        return None
+    if provider == "xai":
+        code = canonical.split("-", 1)[0]
+        if code not in XAI_LANGUAGE_CODES:
+            raise ValueError(
+                f"xAI speech-to-text does not accept language {canonical!r} for formatting"
+            )
+        return code
+    if provider == "elevenlabs":
+        return canonical.split("-", 1)[0]
+    return engine_language_code(canonical)
+
+
+def detected_language_from_payload(provider: str, payload: dict[str, Any]) -> str | None:
+    raw = payload.get("language_code") if provider == "elevenlabs" else payload.get("language")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    value = raw.strip()
+    if provider == "xai":
+        mapped = XAI_LANGUAGE_NAMES.get(value.lower())
+        if not mapped:
+            raise ValueError(f"xAI returned an unmapped detected language: {value!r}")
+        return mapped
+    return canonical_language_tag(value)
 
 
 def timestamp(seconds: float) -> str:
@@ -135,6 +207,8 @@ def normalize_words(raw_words: object, *, offset: float = 0.0) -> list[dict[str,
             }
         if not isinstance(raw, dict):
             continue
+        if raw.get("type") not in {None, "word"}:
+            continue
         start = raw.get("start")
         end = raw.get("end")
         text = str(raw.get("word") or raw.get("text") or "").strip()
@@ -151,6 +225,67 @@ def normalize_words(raw_words: object, *, offset: float = 0.0) -> list[dict[str,
     if not normalized:
         raise ValueError("transcription produced no usable word timestamps")
     return normalized
+
+
+def validate_word_timeline(words: list[dict[str, Any]]) -> None:
+    previous_start = -1.0
+    previous_end = -1.0
+    for index, word in enumerate(words):
+        start = float(word["start"])
+        end = float(word["end"])
+        if start < previous_start or end <= start:
+            raise ValueError(f"word timeline is not monotonic at index {index}")
+        if start + 0.05 < previous_end:
+            raise ValueError(f"word timeline overlaps at index {index}")
+        previous_start = start
+        previous_end = max(previous_end, end)
+
+
+def joined_word_text(words: list[dict[str, Any]]) -> str:
+    text = ""
+    no_space_before = set(",.!?;:%)]}，。！？、；：％）】》」』")
+    no_space_after = set("([{（【《「『")
+    for word in words:
+        token = str(word["word"])
+        if not text or token[0] in no_space_before or text[-1] in no_space_after:
+            text += token
+        elif re.match(r"[\u3000-\u9fff\uf900-\ufaff]", token[0]) or re.match(
+            r"[\u3000-\u9fff\uf900-\ufaff]", text[-1]
+        ):
+            text += token
+        else:
+            text += f" {token}"
+    return text.strip()
+
+
+def transport_segments_from_words(
+    words: list[dict[str, Any]], *, max_seconds: float = 8.0
+) -> list[dict[str, Any]]:
+    """Create viewing cues only; these are never complete-sentence boundaries."""
+    if not words:
+        raise ValueError("cannot create transport cues without word timestamps")
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for word in words:
+        if current and (
+            float(word["start"]) - float(current[-1]["end"]) >= 0.8
+            or float(word["end"]) - float(current[0]["start"]) > max_seconds
+        ):
+            groups.append(current)
+            current = []
+        current.append(word)
+    if current:
+        groups.append(current)
+    return [
+        {
+            "id": index,
+            "start": group[0]["start"],
+            "end": group[-1]["end"],
+            "text": joined_word_text(group),
+            "origin": "derived-window",
+        }
+        for index, group in enumerate(groups)
+    ]
 
 
 def words_from_payload(payload: dict[str, Any], *, offset: float = 0.0) -> list[dict[str, Any]]:
@@ -175,24 +310,6 @@ def segments_to_vtt(segments: list[dict[str, Any]]) -> str:
     return "\n".join(cues)
 
 
-def response_to_dict(response: object) -> dict[str, Any]:
-    if hasattr(response, "model_dump"):
-        payload = response.model_dump()
-    elif isinstance(response, dict):
-        payload = response
-    else:
-        payload = {
-            "text": getattr(response, "text", ""),
-            "segments": getattr(response, "segments", None),
-            "words": getattr(response, "words", None),
-            "language": getattr(response, "language", None),
-            "duration": getattr(response, "duration", None),
-        }
-    if not isinstance(payload, dict):
-        raise ValueError("unexpected transcription response")
-    return payload
-
-
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
@@ -209,17 +326,20 @@ def write_artifacts(
     words: list[dict[str, Any]],
     *,
     provider: str,
-    model: str,
+    model: str | None,
     language: str,
-    engine_language: str,
-    chunks: int,
+    engine_language: str | None,
+    chunks: list[dict[str, Any]],
 ) -> None:
+    identity = processor_identity(provider, model)
+    duration = max(float(words[-1]["end"]), float(segments[-1]["end"]))
     payload = {
         "schemaVersion": TRANSCRIPT_SCHEMA_VERSION,
-        "provider": provider,
-        "model": model,
+        "processor": identity,
         "language": language,
         "engineLanguage": engine_language,
+        "timingUnitKind": "word",
+        "durationSeconds": round(duration, 3),
         "chunks": chunks,
         "segments": segments,
         "words": words,
@@ -228,6 +348,14 @@ def write_artifacts(
     atomic_write(output_dir / "transcript.json", json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     atomic_write(output_dir / "transcript.vtt", segments_to_vtt(segments))
     atomic_write(output_dir / "transcript.txt", payload["text"] + "\n")
+
+
+def file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def prepare_api_chunks(input_path: Path, ffmpeg: Path, chunk_dir: Path, seconds: int) -> list[Path]:
@@ -269,68 +397,137 @@ def prepare_api_chunks(input_path: Path, ffmpeg: Path, chunk_dir: Path, seconds:
     return chunks
 
 
-def transcribe_openai(
+def transcribe_cloud(
     args: argparse.Namespace,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int]:
-    if not args.consent_to_upload:
-        raise RuntimeError("OpenAI provider requires --consent-to-upload after the user authorizes external upload")
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is not set in the current process environment")
-    if args.model != "whisper-1":
-        raise RuntimeError("timestamped VTT output currently requires the OpenAI model whisper-1")
-    try:
-        from openai import OpenAI
-    except ImportError as error:
-        raise RuntimeError("OpenAI SDK is not installed in this Python environment") from error
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    str | None,
+    str | None,
+    list[dict[str, Any]],
+]:
+    provider = args.provider
+    if provider not in CLOUD_PROVIDERS:
+        raise RuntimeError(f"unsupported cloud timing provider: {provider}")
+    if not args.consent_to_audio_upload:
+        raise RuntimeError(
+            f"{provider} requires --consent-to-audio-upload after the user authorizes audio transcription"
+        )
+    key_name = PROVIDER_API_KEYS[provider]
+    if not os.environ.get(key_name):
+        raise RuntimeError(f"{key_name} is not set in the current process environment")
+    args.model = validate_model(provider, args.model)
 
     all_segments: list[dict[str, Any]] = []
     all_words: list[dict[str, Any]] = []
     requested_language = canonical_language_tag(args.language)
     detected_language: str | None = None if requested_language in {None, "und"} else requested_language
+    model_language = provider_language_parameter(provider, requested_language)
     timeline_offset = 0.0
-    client = OpenAI()
-    with tempfile.TemporaryDirectory(prefix="transcribe-api-", dir=args.output_dir) as temporary:
-        chunks = prepare_api_chunks(args.input, args.ffmpeg, Path(temporary), args.chunk_seconds)
-        for chunk in chunks:
-            request: dict[str, Any] = {
-                "model": args.model,
-                "response_format": "verbose_json",
-                "timestamp_granularities": ["segment", "word"],
+    cloud_root = args.output_dir / "cloud-work"
+    run_manifest = cloud_root / "run.json"
+    input_checksum = file_sha256(args.input)
+    run_contract = {
+        "schemaVersion": 1,
+        "inputSha256": input_checksum,
+        "provider": provider,
+        "service": processor_identity(provider, args.model)["service"],
+        "model": args.model,
+        "requestedLanguage": requested_language,
+        "chunkSeconds": args.chunk_seconds,
+    }
+    reusable = False
+    if run_manifest.is_file():
+        try:
+            reusable = json.loads(run_manifest.read_text(encoding="utf-8")) == run_contract
+        except (OSError, json.JSONDecodeError):
+            reusable = False
+    if not reusable and cloud_root.exists():
+        if cloud_root.is_symlink():
+            raise RuntimeError("refusing a symlinked cloud transcription work directory")
+        shutil.rmtree(cloud_root)
+    chunk_dir = cloud_root / "chunks"
+    result_dir = cloud_root / "results"
+    chunks = sorted(chunk_dir.glob("chunk-*.mp3")) if reusable else []
+    if not chunks:
+        chunks = prepare_api_chunks(args.input, args.ffmpeg, chunk_dir, args.chunk_seconds)
+        atomic_write(run_manifest, json.dumps(run_contract, ensure_ascii=False, indent=2) + "\n")
+    result_dir.mkdir(parents=True, exist_ok=True)
+    chunk_records: list[dict[str, Any]] = []
+    for index, chunk in enumerate(chunks):
+        result_path = result_dir / f"chunk-{index:04d}.json"
+        if reusable and result_path.is_file() and not result_path.is_symlink():
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        else:
+            payload = transcribe_chunk(
+                provider,
+                chunk,
+                model=args.model,
+                language=model_language,
+            )
+            safe_payload = {
+                "text": payload.get("text"),
+                "language": payload.get("language"),
+                "language_code": payload.get("language_code"),
+                "duration": payload.get("duration"),
+                "segments": payload.get("segments"),
+                "words": payload.get("words"),
             }
-            model_language = engine_language_code(requested_language)
-            if model_language:
-                request["language"] = model_language
-            with chunk.open("rb") as audio:
-                response = client.audio.transcriptions.create(file=audio, **request)
-            payload = response_to_dict(response)
-            if payload.get("language"):
-                response_language = canonical_language_tag(str(payload["language"]))
-                if detected_language is None:
-                    detected_language = response_language
-                elif requested_language in {None, "und"} and (
-                    engine_language_code(response_language)
-                    != engine_language_code(detected_language)
-                ):
-                    raise RuntimeError("OpenAI chunks returned inconsistent detected languages")
-            segments = normalize_segments(payload.get("segments"), offset=timeline_offset)
-            words = words_from_payload(payload, offset=timeline_offset)
+            atomic_write(result_path, json.dumps(safe_payload, ensure_ascii=False, indent=2) + "\n")
+            payload = safe_payload
+        response_language = detected_language_from_payload(provider, payload)
+        if response_language:
+            if detected_language is None:
+                detected_language = response_language
+            elif engine_language_code(response_language) != engine_language_code(detected_language):
+                raise RuntimeError(f"{provider} chunks returned inconsistent detected languages")
+        words = words_from_payload(payload, offset=timeline_offset)
+        raw_segments = payload.get("segments")
+        if isinstance(raw_segments, list) and raw_segments:
+            segments = normalize_segments(raw_segments, offset=timeline_offset)
             for segment in segments:
-                segment["id"] = len(all_segments)
-                all_segments.append(segment)
-            for word in words:
-                word["id"] = len(all_words)
-                all_words.append(word)
-            chunk_duration = payload.get("duration")
-            if isinstance(chunk_duration, (int, float)) and chunk_duration > 0:
-                timeline_offset += float(chunk_duration)
-            else:
-                timeline_offset += args.chunk_seconds
-    return all_segments, all_words, detected_language, len(chunks)
+                segment["origin"] = "provider"
+        else:
+            segments = transport_segments_from_words(words)
+        for segment in segments:
+            segment["id"] = len(all_segments)
+            all_segments.append(segment)
+        for word in words:
+            word["id"] = len(all_words)
+            all_words.append(word)
+        chunk_duration = payload.get("duration")
+        if not isinstance(chunk_duration, (int, float)) or chunk_duration <= 0:
+            chunk_duration = max(float(word["end"]) - timeline_offset for word in words)
+        chunk_records.append(
+            {
+                "index": index,
+                "startSeconds": round(timeline_offset, 3),
+                "endSeconds": round(timeline_offset + float(chunk_duration), 3),
+                "sha256": file_sha256(chunk),
+            }
+        )
+        timeline_offset += float(chunk_duration)
+    detected_engine_language = (
+        detected_language.split("-", 1)[0] if detected_language else None
+    )
+    return (
+        all_segments,
+        all_words,
+        detected_language,
+        model_language or detected_engine_language,
+        chunk_records,
+    )
 
 
 def transcribe_local(
     args: argparse.Namespace,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, int]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    str | None,
+    str | None,
+    list[dict[str, Any]],
+]:
     if not args.whisper_cli or not args.whisper_cli.is_file():
         raise RuntimeError("--whisper-cli must point to the workflow-local Whisper executable")
     raw_dir = args.output_dir / "local-raw"
@@ -373,14 +570,32 @@ def transcribe_local(
     language = None if requested_language in {None, "und"} else requested_language
     if language is None and payload.get("language"):
         language = canonical_language_tag(str(payload["language"]))
-    return segments, words, language, 1
+    engine_language = model_language or (
+        engine_language_code(language) if language else None
+    )
+    return (
+        segments,
+        words,
+        language,
+        engine_language,
+        [
+            {
+                "index": 0,
+                "startSeconds": 0.0,
+                "endSeconds": round(float(words[-1]["end"]), 3),
+                "sha256": file_sha256(args.input),
+            }
+        ],
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--provider", choices=("local", "openai"), default="local")
+    parser.add_argument(
+        "--provider", choices=("local", *CLOUD_PROVIDERS), required=True
+    )
     parser.add_argument("--model")
     parser.add_argument("--language")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
@@ -388,7 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--whisper-cli", type=Path)
     parser.add_argument("--model-dir", type=Path)
     parser.add_argument("--chunk-seconds", type=int, default=DEFAULT_CHUNK_SECONDS)
-    parser.add_argument("--consent-to-upload", action="store_true")
+    parser.add_argument("--consent-to-audio-upload", action="store_true")
     return parser
 
 
@@ -403,23 +618,30 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     try:
         args.language = canonical_language_tag(args.language)
-        engine_language_code(args.language)
+        provider_language_parameter(args.provider, args.language)
     except ValueError as error:
         raise SystemExit(str(error)) from error
 
-    if args.provider == "openai":
+    if args.provider == "xai":
+        if args.model:
+            raise SystemExit("xAI /v1/stt does not accept --model")
+    elif not args.model:
+        raise SystemExit(f"{args.provider} requires --model")
+    try:
+        args.model = validate_model(args.provider, args.model)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+
+    if args.provider in CLOUD_PROVIDERS:
         if not args.ffmpeg or not args.ffmpeg.is_file():
-            raise SystemExit("OpenAI provider requires --ffmpeg for bounded audio chunks")
-        args.model = args.model or "whisper-1"
-        segments, words, language, chunks = transcribe_openai(args)
+            raise SystemExit(f"{args.provider} requires --ffmpeg for bounded audio chunks")
+        segments, words, language, engine_language, chunks = transcribe_cloud(args)
     else:
-        args.model = args.model or "medium"
-        segments, words, language, chunks = transcribe_local(args)
+        segments, words, language, engine_language, chunks = transcribe_local(args)
 
     if not language or language == "und":
         raise SystemExit("transcription model did not return a supported detected language")
-    engine_language = engine_language_code(language)
-    assert engine_language is not None
+    validate_word_timeline(words)
 
     write_artifacts(
         args.output_dir,
@@ -433,7 +655,8 @@ def main() -> int:
     )
     print(f"transcript: {args.output_dir / 'transcript.vtt'}")
     print(f"provider: {args.provider}")
-    print(f"model: {args.model}")
+    print(f"service: {processor_identity(args.provider, args.model)['service']}")
+    print(f"model: {args.model or 'none'}")
     return 0
 
 

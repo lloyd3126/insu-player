@@ -8,24 +8,59 @@ import { contentTypeFor, safeContainedFile } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
 import { CaptionService } from "@server/services/caption-service"
 import {
+  DownloadBatchOperationError,
+  type DownloadBatchService,
+} from "@server/services/download-batch-service"
+import {
+  ExtensionPairingError,
+  type ExtensionPairingService,
+} from "@server/services/extension-pairing-service"
+import {
+  LocalModelOperationError,
+} from "@server/services/local-model-service"
+import {
+  ProviderCredentialError,
+} from "@server/services/provider-credential-service"
+import {
   MediaOperationError,
   type MediaOperations,
 } from "@server/services/media-service"
+import {
+  MediaSessionOperationError,
+  type MediaSessionService,
+} from "@server/services/media-session-service"
+import {
+  NoteOperationError,
+  type NoteService,
+} from "@server/services/note-service"
 import {
   RemovalOperationError,
   type RemovalOperations,
 } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
+import { RuntimeService } from "@server/services/runtime-service"
+import {
+  SummaryOperationError,
+  type SummaryService,
+} from "@server/services/summary-service"
+import type { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 import {
   SERVER_BUILD_ID,
-  STATUS_SCHEMA_VERSION,
+  DATA_SCHEMA_VERSION,
 } from "@server/runtime-contract"
 
 export interface ApplicationOptions {
   jobs: JobRepository
   media: MediaOperations
+  downloads: DownloadBatchService
+  extensionPairing: ExtensionPairingService
+  mediaSessions: MediaSessionService
+  models: TranscriptionModelCatalogService
+  summaries: SummaryService
+  notes: NoteService
   removals: RemovalOperations
   resources: ResourceService
+  runtime: RuntimeService
   libraryAppRoot: string
   playerRoot: string
 }
@@ -46,10 +81,138 @@ const playbackSchema = z
     { message: "playback update is empty" },
   )
 
-const environmentSchema = z.object({
-  name: z.literal("OPENAI_API_KEY"),
+const providerCredentialSchema = z.object({
   value: z.string().min(1).max(2048),
+}).strict()
+
+const agentIntentSchema = z
+  .object({
+    kind: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+    videoId: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
+    source: z.string().min(1).max(500),
+  })
+  .strict()
+
+const downloadSourceSchema = z
+  .object({
+    kind: z.enum(["page", "embed", "network-media"]),
+    pageUrl: z.string().min(1).max(2_048),
+    sessionId: z.string().regex(/^media-session-[0-9a-f-]{36}$/).optional(),
+    candidateFingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  })
+  .strict()
+
+const createDownloadBatchSchema = z
+  .object({
+    sources: z.array(downloadSourceSchema).min(1).max(50),
+    rightsConfirmed: z.boolean(),
+  })
+  .strict()
+
+const extensionPairingClaimSchema = z
+  .object({
+    challengeId: z.string().regex(/^pair-[0-9a-f-]{36}$/),
+    token: z.string().min(32).max(128),
+  })
+  .strict()
+
+const browserCookieSchema = z
+  .object({
+    name: z.string().min(1).max(8_192),
+    value: z.string().max(8_192),
+    domain: z.string().min(1).max(512),
+    path: z.string().min(1).max(2_048),
+    secure: z.boolean(),
+    httpOnly: z.boolean(),
+    hostOnly: z.boolean(),
+    session: z.boolean(),
+    expirationDate: z.number().finite().nonnegative().optional(),
+  })
+  .strict()
+
+const browserMediaSessionSchema = z
+  .object({
+    candidate: z
+      .object({
+        kind: z.enum(["page", "embed", "network-media"]),
+        pageUrl: z.string().min(1).max(2_048),
+        frameUrl: z.string().min(1).max(8_192).optional(),
+        mediaUrl: z.string().min(1).max(16_384).optional(),
+        protocol: z.enum(["http", "https", "hls"]).optional(),
+        candidateFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+      })
+      .strict(),
+    cookies: z.array(browserCookieSchema).max(300).optional(),
+    authenticationConsentAt: z.string().datetime().optional(),
+  })
+  .strict()
+
+const retryDownloadItemSchema = z.object({
+  lowQualityApproved: z.boolean().optional().default(false),
 })
+
+const modelIdSchema = z.string().regex(/^[a-z0-9][a-z0-9.-]{0,159}$/)
+const providerIdSchema = z.enum([
+  "openai",
+  "groq",
+  "elevenlabs",
+  "xai",
+  "openrouter",
+])
+const modelSelectionSchema = z.object({ modelId: modelIdSchema }).strict()
+
+function modelId(value: string) {
+  const result = modelIdSchema.safeParse(value)
+  if (!result.success) {
+    throw new LocalModelOperationError(
+      "unsupported canonical model",
+      "unsupported-model",
+      400,
+    )
+  }
+  return result.data
+}
+
+function providerId(value: string) {
+  const result = providerIdSchema.safeParse(value)
+  if (!result.success) {
+    throw new ProviderCredentialError(
+      "unsupported transcription provider",
+      "unsupported-provider",
+      404,
+    )
+  }
+  return result.data
+}
+
+const summaryKindSchema = z.enum(["text", "mindmap"])
+const summaryImportSchema = z
+  .object({
+    kind: summaryKindSchema,
+    languageCode: z.string().regex(/^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/),
+    title: z.string().min(1).max(160),
+    content: z.string().min(1).max(250_000),
+    sourceSubtitleArtifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/).optional(),
+    sourceSummaryArtifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/).optional(),
+  })
+  .strict()
+
+const summaryActivationSchema = z.object({
+  kind: summaryKindSchema,
+  artifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+})
+
+const noteSchema = z
+  .object({
+    title: z.string().max(200),
+    body: z.string().min(1).max(20_000),
+    startSeconds: z.number().finite().nonnegative().nullable().optional(),
+    endSeconds: z.number().finite().nonnegative().nullable().optional(),
+    subtitleTrackId: z.string().max(200).nullable().optional(),
+    subtitleCueId: z.string().max(200).nullable().optional(),
+    tags: z.array(z.string().min(1).max(40)).max(20).optional(),
+  })
+  .strict()
 
 const mediaDownloadSchema = z.object({
   height: z.number().int().positive().max(4320),
@@ -81,6 +244,11 @@ const removalTargetSchema = z.discriminatedUnion("kind", [
     videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
     renditionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
   }),
+  z.object({
+    kind: z.literal("summary-artifact"),
+    videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    artifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+  }),
 ])
 
 const removalPreviewSchema = z.object({ target: removalTargetSchema })
@@ -96,6 +264,29 @@ function errorMessage(error: unknown) {
 function sameOrigin(request: Request) {
   const origin = request.headers.get("origin")
   return origin === new URL(request.url).origin
+}
+
+function chromeExtensionOrigin(request: Request) {
+  const origin = request.headers.get("origin")
+  return origin && /^chrome-extension:\/\/[a-p]{32}$/.test(origin)
+    ? origin
+    : null
+}
+
+function extensionErrorResponse(context: Context, error: unknown) {
+  if (
+    error instanceof ExtensionPairingError ||
+    error instanceof MediaSessionOperationError
+  ) {
+    return context.json(
+      { error: error.message, code: error.code },
+      error.status,
+    )
+  }
+  return context.json(
+    { error: errorMessage(error), code: "extension-operation-failed" },
+    500,
+  )
 }
 
 function removalErrorResponse(context: Context, error: unknown) {
@@ -117,6 +308,25 @@ function mediaErrorResponse(context: Context, error: unknown) {
     return context.json(payload, 500)
   }
   return context.json({ error: errorMessage(error), code: "media-failed" }, 500)
+}
+
+function operationErrorResponse(
+  context: Context,
+  error: unknown,
+  expected:
+    | typeof DownloadBatchOperationError
+    | typeof LocalModelOperationError
+    | typeof ProviderCredentialError
+    | typeof SummaryOperationError,
+) {
+  if (error instanceof expected) {
+    const payload = { error: error.message, code: error.code }
+    if (error.status === 400) return context.json(payload, 400)
+    if (error.status === 404) return context.json(payload, 404)
+    if (error.status === 409) return context.json(payload, 409)
+    return context.json(payload, 500)
+  }
+  return context.json({ error: errorMessage(error), code: "operation-failed" }, 500)
 }
 
 function serveFile(
@@ -170,6 +380,25 @@ export function createApplication(options: ApplicationOptions) {
   const app = new Hono()
   const captions = new CaptionService(options.jobs)
 
+  app.use("/api/extension/*", async (context, next) => {
+    const origin = chromeExtensionOrigin(context.req.raw)
+    if (origin) {
+      context.header("Access-Control-Allow-Origin", origin)
+      context.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+      context.header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, X-INSU-Extension-Token",
+      )
+      context.header("Access-Control-Max-Age", "600")
+      context.header("Vary", "Origin")
+    }
+    if (context.req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: context.res.headers })
+    }
+    await next()
+    if (origin) context.header("Cross-Origin-Resource-Policy", "cross-origin")
+  })
+
   app.use("*", async (context, next) => {
     await next()
     context.header("X-Content-Type-Options", "nosniff")
@@ -189,14 +418,21 @@ export function createApplication(options: ApplicationOptions) {
       "/index.html",
       "/guide",
       "/guide/*",
+      "/prompts",
+      "/supported-sites",
       "/settings",
-      "/settings/*",
+      "/settings/models/:modelId",
       "/library",
       "/library/*",
       "/jobs/:videoId",
       "/jobs/:videoId/*",
       "/player/:videoId",
       "/policy",
+      "/extension",
+      "/extension/install",
+      "/extension/connect",
+      "/extension/usage",
+      "/extension/library",
     ],
     (context) =>
       serveFile(context.req.raw, path.join(options.libraryAppRoot, "index.html")),
@@ -224,11 +460,117 @@ export function createApplication(options: ApplicationOptions) {
       runtime: "bun",
       framework: "hono",
       buildId: SERVER_BUILD_ID,
-      statusSchemaVersion: STATUS_SCHEMA_VERSION,
+      dataSchemaVersion: DATA_SCHEMA_VERSION,
       database: "sqlite",
       port,
     })
   })
+  app.get("/api/extension/pairing", (context) => {
+    return context.json(
+      options.extensionPairing.status(new URL(context.req.url).origin),
+    )
+  })
+  app.post("/api/extension/pairing/start", (context) => {
+    if (!sameOrigin(context.req.raw)) {
+      return context.json({ error: "forbidden" }, 403)
+    }
+    return context.json(
+      options.extensionPairing.start(new URL(context.req.url).origin),
+      201,
+    )
+  })
+  app.post(
+    "/api/extension/pairing/claim",
+    zValidator("json", extensionPairingClaimSchema),
+    (context) => {
+      try {
+        const origin = chromeExtensionOrigin(context.req.raw)
+        if (!origin) {
+          throw new ExtensionPairingError(
+            "只接受 Chrome 擴充功能配對",
+            "invalid-extension-origin",
+            400,
+          )
+        }
+        const payload = context.req.valid("json")
+        return context.json(
+          options.extensionPairing.claim(
+            payload.challengeId,
+            payload.token,
+            origin,
+          ),
+          201,
+        )
+      } catch (error) {
+        return extensionErrorResponse(context, error)
+      }
+    },
+  )
+  app.delete("/api/extension/pairing", (context) => {
+    if (!sameOrigin(context.req.raw)) {
+      return context.json({ error: "forbidden" }, 403)
+    }
+    return context.json(options.extensionPairing.revoke())
+  })
+  app.get("/api/extension/health", (context) => {
+    try {
+      options.extensionPairing.authenticate(
+        context.req.header("x-insu-extension-token") ?? null,
+        chromeExtensionOrigin(context.req.raw),
+      )
+      return context.json({
+        ok: true,
+        port: Number(new URL(context.req.url).port || 80),
+        libraryUrl: `${new URL(context.req.url).origin}/extension/library`,
+      })
+    } catch (error) {
+      return extensionErrorResponse(context, error)
+    }
+  })
+  app.post(
+    "/api/extension/media-sessions",
+    zValidator("json", browserMediaSessionSchema),
+    async (context) => {
+      try {
+        options.extensionPairing.authenticate(
+          context.req.header("x-insu-extension-token") ?? null,
+          chromeExtensionOrigin(context.req.raw),
+        )
+        return context.json(
+          await options.mediaSessions.create(context.req.valid("json")),
+          201,
+        )
+      } catch (error) {
+        return extensionErrorResponse(context, error)
+      }
+    },
+  )
+  app.post(
+    "/api/extension/download-batches",
+    zValidator("json", createDownloadBatchSchema),
+    (context) => {
+      try {
+        options.extensionPairing.authenticate(
+          context.req.header("x-insu-extension-token") ?? null,
+          chromeExtensionOrigin(context.req.raw),
+        )
+        const payload = context.req.valid("json")
+        return context.json(
+          options.downloads.create(payload.sources, payload.rightsConfirmed),
+          202,
+        )
+      } catch (error) {
+        if (error instanceof DownloadBatchOperationError) {
+          return operationErrorResponse(
+            context,
+            error,
+            DownloadBatchOperationError,
+          )
+        }
+        return extensionErrorResponse(context, error)
+      }
+    },
+  )
   app.get("/api/jobs", (context) =>
     context.json({ jobs: options.jobs.list(), serverTime: new Date().toISOString() }),
   )
@@ -236,32 +578,250 @@ export function createApplication(options: ApplicationOptions) {
     context.json(await options.resources.supportedSites()),
   )
   app.get("/api/prompts", (context) => context.json(options.resources.promptLibrary()))
-  app.get("/api/models", (context) => context.json(options.resources.modelInventory()))
-  app.get("/api/environment", (context) =>
-    context.json(options.resources.environmentStatus()),
+  app.get("/api/models", (context) =>
+    context.json(options.models.catalog()),
   )
-
+  app.get("/api/runtime", (context) => context.json(options.runtime.status()))
   app.post(
-    "/api/environment",
-    zValidator("json", environmentSchema),
+    "/api/agent-intents",
+    zValidator("json", agentIntentSchema),
     (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
-        return context.json(options.resources.setEnvironment(context.req.valid("json")))
+        return context.json(options.runtime.recordIntent(context.req.valid("json")), 201)
       } catch (error) {
         return context.json({ error: errorMessage(error) }, 400)
       }
     },
   )
-  app.delete("/api/environment/:name", (context) => {
-    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+  app.get("/api/download-batches", (context) =>
+    context.json(options.downloads.list()),
+  )
+  app.post(
+    "/api/download-batches",
+    zValidator("json", createDownloadBatchSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        const payload = context.req.valid("json")
+        return context.json(
+          options.downloads.create(payload.sources, payload.rightsConfirmed),
+          202,
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, DownloadBatchOperationError)
+      }
+    },
+  )
+  app.get("/api/download-batches/:batchId", (context) => {
     try {
-      return context.json(options.resources.clearEnvironment(context.req.param("name")))
+      return context.json(options.downloads.batch(context.req.param("batchId")))
     } catch (error) {
-      return context.json({ error: errorMessage(error) }, 400)
+      return operationErrorResponse(context, error, DownloadBatchOperationError)
     }
   })
-
+  for (const action of ["pause", "resume"] as const) {
+    app.post(`/api/download-batches/:batchId/${action}`, (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          action === "pause"
+            ? options.downloads.pause(context.req.param("batchId"))
+            : options.downloads.resume(context.req.param("batchId")),
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, DownloadBatchOperationError)
+      }
+    })
+  }
+  app.post(
+    "/api/download-batches/:batchId/items/:itemId/retry",
+    zValidator("json", retryDownloadItemSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.downloads.retry(
+            context.req.param("batchId"),
+            context.req.param("itemId"),
+            context.req.valid("json").lowQualityApproved,
+          ),
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, DownloadBatchOperationError)
+      }
+    },
+  )
+  app.delete(
+    "/api/download-batches/:batchId/items/:itemId",
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.downloads.cancel(
+            context.req.param("batchId"),
+            context.req.param("itemId"),
+          ),
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, DownloadBatchOperationError)
+      }
+    },
+  )
+  app.get("/api/models/:modelId", (context) => {
+    try {
+      return context.json(options.models.detail(modelId(context.req.param("modelId"))))
+    } catch (error) {
+      return operationErrorResponse(context, error, LocalModelOperationError)
+    }
+  })
+  app.put(
+    "/api/models/selection",
+    zValidator("json", modelSelectionSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.models.select(context.req.valid("json").modelId),
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, LocalModelOperationError)
+      }
+    },
+  )
+  app.post("/api/models/:modelId/download", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      return context.json(
+        options.models.download(modelId(context.req.param("modelId"))),
+        202,
+      )
+    } catch (error) {
+      return operationErrorResponse(context, error, LocalModelOperationError)
+    }
+  })
+  app.delete("/api/models/:modelId/download", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      options.models.cancelDownload(modelId(context.req.param("modelId")))
+      return context.json({ cancelled: true })
+    } catch (error) {
+      return operationErrorResponse(context, error, LocalModelOperationError)
+    }
+  })
+  app.delete("/api/models/:modelId", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      options.models.remove(modelId(context.req.param("modelId")))
+      return context.json({ removed: true })
+    } catch (error) {
+      return operationErrorResponse(context, error, LocalModelOperationError)
+    }
+  })
+  app.put(
+    "/api/providers/:providerId/credential",
+    zValidator("json", providerCredentialSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.models.setCredential(
+            providerId(context.req.param("providerId")),
+            context.req.valid("json").value,
+          ),
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, ProviderCredentialError)
+      }
+    },
+  )
+  app.delete("/api/providers/:providerId/credential", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      return context.json(
+        options.models.clearCredential(providerId(context.req.param("providerId"))),
+      )
+    } catch (error) {
+      return operationErrorResponse(context, error, ProviderCredentialError)
+    }
+  })
+  app.get("/api/providers/:providerId/credential/session", (context) => {
+    try {
+      const id = providerId(context.req.param("providerId"))
+      return context.json({
+        providerId: id,
+        value: options.models.credentials.sessionValue(
+          id,
+          context.req.header("authorization"),
+        ),
+      })
+    } catch {
+      return context.notFound()
+    }
+  })
+  app.get("/api/jobs/:videoId/notes", (context) => {
+    try {
+      options.jobs.summarize(context.req.param("videoId"))
+      return context.json(options.notes.list(context.req.param("videoId")))
+    } catch (error) {
+      return context.json({ error: errorMessage(error) }, 404)
+    }
+  })
+  app.post(
+    "/api/jobs/:videoId/notes",
+    zValidator("json", noteSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        options.jobs.summarize(context.req.param("videoId"))
+        return context.json(
+          options.notes.create(
+            context.req.param("videoId"),
+            context.req.valid("json"),
+          ),
+          201,
+        )
+      } catch (error) {
+        if (error instanceof NoteOperationError) {
+          return context.json({ error: error.message, code: error.code }, 400)
+        }
+        return context.json({ error: errorMessage(error) }, 400)
+      }
+    },
+  )
+  app.put(
+    "/api/jobs/:videoId/notes/:noteId",
+    zValidator("json", noteSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.notes.update(
+            context.req.param("videoId"),
+            context.req.param("noteId"),
+            context.req.valid("json"),
+          ),
+        )
+      } catch (error) {
+        const status = error instanceof NoteOperationError && error.code === "not-found" ? 404 : 400
+        return context.json({ error: errorMessage(error) }, status)
+      }
+    },
+  )
+  app.delete("/api/jobs/:videoId/notes/:noteId", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      return context.json(
+        options.notes.remove(
+          context.req.param("videoId"),
+          context.req.param("noteId"),
+        ),
+      )
+    } catch (error) {
+      const status = error instanceof NoteOperationError && error.code === "not-found" ? 404 : 400
+      return context.json({ error: errorMessage(error) }, status)
+    }
+  })
   app.post(
     "/api/removals/preview",
     zValidator("json", removalPreviewSchema),
@@ -291,21 +851,6 @@ export function createApplication(options: ApplicationOptions) {
       }
     },
   )
-  app.get("/api/environment/session/:name", (context) => {
-    try {
-      const name = context.req.param("name")
-      return context.json({
-        name,
-        value: options.resources.sessionEnvironment(
-          name,
-          context.req.header("authorization"),
-        ),
-      })
-    } catch {
-      return context.notFound()
-    }
-  })
-
   app.get("/api/jobs/:videoId/log", (context) => {
     try {
       const requested = Number(context.req.query("lines") ?? 160)
@@ -362,6 +907,62 @@ export function createApplication(options: ApplicationOptions) {
       return mediaErrorResponse(context, error)
     }
   })
+  app.get("/api/jobs/:videoId/summaries", (context) => {
+    try {
+      return context.json(options.summaries.catalog(context.req.param("videoId")))
+    } catch (error) {
+      return operationErrorResponse(context, error, SummaryOperationError)
+    }
+  })
+  app.get("/api/jobs/:videoId/summaries/:artifactId", (context) => {
+    try {
+      return context.json(
+        options.summaries.artifact(
+          context.req.param("videoId"),
+          context.req.param("artifactId"),
+        ),
+      )
+    } catch (error) {
+      return operationErrorResponse(context, error, SummaryOperationError)
+    }
+  })
+  app.post(
+    "/api/jobs/:videoId/summaries/import",
+    zValidator("json", summaryImportSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.summaries.import(
+            context.req.param("videoId"),
+            context.req.valid("json"),
+          ),
+          201,
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, SummaryOperationError)
+      }
+    },
+  )
+  app.put(
+    "/api/jobs/:videoId/summaries/active",
+    zValidator("json", summaryActivationSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        const payload = context.req.valid("json")
+        return context.json(
+          options.summaries.activate(
+            context.req.param("videoId"),
+            payload.kind,
+            payload.artifactId,
+          ),
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, SummaryOperationError)
+      }
+    },
+  )
   app.post("/api/jobs/:videoId/media/refresh", async (context) => {
     if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
     try {
@@ -433,6 +1034,9 @@ export function createApplication(options: ApplicationOptions) {
     "/api/jobs/:videoId/playback",
     zValidator("json", playbackSchema),
     (context) => {
+      if (!sameOrigin(context.req.raw)) {
+        return context.json({ error: "forbidden" }, 403)
+      }
       try {
         return context.json(
           options.jobs.savePlaybackState(

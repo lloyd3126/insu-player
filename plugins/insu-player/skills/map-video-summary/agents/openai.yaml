@@ -1,0 +1,7 @@
+interface:
+  display_name: "Map INSU Player Summary"
+  short_description: "把指定文字摘要整理成安全且可追溯的 Markmap"
+  default_prompt: "Use $map-video-summary to create and import a new validated mind-map revision from the selected INSU Player text summary."
+
+policy:
+  allow_implicit_invocation: true

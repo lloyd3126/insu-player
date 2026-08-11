@@ -14,9 +14,9 @@ Read [references/proofreading-contract.md](references/proofreading-contract.md) 
 1. Require the normalized model transcript with ordered word, token, or grapheme-group timing.
 2. Treat a creator-provided manual CC track as optional text, spelling, and terminology evidence. Never use its cue boundaries as word timing.
 3. Reject platform automatic captions as evidence.
-4. Consume the detected canonical language from the schema-version 2 model transcript. Do not ask the user to identify the source unless detection is unreliable, speech is multilingual, or script and regional variation materially affect the correction. If clarification is necessary, accept an ordinary language name and resolve the internal BCP 47 tag without asking the user for a code.
-5. Timing must come from a supported local or explicitly authorized OpenAI transcription model. Choose the content processor internally after inspecting available capabilities. Default to the current Agent for text correction and record the processor in the manifest. Do not ask the user for a provider, model ID, processor, or command parameter.
-6. Obtain consent before subtitle text leaves the device. Explain the boundary in ordinary language and do not infer consent from an API key.
+4. Consume the detected canonical language from the schema-version 3 model transcript. Do not ask the user to identify the source unless detection is unreliable, speech is multilingual, or script and regional variation materially affect the correction. If clarification is necessary, accept an ordinary language name and resolve the internal BCP 47 tag without asking the user for a code.
+5. Timing must come from local Whisper or an explicitly authorized supported cloud STT contract with validated word timing. Complete-sentence reconstruction and correction must be performed by the current Agent and recorded as `agent / codex`. Do not ask the user for a provider, model ID, processor, or command parameter.
+6. A supported cloud STT API may only receive audio for transcription after explicit consent. Do not send subtitle text to any cloud API model and do not infer audio-upload consent from an API key.
 
 ## Prepare the Same-Language Revision
 
@@ -30,14 +30,27 @@ python3 scripts/proofread_subtitles.py prepare \
   --source-output WORKSPACE/jobs/VIDEO_ID/subtitle-work/input.sentence.vtt
 ```
 
-Record the selected content processor before editing output text. For Codex:
+Before editing output text, read the fine-grained transcript and create an explicit sentence-boundary file. It must contain only reviewed timed-unit endpoints:
+
+```json
+{"schemaVersion":1,"boundaryAfterUnitIds":["U000021","U000047"]}
+```
+
+The final ID must be the final timed unit. Do not accept the punctuation-based draft produced by `prepare` as reviewed content. Record the Agent-reviewed boundaries first:
+
+```bash
+python3 scripts/proofread_subtitles.py record-sentence-review \
+  --manifest MANIFEST \
+  --boundaries BOUNDARIES.json \
+  --source-output INPUT.sentence.vtt
+```
+
+Then record the fixed content processor:
 
 ```bash
 python3 scripts/proofread_subtitles.py record-content-processor \
-  --manifest MANIFEST --provider agent --service codex
+  --manifest MANIFEST
 ```
-
-For a local or OpenAI model, use `--provider local|openai --model MODEL_NAME`. Use OpenAI only after explicit subtitle-text upload authorization.
 
 ## Correct Then Review
 
@@ -65,8 +78,6 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   WORKSPACE VIDEO_ID INPUT.vtt OUTPUT.vtt \
   --source-language SOURCE_BCP47 \
   --output-language SOURCE_BCP47 \
-  --processor-provider agent \
-  --processor-service codex \
   --artifact-kind proofread \
   --revision REVISION \
   --manifest MANIFEST \

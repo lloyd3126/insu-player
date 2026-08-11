@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: download-video.sh <workspace> <video-url> --language SOURCE_BCP47 [--translate TARGET_BCP47 | --proofread] [--allow-low-quality]\n'
+  printf 'usage: download-video.sh <workspace> <video-url> [--download-only | --language SOURCE_BCP47 [--translate TARGET_BCP47 | --proofread]] [--allow-low-quality] [--library-source-url URL] [--source-kind page|embed|network-media] [--referer URL] [--cookie-file PATH]\n'
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then usage; exit 0; fi
@@ -18,6 +18,11 @@ translation_mode=""
 translation_target=""
 source_language=""
 allow_low_quality=0
+download_only=0
+library_source_url="$video_url"
+source_kind="page"
+referer_url=""
+cookie_file=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --language)
@@ -41,21 +46,65 @@ while [ "$#" -gt 0 ]; do
       allow_low_quality=1
       shift
       ;;
+    --download-only)
+      download_only=1
+      shift
+      ;;
+    --library-source-url)
+      [ "$#" -ge 2 ] || caption_die "--library-source-url requires a URL"
+      library_source_url="$2"
+      shift 2
+      ;;
+    --source-kind)
+      [ "$#" -ge 2 ] || caption_die "--source-kind requires a value"
+      source_kind="$2"
+      shift 2
+      ;;
+    --referer)
+      [ "$#" -ge 2 ] || caption_die "--referer requires a URL"
+      referer_url="$2"
+      shift 2
+      ;;
+    --cookie-file)
+      [ "$#" -ge 2 ] || caption_die "--cookie-file requires a path"
+      cookie_file="$2"
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) caption_die "unknown option: $1" ;;
   esac
 done
 
-[ -n "$source_language" ] || caption_die "--language SOURCE_BCP47 is required after confirming the source language"
-caption_validate_language "$source_language"
-[ -n "$translation_mode" ] || caption_die "choose --translate TARGET_BCP47 or --proofread after asking the user"
-if [ "$translation_mode" = "translate" ]; then caption_validate_language "$translation_target"; fi
-if [ "$translation_mode" = "translate" ] && [ "$translation_target" = "$source_language" ]; then caption_die "translation target must differ from the source language"; fi
+if [ "$download_only" -eq 1 ]; then
+  [ -z "$source_language" ] || caption_die "--download-only cannot be combined with --language"
+  [ -z "$translation_mode" ] || caption_die "--download-only cannot be combined with a subtitle mode"
+  source_language="und"
+  translation_mode="download-only"
+else
+  [ -n "$source_language" ] || caption_die "--language SOURCE_BCP47 is required after confirming the source language"
+  caption_validate_language "$source_language"
+  [ -n "$translation_mode" ] || caption_die "choose --translate TARGET_BCP47 or --proofread after asking the user"
+  if [ "$translation_mode" = "translate" ]; then caption_validate_language "$translation_target"; fi
+  if [ "$translation_mode" = "translate" ] && [ "$translation_target" = "$source_language" ]; then caption_die "translation target must differ from the source language"; fi
+fi
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
 caption_require_runtime
 caption_require_command curl
+case "$source_kind" in page|embed|network-media) ;; *) caption_die "invalid source kind: $source_kind" ;; esac
+case "$library_source_url" in http://*|https://*) ;; *) caption_die "library source URL must use http or https" ;; esac
+if [ -n "$referer_url" ]; then
+  case "$referer_url" in http://*|https://*) ;; *) caption_die "referer URL must use http or https" ;; esac
+fi
+if [ -n "$cookie_file" ]; then
+  cookie_file=$(caption_abs_path "$cookie_file")
+  case "$cookie_file" in
+    "$CAPTION_TEMP"/cookie-sessions/*.txt) ;;
+    *) caption_die "cookie file must stay inside the workspace cookie session directory" ;;
+  esac
+  [ -f "$cookie_file" ] || caption_die "cookie file is missing"
+fi
 
 preferred_max_height=1080
 minimum_height=720
@@ -74,9 +123,20 @@ common_args=(
   --newline
   --no-overwrites
 )
+progress_security_args=(--redact-value "$video_url")
+if [ -n "$referer_url" ]; then common_args+=(--add-header "Referer:$referer_url"); fi
+if [ -n "$cookie_file" ]; then common_args+=(--cookies "$cookie_file"); fi
 
 caption_note "Resolving video metadata..."
 metadata_json=$("$CAPTION_YTDLP" "${common_args[@]}" --skip-download --dump-single-json "$video_url")
+printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c '
+import json, sys
+data = json.load(sys.stdin)
+if data.get("is_live") or data.get("live_status") in {"is_live", "is_upcoming", "post_live"}:
+    raise SystemExit("live streams are not supported")
+if data.get("has_drm") is True or any(item.get("has_drm") is True for item in data.get("formats") or [] if isinstance(item, dict)):
+    raise SystemExit("DRM-protected media is not supported")
+' || caption_die "live or DRM-protected media is not supported"
 video_id=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 video_title=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c 'import json,sys; print(json.load(sys.stdin).get("title") or "")')
 video_duration=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c 'import json,math,sys; value=json.load(sys.stdin).get("duration"); print(value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0 else "")')
@@ -86,16 +146,22 @@ job_dir="$CAPTION_JOBS/$video_id"
 source_dir="$job_dir/source"
 youtube_caption_dir="$job_dir/youtube-captions"
 mkdir -p "$source_dir" "$youtube_caption_dir" "$job_dir/logs"
+diagnostic_log="$job_dir/logs/workflow.log"
+if [ "$source_kind" = "network-media" ]; then diagnostic_log=/dev/null; fi
 
-job_init_args=(--job-dir "$job_dir" --video-id "$video_id" --source-url "$video_url" --title "$video_title")
+job_init_args=(--job-dir "$job_dir" --video-id "$video_id" --source-url "$library_source_url" --source-kind "$source_kind" --title "$video_title")
 if [ -n "$video_duration" ]; then
   job_init_args+=(--duration-seconds "$video_duration")
 fi
 caption_job_state init "${job_init_args[@]}" >/dev/null
 pipeline_output_language="$source_language"
 if [ "$translation_mode" = "translate" ]; then pipeline_output_language="$translation_target"; fi
-caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
-caption_job_state update --job-dir "$job_dir" --state checking --stage manual_caption --message "正在檢查人工 CC 字幕，平台自動字幕不會下載" --progress 0 --clear-error --record-history >/dev/null
+if [ "$download_only" -eq 1 ]; then
+  caption_job_state update --job-dir "$job_dir" --state checking --stage media_download --message "正在檢查影音來源" --progress 0 --clear-error --record-history >/dev/null
+else
+  caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state checking --stage manual_caption --message "正在檢查人工 CC 字幕，平台自動字幕不會下載" --progress 0 --clear-error --record-history >/dev/null
+fi
 
 fail_job() {
   local exit_code=$?
@@ -143,14 +209,14 @@ probe_video_format() {
 
   probe_result="unavailable"
   probe_statuses=""
-  if ! stream_urls=$("$CAPTION_YTDLP" "${common_args[@]}" --get-url --format "$format_selector" "$video_url" 2>> "$job_dir/logs/workflow.log"); then
+  if ! stream_urls=$("$CAPTION_YTDLP" "${common_args[@]}" --get-url --format "$format_selector" "$video_url" 2>> "$diagnostic_log"); then
     return 1
   fi
 
   while IFS= read -r stream_url; do
     [ -n "$stream_url" ] || continue
     stream_count=$((stream_count + 1))
-    http_code=$(curl -L --silent --show-error --range 0-1023 --max-time 20 -o /dev/null -w '%{http_code}' "$stream_url" 2>> "$job_dir/logs/workflow.log" || true)
+    http_code=$(curl -L --silent --show-error --range 0-1023 --max-time 20 -o /dev/null -w '%{http_code}' "$stream_url" 2>> "$diagnostic_log" || true)
     if [ -n "$probe_statuses" ]; then probe_statuses="$probe_statuses,$http_code"; else probe_statuses="$http_code"; fi
     case "$http_code" in 200|206) ;; *) all_available=0 ;; esac
   done <<EOF
@@ -173,24 +239,28 @@ find_track() {
 }
 
 source_caption_ready=0
-caption_note "Checking for creator-provided $source_language CC; automatic captions are intentionally excluded..."
-if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-  --job-dir "$job_dir" --state checking --stage manual_caption --message "正在取得人工 CC 字幕" --success-message "人工 CC 檢查完成" --allow-failure -- \
-  "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-subs \
-  --sub-langs "$source_language.*" --sub-format vtt --output "$youtube_caption_dir/%(id)s.%(ext)s" "$video_url"; then
-  caption_note "warning: manual CC download was incomplete; media download will continue"
-fi
+if [ "$download_only" -eq 0 ]; then
+  caption_note "Checking for creator-provided $source_language CC; automatic captions are intentionally excluded..."
+  if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
+    "${progress_security_args[@]}" \
+    --job-dir "$job_dir" --state checking --stage manual_caption --message "正在取得人工 CC 字幕" --success-message "人工 CC 檢查完成" --allow-failure -- \
+    "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-subs \
+    --sub-langs "$source_language.*" --sub-format vtt --output "$youtube_caption_dir/%(id)s.%(ext)s" "$video_url"; then
+    caption_note "warning: manual CC download was incomplete; media download will continue"
+  fi
 
-manual_source=$(find_track "\\.$source_language([-.][A-Za-z0-9_-]+)?\\.vtt$" vtt)
-if [ -n "$manual_source" ]; then
-  caption_validate_vtt "$manual_source"
-  "$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$source_language" "$manual_source" --source-type manual-cc --processor-provider yt-dlp
-  source_caption_ready=1
+  manual_source=$(find_track "\\.$source_language([-.][A-Za-z0-9_-]+)?\\.vtt$" vtt)
+  if [ -n "$manual_source" ]; then
+    caption_validate_vtt "$manual_source"
+    "$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$source_language" "$manual_source" --source-type manual-cc --processor-provider yt-dlp
+    source_caption_ready=1
+  fi
 fi
 
 if [ ! -f "$source_dir/thumbnail.jpg" ]; then
   caption_note "Downloading a thumbnail..."
   if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
+    "${progress_security_args[@]}" \
     --job-dir "$job_dir" --state downloading --stage thumbnail --message "正在取得縮圖" --success-message "縮圖檢查完成" --allow-failure -- \
     "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-thumbnail --convert-thumbnails jpg --output "$source_dir/thumbnail.%(ext)s" "$video_url"; then
     caption_note "warning: thumbnail was unavailable; continuing"
@@ -233,6 +303,7 @@ else
       fi
 
       if "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
+        "${progress_security_args[@]}" \
         --job-dir "$job_dir" --state downloading --stage media_download --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --allow-failure -- \
         "$CAPTION_YTDLP" "${common_args[@]}" \
         --format "$format_selector" --merge-output-format mp4 --recode-video mp4 --write-info-json \
@@ -304,11 +375,12 @@ fi
 # A model-generated fine-grained timing source is mandatory for proofreading,
 # translation, and segmentation, even when creator CC is available as text evidence.
 if [ ! -f "$source_dir/audio.m4a" ]; then
-  caption_note "Downloading audio for the model timing source..."
+  caption_note "Extracting the model timing audio from the verified local media..."
   "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-    --job-dir "$job_dir" --state downloading --stage audio_preparation --message "正在下載轉錄音訊" --success-message "轉錄音訊下載完成" -- \
-    "$CAPTION_YTDLP" "${common_args[@]}" --format ba --extract-audio --audio-format m4a --audio-quality 0 \
-    --output "$source_dir/audio.%(ext)s" "$video_url"
+    "${progress_security_args[@]}" \
+    --job-dir "$job_dir" --state downloading --stage audio_preparation --message "正在從本機影音準備轉錄音訊" --success-message "轉錄音訊準備完成" -- \
+    "$CAPTION_FFMPEG" -nostdin -hide_banner -loglevel warning -i "$video_file" \
+    -vn -c:a aac -b:a 192k -movflags +faststart "$source_dir/audio.m4a"
   caption_require_file "$source_dir/audio.m4a"
   caption_job_state asset --job-dir "$job_dir" --name audio --path "$source_dir/audio.m4a" >/dev/null
 fi
@@ -318,7 +390,8 @@ caption_job_state asset --job-dir "$job_dir" --name mediaInfo --path "$job_dir/m
 {
   printf 'video-id: %s\n' "$video_id"
   printf 'title: %s\n' "$video_title"
-  printf 'source-url: %s\n' "$video_url"
+  printf 'source-url: %s\n' "$library_source_url"
+  printf 'source-kind: %s\n' "$source_kind"
   printf 'video-file: %s\n' "$video_file"
   printf 'media-catalog-file: %s\n' "$media_catalog_file"
   printf 'subtitle-mode: %s\n' "$translation_mode"
@@ -327,13 +400,17 @@ caption_job_state asset --job-dir "$job_dir" --name mediaInfo --path "$job_dir/m
 } > "$job_dir/manifest.txt"
 caption_job_state asset --job-dir "$job_dir" --name manifest --path "$job_dir/manifest.txt" >/dev/null
 
-caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
-if [ "$source_caption_ready" -eq 1 ]; then
-  next_message="影音與人工 CC 已可觀看，仍需模型從音訊建立細粒度時間軸"
+if [ "$download_only" -eq 1 ]; then
+  caption_job_state update --job-dir "$job_dir" --state downloaded --stage awaiting_subtitle_choice --message "影音已下載，等待選擇字幕處理方式" --progress 100 --clear-error --record-history >/dev/null
 else
-  next_message="影音與音訊已就緒，等待模型建立細粒度來源字幕"
+  caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
+  if [ "$source_caption_ready" -eq 1 ]; then
+    next_message="影音與人工 CC 已可觀看，仍需模型從音訊建立細粒度時間軸"
+  else
+    next_message="影音與音訊已就緒，等待模型建立細粒度來源字幕"
+  fi
+  caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage model_transcription --message "$next_message" --progress 0 --clear-error --record-history >/dev/null
 fi
-caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage model_transcription --message "$next_message" --progress 0 --clear-error --record-history >/dev/null
 
 trap - ERR
 caption_note "Download complete: $job_dir"

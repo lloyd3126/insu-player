@@ -49,7 +49,7 @@ caption_require_command curl
 caption_validate_video_id "$video_id"
 
 job_dir="$CAPTION_JOBS/$video_id"
-caption_require_file "$job_dir/status.json"
+[ -d "$job_dir" ] || caption_die "job is unavailable: $video_id"
 media_catalog_script="$SCRIPT_DIR/media_catalog.py"
 media_quality_script="$SCRIPT_DIR/media_quality.py"
 progress_script="$SCRIPT_DIR/run_media_progress.py"
@@ -57,15 +57,8 @@ for helper in "$media_catalog_script" "$media_quality_script" "$progress_script"
   [ -f "$helper" ] || caption_die "media helper is unavailable: $helper"
 done
 
-source_url=$("$CAPTION_PYTHON" - "$job_dir/status.json" "$video_id" <<'PY'
-import json,sys
-payload=json.load(open(sys.argv[1],encoding="utf-8"))
-if payload.get("videoId") != sys.argv[2]: raise SystemExit("status videoId mismatch")
-value=payload.get("sourceUrl")
-if not isinstance(value,str) or not value.strip(): raise SystemExit("job source URL is unavailable")
-print(value)
-PY
-)
+source_url=$(caption_job_state show --job-dir "$job_dir" --field sourceUrl)
+[ -n "$source_url" ] || caption_die "job source URL is unavailable"
 
 mkdir -p "$CAPTION_YTDLP_CACHE" "$job_dir/media-work/runs"
 common_args=(

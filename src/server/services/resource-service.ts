@@ -1,29 +1,17 @@
-import { timingSafeEqual } from "node:crypto"
 import {
   existsSync,
   lstatSync,
   readFileSync,
-  readdirSync,
   statSync,
 } from "node:fs"
 import path from "node:path"
 
 import type {
-  EnvironmentStatusResponse,
-  ModelInventoryResponse,
   PromptItem,
   PromptLibraryResponse,
   SupportedSitesResponse,
 } from "@shared/contracts/resources"
 
-const ENVIRONMENT_VARIABLES = {
-  OPENAI_API_KEY: {
-    label: "OpenAI API 金鑰",
-    description: "供 OpenAI API 轉錄使用",
-  },
-} as const
-
-const MODEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/
 const PROMPT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
 function executable(candidate: string) {
@@ -59,38 +47,14 @@ async function spawnText(command: string, args: string[], cwd: string) {
 }
 
 export class ResourceService {
-  readonly sessionToken = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "")
-  private readonly environmentSources = new Map<string, "startup" | "session">()
   private supportedSitesCache:
     | { key: string; payload: SupportedSitesResponse }
     | undefined
 
-  constructor(readonly workspace: string) {
-    for (const name of Object.keys(ENVIRONMENT_VARIABLES)) {
-      if (process.env[name]) this.environmentSources.set(name, "startup")
-    }
-  }
+  constructor(readonly workspace: string) {}
 
   private runtimeRoot() {
     return path.join(this.workspace, ".agent-tools", "insu-player")
-  }
-
-  private installedPackages() {
-    const lockPath = path.join(this.runtimeRoot(), "requirements.lock.txt")
-    if (!existsSync(lockPath) || lstatSync(lockPath).isSymbolicLink()) {
-      return new Map<string, string>()
-    }
-    const packages = new Map<string, string>()
-    for (const source of readFileSync(lockPath, "utf8").split(/\r?\n/)) {
-      const requirement = source.trim()
-      if (!requirement || requirement.startsWith("#")) continue
-      const pinned = requirement.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)/)
-      const direct = requirement.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)\s+@\s+(.+)$/)
-      const matched = pinned ?? direct
-      if (!matched) continue
-      packages.set(matched[1].replace(/[-_.]+/g, "-").toLowerCase(), matched[2])
-    }
-    return packages
   }
 
   async supportedSites(): Promise<SupportedSitesResponse> {
@@ -146,68 +110,6 @@ export class ResourceService {
         extractors: [],
         message: "yt-dlp extractor discovery failed",
       }
-    }
-  }
-
-  modelInventory(): ModelInventoryResponse {
-    const runtime = this.runtimeRoot()
-    const packages = this.installedPackages()
-    const whisperInstalled =
-      packages.has("openai-whisper") &&
-      [
-        path.join(runtime, ".venv", "bin", "whisper"),
-        path.join(runtime, ".venv", "Scripts", "whisper.exe"),
-      ].some(executable)
-    const modelsDirectory = path.join(runtime, "models")
-    const models: Array<{
-      name: string
-      displayName: string
-      sizeBytes: number
-      ready: boolean
-    }> = []
-    if (existsSync(modelsDirectory) && !lstatSync(modelsDirectory).isSymbolicLink()) {
-      for (const entry of readdirSync(modelsDirectory, { withFileTypes: true })) {
-        if (!entry.isFile() || entry.isSymbolicLink() || path.extname(entry.name) !== ".pt") {
-          continue
-        }
-        const name = path.basename(entry.name, ".pt")
-        if (!MODEL_NAME_PATTERN.test(name)) continue
-        const sizeBytes = statSync(path.join(modelsDirectory, entry.name)).size
-        if (sizeBytes > 0) {
-          models.push({
-            name,
-            displayName: `OpenAI Whisper ${name}`,
-            sizeBytes,
-            ready: whisperInstalled,
-          })
-        }
-      }
-      models.sort((left, right) => left.name.localeCompare(right.name, "en"))
-    }
-    const openaiInstalled = packages.has("openai")
-    const openaiApiKeyConfigured = Boolean(process.env.OPENAI_API_KEY)
-    return {
-      local: {
-        providerInstalled: whisperInstalled,
-        packageVersion: packages.get("openai-whisper") ?? null,
-        modelCount: models.length,
-        totalSizeBytes: models.reduce((sum, model) => sum + model.sizeBytes, 0),
-        models,
-      },
-      api: {
-        providerInstalled: openaiInstalled,
-        packageVersion: packages.get("openai") ?? null,
-        keyConfigured: openaiApiKeyConfigured,
-        models: [
-          {
-            name: "whisper-1",
-            displayName: "OpenAI whisper-1",
-            installed: openaiInstalled,
-            apiKeyName: "OPENAI_API_KEY",
-            apiKeyConfigured: openaiApiKeyConfigured,
-          },
-        ],
-      },
     }
   }
 
@@ -271,54 +173,4 @@ export class ResourceService {
     }
   }
 
-  environmentStatus(): EnvironmentStatusResponse {
-    const packages = this.installedPackages()
-    return {
-      scope: "process",
-      variables: Object.entries(ENVIRONMENT_VARIABLES).map(([name, details]) => ({
-        name,
-        label: details.label,
-        description: details.description,
-        configured: Boolean(process.env[name]),
-        source: this.environmentSources.get(name) ?? null,
-        providerInstalled: name === "OPENAI_API_KEY" ? packages.has("openai") : true,
-      })),
-    }
-  }
-
-  setEnvironment(payload: { name: string; value: string }) {
-    if (!(payload.name in ENVIRONMENT_VARIABLES)) {
-      throw new Error("environment variable is not allowed")
-    }
-    const value = payload.value.trim()
-    if (!value || value.length > 2048 || [...value].some((character) => character.charCodeAt(0) < 32)) {
-      throw new Error("environment variable value is invalid")
-    }
-    process.env[payload.name] = value
-    this.environmentSources.set(payload.name, "session")
-    return this.environmentStatus()
-  }
-
-  clearEnvironment(name: string) {
-    if (!(name in ENVIRONMENT_VARIABLES)) {
-      throw new Error("environment variable is not allowed")
-    }
-    delete process.env[name]
-    this.environmentSources.delete(name)
-    return this.environmentStatus()
-  }
-
-  sessionEnvironment(name: string, authorization: string | undefined) {
-    const expected = Buffer.from(`Bearer ${this.sessionToken}`)
-    const actual = Buffer.from(authorization ?? "")
-    if (
-      !(name in ENVIRONMENT_VARIABLES) ||
-      actual.length !== expected.length ||
-      !timingSafeEqual(actual, expected) ||
-      !process.env[name]
-    ) {
-      throw new Error("session environment variable is unavailable")
-    }
-    return process.env[name]
-  }
 }

@@ -9,13 +9,15 @@ import json
 import math
 import os
 import re
-import tempfile
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 2
+SOURCE_KINDS = {"page", "embed", "network-media"}
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
@@ -77,10 +79,27 @@ SUBTITLE_TRACK_ROLES = {
     "input_segmented",
     "output_segmented",
 }
-PROCESSOR_PROVIDERS = {"local", "openai", "agent"}
+TIMING_PROCESSOR_PROVIDERS = {
+    "local",
+    "openai",
+    "groq",
+    "elevenlabs",
+    "xai",
+    "openrouter",
+}
+PROCESSOR_PROVIDERS = TIMING_PROCESSOR_PROVIDERS | {"agent"}
 ARTIFACT_PROCESSOR_PROVIDERS = PROCESSOR_PROVIDERS | {"yt-dlp"}
 PROCESSOR_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+OPENROUTER_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$")
 JOB_STAGE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+TIMING_PROCESSOR_CONTRACTS: dict[str, tuple[str, set[str] | None]] = {
+    "local": ("openai-whisper", None),
+    "openai": ("audio/transcriptions", {"whisper-1"}),
+    "groq": ("audio/transcriptions", {"whisper-large-v3", "whisper-large-v3-turbo"}),
+    "elevenlabs": ("speech-to-text", {"scribe_v2"}),
+    "xai": ("v1/stt", set()),
+    "openrouter": ("audio/transcriptions", {"openai/whisper-large-v3"}),
+}
 
 
 def utc_now() -> str:
@@ -120,28 +139,46 @@ def processor_identity(
     optional: bool = False,
     timing_only: bool = False,
     allow_yt_dlp: bool = False,
-) -> dict[str, str] | None:
+    agent_only: bool = False,
+) -> dict[str, Any] | None:
     if provider is None and service is None and model is None and optional:
         return None
-    allowed = {"local", "openai"} if timing_only else PROCESSOR_PROVIDERS
+    allowed = TIMING_PROCESSOR_PROVIDERS if timing_only else PROCESSOR_PROVIDERS
+    if agent_only:
+        allowed = {"agent"}
     if allow_yt_dlp:
         allowed = ARTIFACT_PROCESSOR_PROVIDERS
     if provider not in allowed:
         raise ValueError(f"unsupported {label} provider: {provider}")
-    for value, field in ((service, "service"), (model, "model")):
-        if value is not None and not PROCESSOR_NAME_PATTERN.fullmatch(value):
-            raise ValueError(f"invalid {label} {field}: {value}")
-    if provider in {"local", "openai"} and not model:
-        raise ValueError(f"{label} requires a model for {provider}")
-    if provider == "agent" and not service:
-        raise ValueError(f"{label} requires a service for agent")
+    if service is not None and not PROCESSOR_NAME_PATTERN.fullmatch(service):
+        raise ValueError(f"invalid {label} service: {service}")
+    if model is not None:
+        model_pattern = OPENROUTER_MODEL_PATTERN if provider == "openrouter" else PROCESSOR_NAME_PATTERN
+        if not model_pattern.fullmatch(model):
+            raise ValueError(f"invalid {label} model: {model}")
+    if provider in TIMING_PROCESSOR_PROVIDERS:
+        expected_service, allowed_models = TIMING_PROCESSOR_CONTRACTS[provider]
+        if service != expected_service:
+            raise ValueError(f"{label} must use {provider} / {expected_service}")
+        if allowed_models is not None and model not in allowed_models:
+            if allowed_models:
+                raise ValueError(f"unsupported {label} model for {provider}: {model}")
+            raise ValueError(f"{label} cannot record a model for {provider}")
+        if allowed_models is None and not model:
+            raise ValueError(f"{label} requires a model for {provider}")
+    if agent_only and (service != "codex" or model is not None):
+        raise ValueError(f"{label} must use agent / codex")
     if provider == "yt-dlp" and model:
         raise ValueError(f"{label} cannot record a yt-dlp model")
-    identity = {"provider": provider}
-    if service:
+    identity: dict[str, Any] = {"provider": provider}
+    if provider in TIMING_PROCESSOR_PROVIDERS:
         identity["service"] = service
-    if model:
         identity["model"] = model
+    else:
+        if service:
+            identity["service"] = service
+        if model:
+            identity["model"] = model
     return identity
 
 
@@ -151,7 +188,7 @@ def validate_processor_payload(
     label: str,
     timing_only: bool = False,
     allow_yt_dlp: bool = False,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be an object")
     unknown = set(value) - {"provider", "service", "model"}
@@ -261,12 +298,14 @@ def validate_subtitle_artifacts(job_dir: Path, value: object) -> list[dict[str, 
                 raise ValueError(f"manual CC artifact timing is invalid: {artifact_id}")
         elif kind == "source":
             if (
-                processor["provider"] not in {"local", "openai"}
+                processor["provider"] not in TIMING_PROCESSOR_PROVIDERS
                 or timing_kind not in {"word", "token", "grapheme-group"}
             ):
                 raise ValueError(f"model transcript timing is invalid: {artifact_id}")
         elif processor["provider"] == "yt-dlp":
             raise ValueError(f"subtitle revision processor is invalid: {artifact_id}")
+        elif processor != {"provider": "agent", "service": "codex"}:
+            raise ValueError(f"subtitle revision must use agent / codex: {artifact_id}")
         if artifact.get("targetFrozen") is not (kind == "segmentation"):
             raise ValueError(f"subtitle artifact targetFrozen is invalid: {artifact_id}")
         for count_field in ("warningCount", "hardDefectCount"):
@@ -371,18 +410,63 @@ def validate_subtitle_artifacts(job_dir: Path, value: object) -> list[dict[str, 
     return value
 
 
-def state_path(job_dir: Path) -> Path:
-    return job_dir / "status.json"
+def workspace_path(job_dir: Path) -> Path:
+    resolved = job_dir.resolve()
+    if resolved.parent.name != "jobs" or not VIDEO_ID_PATTERN.fullmatch(resolved.name):
+        raise ValueError("job directory must be <workspace>/jobs/<video-id>")
+    workspace = resolved.parent.parent
+    if workspace == Path(workspace.anchor) or workspace == Path.home():
+        raise ValueError("job workspace must be a dedicated directory")
+    return workspace
 
 
-def default_status(job_dir: Path, video_id: str | None = None) -> dict[str, Any]:
+def database_path(job_dir: Path) -> Path:
+    return workspace_path(job_dir) / "app.db"
+
+
+def open_database(job_dir: Path) -> sqlite3.Connection:
+    path = database_path(job_dir)
+    if not path.is_file() or path.is_symlink():
+        raise FileNotFoundError(
+            f"current INSU Player database is unavailable: {path}; start the homepage first"
+        )
+    connection = sqlite3.connect(f"{path.as_uri()}?mode=rw", uri=True, timeout=30)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    required = {"media_items", "operations", "operation_events"}
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    if not required.issubset(tables):
+        connection.close()
+        raise RuntimeError("database does not match the current INSU Player schema")
+    return connection
+
+
+def default_status(
+    job_dir: Path,
+    video_id: str | None = None,
+    *,
+    source_url: str,
+    source_kind: str,
+) -> dict[str, Any]:
     resolved_id = validate_video_id(video_id or job_dir.name)
+    if not source_url:
+        raise ValueError("source URL is required")
+    if source_kind not in SOURCE_KINDS:
+        raise ValueError("source kind is invalid")
     now = utc_now()
     return {
         "schemaVersion": SCHEMA_VERSION,
         "videoId": resolved_id,
         "title": resolved_id,
-        "sourceUrl": "",
+        "sourceUrl": source_url,
+        "sourceKind": source_kind,
         "durationSeconds": None,
         "state": "queued",
         "stage": "queued",
@@ -409,21 +493,25 @@ def default_status(job_dir: Path, video_id: str | None = None) -> dict[str, Any]
     }
 
 
-def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any]:
-    path = state_path(job_dir)
-    if not path.exists():
-        if create_default:
-            return default_status(job_dir)
-        raise FileNotFoundError(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
+def load_status(job_dir: Path) -> dict[str, Any]:
+    path = database_path(job_dir)
+    with closing(open_database(job_dir)) as connection:
+        row = connection.execute(
+            "SELECT record_json FROM media_items WHERE video_id = ?",
+            (job_dir.resolve().name,),
+        ).fetchone()
+    if row is None:
+        raise FileNotFoundError(f"media item not found: {job_dir.resolve().name}")
+    data = json.loads(str(row["record_json"]))
     if not isinstance(data, dict):
-        raise ValueError(f"job state is not a JSON object: {path}")
+        raise ValueError("media item record is not a JSON object")
     if data.get("schemaVersion") != SCHEMA_VERSION:
-        raise ValueError(f"job state must use schemaVersion {SCHEMA_VERSION}: {path}")
+        raise ValueError(f"media item record must use schemaVersion {SCHEMA_VERSION}")
     required_fields = {
         "videoId",
         "title",
         "sourceUrl",
+        "sourceKind",
         "durationSeconds",
         "state",
         "stage",
@@ -443,11 +531,13 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
     }
     missing_fields = sorted(required_fields - set(data))
     if missing_fields:
-        raise ValueError(f"job state is missing required fields {missing_fields}: {path}")
+        raise ValueError(f"media item record is missing required fields {missing_fields}")
     if not isinstance(data.get("title"), str) or not data["title"].strip():
         raise ValueError(f"job state title is invalid: {path}")
     if not isinstance(data.get("sourceUrl"), str):
         raise ValueError(f"job state sourceUrl is invalid: {path}")
+    if data.get("sourceKind") not in SOURCE_KINDS:
+        raise ValueError(f"job state sourceKind is invalid: {path}")
     if not isinstance(data.get("message"), str) or not data["message"].strip():
         raise ValueError(f"job state message is invalid: {path}")
     validate_timestamp(data.get("createdAt"), "job state createdAt")
@@ -529,6 +619,7 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
             raise ValueError(f"job state transcription must be an object: {path}")
         unknown = set(transcription) - {
             "provider",
+            "service",
             "model",
             "languageTag",
             "engineLanguage",
@@ -536,11 +627,15 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
         }
         if unknown:
             raise ValueError(f"job state transcription contains unsupported fields: {path}")
-        if transcription.get("provider") not in {"local", "openai"}:
-            raise ValueError(f"job state transcription provider is unsupported: {path}")
-        model = transcription.get("model")
-        if not isinstance(model, str) or not PROCESSOR_NAME_PATTERN.fullmatch(model):
-            raise ValueError(f"job state transcription model is invalid: {path}")
+        validate_processor_payload(
+            {
+                "provider": transcription.get("provider"),
+                "service": transcription.get("service"),
+                "model": transcription.get("model"),
+            },
+            label="transcription.processor",
+            timing_only=True,
+        )
         language_tag = validate_language(str(transcription.get("languageTag", "")))
         engine_language = transcription.get("engineLanguage")
         if language_tag == "und":
@@ -632,29 +727,6 @@ def load_status(job_dir: Path, *, create_default: bool = False) -> dict[str, Any
     return data
 
 
-def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    temp_name: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temp_name = handle.name
-            handle.write(serialized)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_name, path)
-    finally:
-        if temp_name and os.path.exists(temp_name):
-            os.unlink(temp_name)
-
-
 def relative_job_path(job_dir: Path, candidate: Path) -> str:
     job_root = job_dir.resolve()
     target = candidate.resolve()
@@ -672,7 +744,168 @@ def save_status(job_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("job state history must be an array")
     if len(history) > 120:
         status["history"] = history[-120:]
-    atomic_write_json(state_path(job_dir), status)
+    serialized = json.dumps(status, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    now = status["updatedAt"]
+    with closing(open_database(job_dir)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO media_items (
+                  video_id, title, source_url, state, effective_state, stage,
+                  progress, message, created_at, updated_at, completed_at,
+                  last_error, watchable, size_bytes, thumbnail_url, watch_url,
+                  has_log, duration_seconds, record_json, record_revision,
+                  projected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0, ?, ?, 1, ?)
+                ON CONFLICT(video_id) DO UPDATE SET
+                  title = excluded.title,
+                  source_url = excluded.source_url,
+                  state = excluded.state,
+                  effective_state = excluded.effective_state,
+                  stage = excluded.stage,
+                  progress = excluded.progress,
+                  message = excluded.message,
+                  created_at = excluded.created_at,
+                  updated_at = excluded.updated_at,
+                  completed_at = excluded.completed_at,
+                  last_error = excluded.last_error,
+                  duration_seconds = excluded.duration_seconds,
+                  record_json = excluded.record_json,
+                  record_revision = media_items.record_revision + 1,
+                  projected_at = excluded.projected_at
+                """,
+                (
+                    status["videoId"],
+                    status["title"],
+                    status["sourceUrl"],
+                    status["state"],
+                    status["state"],
+                    status["stage"],
+                    status["progress"],
+                    status["message"],
+                    status["createdAt"],
+                    status["updatedAt"],
+                    status["completedAt"],
+                    status["lastError"],
+                    status["durationSeconds"],
+                    serialized,
+                    now,
+                ),
+            )
+            operation_id = f"{status['videoId']}:current"
+            pipeline = status.get("subtitlePipeline")
+            processor: dict[str, Any] = {}
+            if isinstance(pipeline, dict):
+                if status["state"] in {"transcribing", "needs_transcription"}:
+                    candidate = pipeline.get("timingProcessor")
+                elif status["state"] in {"segmenting", "needs_segmentation"}:
+                    candidate = pipeline.get("segmentationProcessor")
+                else:
+                    candidate = pipeline.get("contentProcessor")
+                if isinstance(candidate, dict):
+                    processor = candidate
+            if status["state"] in ACTIVE_STATES:
+                operation_state = "running"
+            elif status["state"].startswith("needs_") or status["state"] == "downloaded":
+                operation_state = "needs_user"
+            elif status["state"] == "ready":
+                operation_state = "ready"
+            elif status["state"] == "failed":
+                operation_state = "failed"
+            elif status["state"] == "interrupted":
+                operation_state = "failed"
+            else:
+                operation_state = "queued"
+            if "transcript" in status["stage"] or "transcrib" in status["state"]:
+                operation_kind = "transcription"
+            elif "proofread" in status["state"] or pipeline and pipeline.get("mode") == "proofread":
+                operation_kind = "proofread"
+            elif "translat" in status["state"] or pipeline and pipeline.get("mode") == "translate":
+                operation_kind = "translation"
+            elif "segment" in status["state"] or "segment" in status["stage"]:
+                operation_kind = "segmentation"
+            else:
+                operation_kind = "ingestion"
+            process = status.get("process") if isinstance(status.get("process"), dict) else {}
+            connection.execute(
+                """
+                INSERT INTO operations (
+                  id, video_id, parent_operation_id, kind, state, stage, progress,
+                  message, processor_provider, processor_service, processor_model,
+                  inputs_json, outputs_json, consent_json, resumable, attempt, pid,
+                  error_code, error_message, created_at, started_at, updated_at,
+                  completed_at
+                ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, '{}', '{}', '{}', ?, 1, ?, NULL, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  kind = excluded.kind,
+                  state = excluded.state,
+                  stage = excluded.stage,
+                  progress = excluded.progress,
+                  message = excluded.message,
+                  processor_provider = excluded.processor_provider,
+                  processor_service = excluded.processor_service,
+                  processor_model = excluded.processor_model,
+                  resumable = excluded.resumable,
+                  pid = excluded.pid,
+                  error_message = excluded.error_message,
+                  started_at = COALESCE(operations.started_at, excluded.started_at),
+                  updated_at = excluded.updated_at,
+                  completed_at = excluded.completed_at
+                """,
+                (
+                    operation_id,
+                    status["videoId"],
+                    operation_kind,
+                    operation_state,
+                    status["stage"],
+                    status["progress"],
+                    status["message"],
+                    processor.get("provider"),
+                    processor.get("service"),
+                    processor.get("model"),
+                    1 if operation_state in {"running", "failed", "needs_user"} else 0,
+                    process.get("pid"),
+                    status.get("lastError"),
+                    status["createdAt"],
+                    process.get("startedAt"),
+                    status["updatedAt"],
+                    status.get("completedAt"),
+                ),
+            )
+            last_event = connection.execute(
+                "SELECT state, stage, progress, message FROM operation_events WHERE operation_id = ? ORDER BY sequence DESC LIMIT 1",
+                (operation_id,),
+            ).fetchone()
+            event_signature = (
+                operation_state,
+                status["stage"],
+                float(status["progress"]),
+                status["message"],
+            )
+            if last_event is None or tuple(last_event) != event_signature:
+                sequence = int(
+                    connection.execute(
+                        "SELECT COALESCE(MAX(sequence), -1) + 1 FROM operation_events WHERE operation_id = ?",
+                        (operation_id,),
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    "INSERT INTO operation_events (operation_id, sequence, type, state, stage, progress, message, data_json, created_at) VALUES (?, ?, 'state', ?, ?, ?, ?, '{}', ?)",
+                    (
+                        operation_id,
+                        sequence,
+                        operation_state,
+                        status["stage"],
+                        status["progress"],
+                        status["message"],
+                        status["updatedAt"],
+                    ),
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
     return status
 
 
@@ -680,6 +913,7 @@ def initialize_job(
     job_dir: Path,
     video_id: str,
     source_url: str,
+    source_kind: str,
     title: str,
     duration_seconds: float | None = None,
 ) -> dict[str, Any]:
@@ -688,11 +922,17 @@ def initialize_job(
     try:
         status = load_status(job_dir)
     except FileNotFoundError:
-        status = default_status(job_dir, video_id)
+        status = default_status(
+            job_dir,
+            video_id,
+            source_url=source_url,
+            source_kind=source_kind,
+        )
     status.update(
         {
             "videoId": video_id,
             "sourceUrl": source_url,
+            "sourceKind": source_kind,
             "title": title or status.get("title") or video_id,
         }
     )
@@ -712,7 +952,7 @@ def patch_status(
     *,
     record_history: bool = False,
 ) -> dict[str, Any]:
-    status = load_status(job_dir, create_default=True)
+    status = load_status(job_dir)
     old_state = status.get("state")
     old_stage = status.get("stage")
     old_message = status.get("message")
@@ -758,7 +998,7 @@ def patch_status(
 
 
 def set_asset(job_dir: Path, name: str, path: Path) -> dict[str, Any]:
-    status = load_status(job_dir, create_default=True)
+    status = load_status(job_dir)
     assets = status["assets"]
     assets[name] = {
         "path": relative_job_path(job_dir, path),
@@ -769,7 +1009,7 @@ def set_asset(job_dir: Path, name: str, path: Path) -> dict[str, Any]:
 
 
 def remove_asset(job_dir: Path, name: str) -> dict[str, Any]:
-    status = load_status(job_dir, create_default=True)
+    status = load_status(job_dir)
     assets = status["assets"]
     assets.pop(name, None)
     return save_status(job_dir, status)
@@ -834,7 +1074,7 @@ def set_subtitle_artifact(
             if processor["provider"] != "yt-dlp" or timing_unit_kind != "cue":
                 raise ValueError("manual CC must use yt-dlp cue timing")
         elif (
-            processor["provider"] not in {"local", "openai"}
+            processor["provider"] not in TIMING_PROCESSOR_PROVIDERS
             or timing_unit_kind not in {"word", "token", "grapheme-group"}
         ):
             raise ValueError("model transcripts require a model and fine-grained timing")
@@ -847,8 +1087,8 @@ def set_subtitle_artifact(
             raise ValueError("proofread artifacts must preserve the source language")
         if kind == "translation" and output_language == source_language:
             raise ValueError("translation artifacts must change language")
-        if processor["provider"] == "yt-dlp":
-            raise ValueError(f"{kind} artifacts cannot use yt-dlp as a processor")
+        if processor.get("provider") != "agent" or processor.get("service") != "codex" or processor.get("model") is not None:
+            raise ValueError(f"{kind} artifacts must use agent / codex")
         if manifest is None:
             raise ValueError(f"{kind} artifacts require a manifest")
     if kind == "segmentation" and not target_frozen:
@@ -935,7 +1175,7 @@ def set_subtitle_artifact(
             raise ValueError(f"subtitle manifest must stay inside {artifact_root}")
         artifact_checksum.update(hashlib.sha256(manifest.read_bytes()).digest())
 
-    status = load_status(job_dir, create_default=True)
+    status = load_status(job_dir)
     artifacts = status["subtitleArtifacts"]
     if not isinstance(artifacts, list):
         raise ValueError("subtitleArtifacts must be a list")
@@ -1122,23 +1362,29 @@ def set_subtitle_artifact(
 def set_transcription(
     job_dir: Path,
     provider: str,
-    model: str,
+    service: str,
+    model: str | None,
     language_tag: str,
     engine_language: str | None,
 ) -> dict[str, Any]:
-    if provider not in {"local", "openai"}:
-        raise ValueError(f"unsupported transcription provider: {provider}")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", model):
-        raise ValueError(f"invalid transcription model: {model}")
+    processor = processor_identity(
+        provider,
+        service,
+        model,
+        label="transcription.processor",
+        timing_only=True,
+    )
+    assert processor is not None
     language_tag = validate_language(language_tag)
     if language_tag == "und":
         if engine_language is not None:
             raise ValueError("und transcription cannot have an engine language")
     elif not isinstance(engine_language, str) or not re.fullmatch(r"[a-z]{2,3}", engine_language):
         raise ValueError("resolved transcription requires an engine language")
-    status = load_status(job_dir, create_default=True)
+    status = load_status(job_dir)
     status["transcription"] = {
         "provider": provider,
+        "service": processor["service"],
         "model": model,
         "languageTag": language_tag,
         "engineLanguage": engine_language,
@@ -1148,7 +1394,7 @@ def set_transcription(
 
 
 def clear_transcription(job_dir: Path) -> dict[str, Any]:
-    status = load_status(job_dir, create_default=True)
+    status = load_status(job_dir)
     status["transcription"] = None
     return save_status(job_dir, status)
 
@@ -1195,6 +1441,7 @@ def set_subtitle_pipeline(
         content_processor_model,
         label="content processor",
         optional=True,
+        agent_only=True,
     )
     segmentation_processor = processor_identity(
         segmentation_processor_provider,
@@ -1202,6 +1449,7 @@ def set_subtitle_pipeline(
         segmentation_processor_model,
         label="segmentation processor",
         optional=True,
+        agent_only=True,
     )
     if len(set(manual_reference_artifact_ids)) != len(manual_reference_artifact_ids):
         raise ValueError("subtitle pipeline references must be unique")
@@ -1224,7 +1472,7 @@ def set_subtitle_pipeline(
         pipeline["contentProcessor"] = content_processor
     if segmentation_processor is not None:
         pipeline["segmentationProcessor"] = segmentation_processor
-    status = load_status(job_dir, create_default=True)
+    status = load_status(job_dir)
     status["subtitlePipeline"] = pipeline
     return save_status(job_dir, status)
 
@@ -1237,6 +1485,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--job-dir", required=True, type=Path)
     init_parser.add_argument("--video-id", required=True)
     init_parser.add_argument("--source-url", required=True)
+    init_parser.add_argument("--source-kind", required=True, choices=sorted(SOURCE_KINDS))
     init_parser.add_argument("--title", default="")
     init_parser.add_argument("--duration-seconds", type=float)
 
@@ -1299,8 +1548,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     transcription_parser = subparsers.add_parser("transcription", help="record transcription provider metadata")
     transcription_parser.add_argument("--job-dir", required=True, type=Path)
-    transcription_parser.add_argument("--provider", required=True, choices=("local", "openai"))
-    transcription_parser.add_argument("--model", required=True)
+    transcription_parser.add_argument(
+        "--provider", required=True, choices=sorted(TIMING_PROCESSOR_PROVIDERS)
+    )
+    transcription_parser.add_argument("--service", required=True)
+    transcription_parser.add_argument("--model")
     transcription_parser.add_argument("--language-tag", required=True)
     transcription_parser.add_argument("--engine-language")
 
@@ -1317,7 +1569,9 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--stage", required=True, choices=sorted(SUBTITLE_PIPELINE_STAGES))
     pipeline_parser.add_argument("--source-language", required=True)
     pipeline_parser.add_argument("--output-language", required=True)
-    pipeline_parser.add_argument("--timing-processor-provider", choices=("local", "openai"))
+    pipeline_parser.add_argument(
+        "--timing-processor-provider", choices=sorted(TIMING_PROCESSOR_PROVIDERS)
+    )
     pipeline_parser.add_argument("--timing-processor-service")
     pipeline_parser.add_argument("--timing-processor-model")
     pipeline_parser.add_argument("--content-processor-provider", choices=sorted(PROCESSOR_PROVIDERS))
@@ -1331,6 +1585,10 @@ def build_parser() -> argparse.ArgumentParser:
     show_parser = subparsers.add_parser("show", help="print a job record")
     show_parser.add_argument("--job-dir", required=True, type=Path)
     show_parser.add_argument("--field")
+
+    find_parser = subparsers.add_parser("find", help="find one current media record")
+    find_parser.add_argument("--workspace", required=True, type=Path)
+    find_parser.add_argument("--source-url", required=True)
     return parser
 
 
@@ -1341,6 +1599,7 @@ def main() -> int:
             args.job_dir,
             args.video_id,
             args.source_url,
+            args.source_kind,
             args.title,
             args.duration_seconds,
         )
@@ -1389,6 +1648,7 @@ def main() -> int:
         status = set_transcription(
             args.job_dir,
             args.provider,
+            args.service,
             args.model,
             args.language_tag,
             args.engine_language,
@@ -1426,6 +1686,24 @@ def main() -> int:
             elif value is not None:
                 print(value)
             return 0
+    elif args.command == "find":
+        workspace = args.workspace.resolve(strict=True)
+        if workspace == Path(workspace.anchor) or workspace == Path.home():
+            raise ValueError("workspace must be a dedicated directory")
+        database = workspace / "app.db"
+        if not database.is_file() or database.is_symlink():
+            raise FileNotFoundError(database)
+        with closing(
+            sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+        ) as connection:
+            row = connection.execute(
+                "SELECT video_id FROM media_items WHERE source_url = ? ORDER BY updated_at DESC LIMIT 1",
+                (args.source_url,),
+            ).fetchone()
+        if row is None:
+            raise LookupError("media record not found")
+        print(validate_video_id(str(row[0])))
+        return 0
     else:
         raise AssertionError(args.command)
 

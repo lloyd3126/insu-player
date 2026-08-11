@@ -20,7 +20,7 @@ Consume the detected source language from the model transcript and resolve it to
 
 ## Writing systems
 
-Do not infer word boundaries from whitespace alone. Preserve Unicode logical order for RTL scripts, grapheme clusters for combining scripts, and natural text for scripts without reliable spaces. Schema acceptance does not prove model capability; verify the selected model before execution.
+Do not infer word boundaries from whitespace alone. Preserve Unicode logical order for RTL scripts, grapheme clusters for combining scripts, and natural text for scripts without reliable spaces. Schema acceptance does not prove language capability. Verify the timing model for audio timing and the current Agent for complete-sentence correction before execution.
 
 ## Manual CC evidence
 

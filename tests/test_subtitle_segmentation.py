@@ -11,6 +11,40 @@ REFLOW = ROOT / "plugins/insu-player/skills/translate-subtitles/scripts/reflow_s
 SEGMENT = ROOT / "plugins/insu-player/skills/segment-subtitles/scripts/segment_subtitles.py"
 
 
+def transcript_payload(words):
+    return {
+        "schemaVersion": 3,
+        "processor": {
+            "provider": "local",
+            "service": "openai-whisper",
+            "model": "medium",
+        },
+        "language": "en",
+        "engineLanguage": "en",
+        "timingUnitKind": "word",
+        "durationSeconds": words[-1]["end"],
+        "chunks": [
+            {
+                "index": 0,
+                "startSeconds": 0.0,
+                "endSeconds": words[-1]["end"],
+                "sha256": "0" * 64,
+            }
+        ],
+        "segments": [
+            {
+                "id": 0,
+                "start": words[0]["start"],
+                "end": words[-1]["end"],
+                "text": " ".join(word["word"] for word in words),
+                "origin": "provider",
+            }
+        ],
+        "words": words,
+        "text": " ".join(word["word"] for word in words),
+    }
+
+
 class SubtitleSegmentationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -18,19 +52,14 @@ class SubtitleSegmentationTests(unittest.TestCase):
         self.transcript = self.root / "transcript.json"
         self.transcript.write_text(
             json.dumps(
-                {
-                    "schemaVersion": 2,
-                    "provider": "local",
-                    "model": "medium",
-                    "language": "en",
-                    "engineLanguage": "en",
-                    "words": [
+                transcript_payload(
+                    [
                         {"id": 0, "word": "This", "start": 0.0, "end": 0.5},
                         {"id": 1, "word": "is", "start": 0.5, "end": 0.9},
                         {"id": 2, "word": "important", "start": 0.9, "end": 1.6},
                         {"id": 3, "word": "work.", "start": 1.6, "end": 2.4},
-                    ],
-                }
+                    ]
+                )
             ),
             encoding="utf-8",
         )
@@ -67,13 +96,17 @@ class SubtitleSegmentationTests(unittest.TestCase):
         )
         self.run_script(
             REFLOW,
+            "record-sentence-review",
+            "--manifest",
+            manifest,
+            "--boundaries",
+            self.sentence_boundaries(),
+        )
+        self.run_script(
+            REFLOW,
             "record-content-processor",
             "--manifest",
             manifest,
-            "--provider",
-            "agent",
-            "--service",
-            "codex",
         )
         payload = json.loads(manifest.read_text(encoding="utf-8"))
         payload["segments"][0]["outputText"] = (
@@ -101,12 +134,16 @@ class SubtitleSegmentationTests(unittest.TestCase):
             "record-segmentation-processor",
             "--plan",
             plan,
-            "--provider",
-            "agent",
-            "--service",
-            "codex",
         )
         return plan
+
+    def sentence_boundaries(self):
+        path = self.root / "sentence-boundaries.json"
+        path.write_text(
+            json.dumps({"schemaVersion": 1, "boundaryAfterUnitIds": ["U000004"]}),
+            encoding="utf-8",
+        )
+        return path
 
     def align_single_piece(self, plan: Path):
         payload = json.loads(plan.read_text(encoding="utf-8"))
@@ -129,6 +166,7 @@ class SubtitleSegmentationTests(unittest.TestCase):
         self.assertFalse(payload["targetFrozen"])
         self.align_single_piece(plan)
         self.run_script(SEGMENT, "freeze-target", "--plan", plan)
+        self.run_script(SEGMENT, "record-alignment-review", "--plan", plan)
         validated = self.run_script(SEGMENT, "validate", "--plan", plan)
         self.assertIn('"valid": true', validated.stdout)
         input_vtt = self.root / "input.vtt"
@@ -145,6 +183,18 @@ class SubtitleSegmentationTests(unittest.TestCase):
         )
         self.assertIn("This is important work.", input_vtt.read_text(encoding="utf-8"))
         self.assertIn("這是非常重要的工作", output_vtt.read_text(encoding="utf-8"))
+        self.assertNotIn("S0001-P01", input_vtt.read_text(encoding="utf-8"))
+        self.assertNotIn("S0001-P01", output_vtt.read_text(encoding="utf-8"))
+
+    def test_internal_piece_id_cannot_be_used_as_visible_text(self):
+        plan = self.plan()
+        payload = json.loads(plan.read_text(encoding="utf-8"))
+        payload["contentUnits"][0]["pieces"][0]["outputText"] = "S0001-P02"
+        payload["contentUnits"][0]["outputFullText"] = "S0001-P02"
+        plan.write_text(json.dumps(payload), encoding="utf-8")
+        result = self.run_script(SEGMENT, "freeze-target", "--plan", plan, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("internal segmentation ID", result.stdout)
 
     def test_same_language_proofread_content_can_be_segmented(self):
         plan = self.plan("proofread", "en")
@@ -181,10 +231,6 @@ class SubtitleSegmentationTests(unittest.TestCase):
             "record-content-processor",
             "--manifest",
             translation,
-            "--provider",
-            "agent",
-            "--service",
-            "codex",
         )
         content = json.loads(translation.read_text(encoding="utf-8"))
         content["segments"][0]["outputText"] = "C'est un travail important."
@@ -239,9 +285,53 @@ class SubtitleSegmentationTests(unittest.TestCase):
         ]
         plan.write_text(json.dumps(payload), encoding="utf-8")
         self.run_script(SEGMENT, "freeze-target", "--plan", plan)
-        result = self.run_script(SEGMENT, "validate", "--plan", plan, check=False)
+        result = self.run_script(
+            SEGMENT,
+            "record-alignment-review",
+            "--plan",
+            plan,
+            check=False,
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("blocked source boundary", result.stdout)
+
+    def test_alignment_review_is_required_and_invalidated_by_span_changes(self):
+        plan = self.plan()
+        self.align_single_piece(plan)
+        self.run_script(SEGMENT, "freeze-target", "--plan", plan)
+        missing = self.run_script(SEGMENT, "validate", "--plan", plan, check=False)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("agent-semantic", missing.stdout)
+        self.run_script(SEGMENT, "record-alignment-review", "--plan", plan)
+        payload = json.loads(plan.read_text(encoding="utf-8"))
+        payload["contentUnits"][0]["anchors"] = [
+            {
+                "sourceUnitStart": "U000001",
+                "sourceUnitEnd": "U000001",
+                "targetPieceId": "S0001-P01",
+                "outputText": "這",
+            }
+        ]
+        plan.write_text(json.dumps(payload), encoding="utf-8")
+        stale = self.run_script(SEGMENT, "validate", "--plan", plan, check=False)
+        self.assertNotEqual(stale.returncode, 0)
+        self.assertIn("changed after Agent semantic review", stale.stdout)
+
+    def test_removed_segmentation_provider_arguments_are_rejected(self):
+        plan = self.root / "empty-plan.json"
+        result = self.run_script(
+            SEGMENT,
+            "record-segmentation-processor",
+            "--plan",
+            plan,
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-test",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unrecognized arguments", result.stdout)
 
 
 if __name__ == "__main__":

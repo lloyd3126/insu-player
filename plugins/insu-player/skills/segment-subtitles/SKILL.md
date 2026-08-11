@@ -36,7 +36,7 @@ Also preserve the content manifest's distinct `sourceContentArtifactId` and `sou
 
 Manual CC may be inherited as text-reference provenance through the content artifact. Never use platform cue timing for precise alignment, and never accept platform automatic captions.
 
-Choose and record a segmentation processor independently from the content processor after inspecting available capabilities. Default to the current Agent. A local model or explicitly authorized OpenAI model may be used when it better matches the user's already stated privacy or quality request. Source timing remains restricted to local or OpenAI audio transcription. Do not ask the user to make this internal selection.
+Use the current Agent for target/output-first segmentation and Source Alignment, recorded as `agent / codex`. Do not accept a local model or cloud API as the segmentation processor. Source timing remains restricted to local Whisper or an explicitly authorized supported cloud STT contract that returned validated word timing. Do not ask the user to make this internal selection.
 
 ## Prepare Output-First Pieces
 
@@ -47,9 +47,7 @@ python3 scripts/segment_subtitles.py prepare \
   --output WORKSPACE/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json
 
 python3 scripts/segment_subtitles.py record-segmentation-processor \
-  --plan WORKSPACE/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json \
-  --provider agent \
-  --service codex
+  --plan WORKSPACE/jobs/VIDEO_ID/subtitle-work/segmentation-plan.json
 ```
 
 For translated content, this is the target-first rule: decide the natural target-language pieces before source alignment. For same-language proofreading, apply the identical rule to the finalized output language.
@@ -76,10 +74,18 @@ After freezing, change only `sourceSpan`, anchors, and boundary evidence. Never 
 
 Assign every frozen piece one continuous, chronological source span. The pieces of a content unit must partition its timed units exactly once with no gap or overlap.
 
+Read the source and target meaning before assigning every `sourceSpan`. Never generate spans through equal word counts, duration ratios, display-width ratios, or another proportional allocation. Those methods may be used only to notice suspicious results, never to create Source Alignment.
+
 - Never use a `blocked` or `risky` source boundary.
 - Keep names, terms, numbers, and other bilingual anchors in the paired piece.
 - Preserve natural output order when languages reorder syntax; solve timing through safe cuts or merges, not unnatural wording.
 - Avoid tiny spans and flash fragments.
+
+After all spans and bilingual anchors are semantically reviewed by the current Agent, record that review. Any later span or anchor change invalidates the fingerprint and requires a new review:
+
+```bash
+python3 scripts/segment_subtitles.py record-alignment-review --plan PLAN
+```
 
 ## Validate Render and Import
 
@@ -95,8 +101,6 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   WORKSPACE VIDEO_ID input.segmented.vtt output.segmented.vtt \
   --source-language SOURCE_BCP47 \
   --output-language OUTPUT_BCP47 \
-  --processor-provider agent \
-  --processor-service codex \
   --artifact-kind segmentation \
   --revision REVISION \
   --manifest PLAN \

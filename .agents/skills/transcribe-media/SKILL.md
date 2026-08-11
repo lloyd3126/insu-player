@@ -1,6 +1,6 @@
 ---
 name: transcribe-media
-description: Transcribe local audio or video into normalized JSON, text, and timestamped WebVTT using isolated local Whisper or an explicitly authorized OpenAI API upload.
+description: Transcribe local audio or video into normalized JSON, text, and timestamped WebVTT using isolated local Whisper or an explicitly authorized supported cloud STT upload.
 ---
 
 # Repository entrypoint

@@ -119,10 +119,10 @@ export function PlayerDialog() {
       const pendingTime = latestPlayback.current?.time
       const saved =
         active?.videoId === videoId
-          ? (pendingTime ?? job?.playback.time ?? 0)
+          ? (active.time ?? pendingTime ?? job?.playback.time ?? 0)
           : 0
       if (
-        saved > 10 &&
+        (active?.time !== undefined ? saved >= 0 : saved > 10) &&
         (!Number.isFinite(message.duration) ||
           saved < Number(message.duration) - 15)
       ) {
@@ -220,6 +220,7 @@ export function PlayerDialog() {
           type: "player",
           videoId: active.videoId,
           caption: normalized === "off" ? undefined : normalized,
+          time: active.time,
         },
         { replace: true },
       )
@@ -260,7 +261,7 @@ export function PlayerDialog() {
         ) : null}
       </div>
       <div className="player-footer">
-        <span>播放進度保存在影音 job 資料夾</span>
+        <span>播放進度會自動保存在目前影音庫</span>
         <div className="player-footer__actions">
           {mediaCatalog.data && activeRendition ? (
             <MediaQualitySelect

@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query"
 import {
   ArrowUpRightIcon,
   LibraryBigIcon,
+  ListPlusIcon,
 } from "lucide-react"
 import { useEffect } from "react"
+import { useLocation } from "react-router-dom"
 
 import birdImage from "@library-assets/taiwan-whistling-thrush.png"
 
@@ -15,18 +17,31 @@ import {
 import { Button } from "@/components/ui/button"
 import { POLICY_KEY } from "@/features/policy/constants"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
+import { BrowserLibraryPage } from "@/features/library/BrowserLibraryPage"
 
 const NAV_ITEMS: Array<{
   label: string
   state: Exclude<OverlayState, null>
 }> = [
   {
-    label: "使用說明",
-    state: { type: "usage-guide", tab: "getting-started" },
+    label: "開始說明",
+    state: { type: "usage-guide", tab: "initialize" },
   },
   {
-    label: "功能設定",
-    state: { type: "feature-settings", tab: "environment" },
+    label: "我的提示",
+    state: { type: "my-prompts" },
+  },
+  {
+    label: "轉錄設定",
+    state: { type: "transcription-settings" },
+  },
+  {
+    label: "支援網站",
+    state: { type: "supported-sites" },
+  },
+  {
+    label: "擴充功能",
+    state: { type: "chrome-extension", tab: "install" },
   },
 ]
 
@@ -58,7 +73,7 @@ function LocalServiceStatus() {
   )
 }
 
-export function App() {
+function HomeApp() {
   const { open: openOverlay } = useOverlayActions()
   const jobs = useJobsQuery()
 
@@ -97,7 +112,7 @@ export function App() {
             }
           >
             <LibraryBigIcon data-icon="inline-start" />
-            影音中心
+            影片中心
             <strong>{jobs.data?.jobs.length ?? "—"}</strong>
           </Button>
         </nav>
@@ -116,19 +131,31 @@ export function App() {
               把想看的影音網址交給 Agent，Agent 會準備好影音與字幕後，放進
               INSU 讓你觀看。
             </p>
-            <Button
-              className="hero-direction"
-              size="lg"
-              onClick={() =>
-                openOverlay({
-                  type: "usage-guide",
-                  tab: "getting-started",
-                })
-              }
-            >
-              開始使用
-              <ArrowUpRightIcon data-icon="inline-end" />
-            </Button>
+            <div className="hero-actions">
+              <Button
+                className="hero-direction"
+                size="lg"
+                onClick={() =>
+                  openOverlay({
+                    type: "usage-guide",
+                    tab: "initialize",
+                  })
+                }
+              >
+                開始說明
+                <ArrowUpRightIcon data-icon="inline-end" />
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() =>
+                  openOverlay({ type: "add-media", tab: "sources" })
+                }
+              >
+                <ListPlusIcon data-icon="inline-start" />
+                加入影音
+              </Button>
+            </div>
           </div>
           <div className="hero-artwork">
             <img src={birdImage} alt="臺灣紫嘯鶇品牌標誌" />
@@ -152,5 +179,14 @@ export function App() {
       </main>
       <OverlayCoordinator />
     </div>
+  )
+}
+
+export function App() {
+  const location = useLocation()
+  return location.pathname === "/extension/library" ? (
+    <BrowserLibraryPage />
+  ) : (
+    <HomeApp />
   )
 }

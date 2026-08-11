@@ -41,3 +41,31 @@ For a Codex installation, "--apply" removes the plugin; "--remove-marketplace" a
 The manager does not delete its own repository folder. For complete removal, stop the local server and jobs, run the authorized cleanup, resolve the exact repository root, then ask before moving that one folder to Trash. Report whether videos and subtitles were retained.
 
 Read [references/lifecycle.md](references/lifecycle.md) before changing updater behavior or release layout.
+
+## Reset the Current Project Library
+
+Use this clean-break operation only when the user explicitly asks to rebuild the current project's entire INSU Player library. It removes videos, subtitles, session-only API Keys, job history, playback state, and `app.db`, while preserving repository code and the workspace-local Bun, Python, Whisper, FFmpeg, yt-dlp, and model downloads.
+
+Create the read-only preview first:
+
+```bash
+python3 plugins/insu-player/skills/player-manager/scripts/reset_library.py preview \
+  --project-root PROJECT_ROOT \
+  --workspace PROJECT_ROOT/.local/insu-player
+```
+
+Report the exact targets, configured API Key names without values, and digest, then stop. Do not treat the original reset request as confirmation of a digest that did not yet exist. After the user replies with `確認重建 DIGEST`, stop the workspace-owned server so every session-only API Key is destroyed, execute the exact plan, restart the homepage, and verify zero jobs plus zero configured API Keys:
+
+```bash
+python3 plugins/insu-player/skills/player-manager/scripts/reset_library.py execute \
+  --project-root PROJECT_ROOT \
+  --workspace PROJECT_ROOT/.local/insu-player \
+  --plan-digest DIGEST \
+  --yes
+
+python3 plugins/insu-player/skills/player-manager/scripts/reset_library.py verify \
+  --project-root PROJECT_ROOT \
+  --workspace PROJECT_ROOT/.local/insu-player
+```
+
+The script accepts only the exact current-project workspace, refuses symlinks and live job processes, and requires the server to be stopped before execution. It does not migrate or preserve old library contracts.

@@ -8,6 +8,7 @@ function job(overrides: Partial<JobSummary> = {}): JobSummary {
     videoId: "demo",
     title: "Demo",
     sourceUrl: "https://example.test/demo",
+    sourceKind: "page",
     state: "ready",
     effectiveState: "ready",
     stage: "downloaded",

@@ -6,7 +6,7 @@ INSU_SKILL_DIR=$(cd "$SCRIPT_DIR/.." && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: setup-environment.sh <workspace> [--provider local|openai|both] [--model NAME] [--skip-model]\n'
+  printf 'usage: setup-environment.sh <workspace> [--model NAME] [--skip-model]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -18,16 +18,10 @@ fi
 workspace_input="$1"
 shift
 model_name="medium"
-provider_name="local"
 skip_model=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --provider)
-      [ "$#" -ge 2 ] || caption_die "--provider requires a value"
-      provider_name="$2"
-      shift 2
-      ;;
     --model)
       [ "$#" -ge 2 ] || caption_die "--model requires a value"
       model_name="$2"
@@ -47,13 +41,9 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$provider_name" in
-  local|openai|both) ;;
-  *) caption_die "provider must be local, openai, or both" ;;
-esac
-
 case "$model_name" in
-  ''|*[!A-Za-z0-9._-]*) caption_die "model name contains unsupported characters: $model_name" ;;
+  tiny|tiny.en|base|base.en|small|small.en|medium|medium.en|large-v1|large-v2|large-v3|large-v3-turbo) ;;
+  *) caption_die "unsupported canonical Whisper model: $model_name" ;;
 esac
 
 caption_set_paths "$workspace_input"
@@ -74,8 +64,6 @@ write_install_state() {
   {
     printf 'INSTALL_SCOPE=workspace-only\n'
     printf 'PYTHON_SERIES=3.11\n'
-    printf 'DEFAULT_MODEL=%s\n' "$model_name"
-    printf 'TRANSCRIPTION_PROVIDER=%s\n' "$provider_name"
     printf 'FFMPEG_PATH=%s\n' "$CAPTION_FFMPEG"
     printf 'BUN_VERSION=%s\n' "$("$CAPTION_BUN" --version)"
   } > "$CAPTION_STATE"
@@ -119,16 +107,10 @@ if [ ! -x "$CAPTION_PYTHON" ]; then
   "$CAPTION_UV" venv --python 3.11 "$CAPTION_VENV"
 fi
 
-caption_note "Installing core Python packages..."
+caption_note "Installing core, local Whisper, and cloud STT packages..."
 "$CAPTION_UV" pip install --python "$CAPTION_PYTHON" --upgrade -r "$INSU_SKILL_DIR/requirements-core.txt"
-if [ "$provider_name" = "local" ] || [ "$provider_name" = "both" ]; then
-  caption_note "Installing local Whisper provider..."
-  "$CAPTION_UV" pip install --python "$CAPTION_PYTHON" --upgrade -r "$INSU_SKILL_DIR/requirements-local.txt"
-fi
-if [ "$provider_name" = "openai" ] || [ "$provider_name" = "both" ]; then
-  caption_note "Installing OpenAI API provider..."
-  "$CAPTION_UV" pip install --python "$CAPTION_PYTHON" --upgrade -r "$INSU_SKILL_DIR/requirements-openai.txt"
-fi
+"$CAPTION_UV" pip install --python "$CAPTION_PYTHON" --upgrade -r "$INSU_SKILL_DIR/requirements-local.txt"
+"$CAPTION_UV" pip install --python "$CAPTION_PYTHON" --upgrade -r "$INSU_SKILL_DIR/requirements-cloud-stt.txt"
 "$CAPTION_UV" pip freeze --python "$CAPTION_PYTHON" > "$CAPTION_RUNTIME/requirements.lock.txt"
 
 caption_note "Installing the workflow-local FFmpeg binary..."
@@ -137,14 +119,13 @@ ffmpeg_source=$(IMAGEIO_FFMPEG_EXE= "$CAPTION_PYTHON" -c 'import imageio_ffmpeg;
 install -m 0755 "$ffmpeg_source" "$CAPTION_FFMPEG"
 "$CAPTION_FFMPEG" -version >/dev/null 2>&1 || caption_die "workflow-local FFmpeg failed its version check"
 
-if { [ "$provider_name" = "local" ] || [ "$provider_name" = "both" ]; } && [ "$skip_model" -eq 0 ]; then
+if [ "$skip_model" -eq 0 ]; then
   caption_note "Downloading Whisper model: $model_name"
   "$CAPTION_PYTHON" -c 'import sys, whisper; whisper.load_model(sys.argv[1], download_root=sys.argv[2]); print("model ready:", sys.argv[1])' "$model_name" "$CAPTION_MODELS"
+  "$CAPTION_PYTHON" "$SCRIPT_DIR/validate-local-model.py" --models-dir "$CAPTION_MODELS" --model-id "$model_name" >/dev/null
 fi
 
-if [ "$provider_name" = "openai" ] || [ "$provider_name" = "both" ]; then
-  caption_note "OpenAI API support is installed. Set OPENAI_API_KEY only in the terminal when you authorize an upload."
-fi
+caption_note "Cloud STT support is installed. A validated medium model becomes the first-use selection when the homepage reads the model catalog. Set a provider API key only for the current service process when you authorize an upload."
 
 write_install_state
 

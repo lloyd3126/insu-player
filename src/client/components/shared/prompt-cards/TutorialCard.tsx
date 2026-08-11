@@ -1,29 +1,37 @@
 import type { ReactNode } from "react"
 
 import {
-  Card,
+  FlowCard,
+  FlowCardHeader,
+} from "@/components/shared/prompt-cards/FlowCardHeader"
+import {
   CardContent,
-  CardHeader,
-  CardTitle,
+  CardFooter,
 } from "@/components/ui/card"
 
 export function TutorialCard({
   kicker,
   title,
+  description,
   children,
+  footer,
 }: {
   kicker: string
   title: string
+  description?: string
   children: ReactNode
+  footer?: ReactNode
 }) {
   return (
-    <Card className="tutorial-card">
-      <CardHeader>
-        <span className="section-index">{kicker}</span>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
+    <FlowCard className="tutorial-card">
+      <FlowCardHeader
+        kicker={kicker}
+        title={title}
+        description={description}
+      />
       <CardContent>{children}</CardContent>
-    </Card>
+      {footer ? <CardFooter>{footer}</CardFooter> : null}
+    </FlowCard>
   )
 }
 

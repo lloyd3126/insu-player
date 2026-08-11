@@ -29,6 +29,20 @@ import { parseWebVtt } from "@shared/domain/subtitle"
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/
 const LANGUAGE_PATTERN = /^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
+const TIMING_PROCESSOR_CONTRACTS = {
+  local: { service: "openai-whisper", models: null },
+  openai: { service: "audio/transcriptions", models: new Set(["whisper-1"]) },
+  groq: {
+    service: "audio/transcriptions",
+    models: new Set(["whisper-large-v3", "whisper-large-v3-turbo"]),
+  },
+  elevenlabs: { service: "speech-to-text", models: new Set(["scribe_v2"]) },
+  xai: { service: "v1/stt", models: new Set<string>() },
+  openrouter: {
+    service: "audio/transcriptions",
+    models: new Set(["openai/whisper-large-v3"]),
+  },
+} as const
 const PLAYBACK_ROLES = new Set<SubtitleTrackRole>([
   "source_raw",
   "output_sentence",
@@ -171,15 +185,51 @@ function resolvedProcessor(
   ) {
     throw new Error(`${label} contains unsupported fields`)
   }
-  return {
-    provider: requiredEnum(
-      candidate.provider,
-      SUBTITLE_ARTIFACT_PROVIDERS,
-      `${label}.provider`,
-    ),
-    service: stringValue(candidate.service),
-    model: stringValue(candidate.model),
+  const provider = requiredEnum(
+    candidate.provider,
+    SUBTITLE_ARTIFACT_PROVIDERS,
+    `${label}.provider`,
+  )
+  if (provider === "agent") {
+    if (
+      Object.keys(candidate).length !== 2 ||
+      candidate.service !== "codex" ||
+      "model" in candidate
+    ) {
+      throw new Error(`${label} must use agent / codex`)
+    }
+    return { provider, service: "codex" }
   }
+  if (provider === "yt-dlp") {
+    if (Object.keys(candidate).length !== 1) {
+      throw new Error(`${label} yt-dlp identity contains unsupported fields`)
+    }
+    return { provider }
+  }
+  if (!["provider", "service", "model"].every((key) => key in candidate)) {
+    throw new Error(`${label} timing identity is incomplete`)
+  }
+  const contract = TIMING_PROCESSOR_CONTRACTS[provider]
+  const model = candidate.model
+  if (candidate.service !== contract.service) {
+    throw new Error(`${label} service does not match ${provider}`)
+  }
+  if (provider === "xai") {
+    if (model !== null) throw new Error(`${label} xAI model must be null`)
+  } else if (typeof model !== "string" || !model.trim()) {
+    throw new Error(`${label} model is required`)
+  } else if (provider === "openrouter") {
+    if (model !== "openai/whisper-large-v3") {
+      throw new Error(`${label} OpenRouter model is invalid`)
+    }
+  } else if (contract.models) {
+    if (!(contract.models as ReadonlySet<string>).has(model)) {
+      throw new Error(`${label} model is unsupported`)
+    }
+  } else if (!/^[A-Za-z0-9._-]+$/.test(model)) {
+    throw new Error(`${label} model is invalid`)
+  }
+  return { provider, service: contract.service, model: model as string | null }
 }
 
 function checksum(contents: string) {
@@ -348,7 +398,7 @@ function validateTrackContract(artifact: ResolvedSubtitleArtifact) {
 
 function registeredArtifacts(input: SubtitleCatalogInput) {
   if (!Array.isArray(input.rawArtifacts)) {
-    throw new Error("status.json must contain subtitleArtifacts")
+    throw new Error("media item record must contain subtitleArtifacts")
   }
   const artifactIds = new Set<string>()
   const trackIds = new Set<string>()
@@ -425,10 +475,9 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       }
     } else if (kind === "source") {
       if (
-        !["local", "openai"].includes(processor.provider) ||
-        !processor.model
+        !(processor.provider in TIMING_PROCESSOR_CONTRACTS)
       ) {
-        throw new Error(`${id} model transcripts require a local or openai model`)
+        throw new Error(`${id} model transcripts require a timing processor`)
       }
       if (!timingUnitKind || timingUnitKind === "cue") {
         throw new Error(`${id} model transcripts require fine-grained timing`)
@@ -436,12 +485,11 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
     } else if (processor.provider === "yt-dlp") {
       throw new Error(`${id} subtitle revisions cannot use yt-dlp as a processor`)
     } else if (
-      ["local", "openai"].includes(processor.provider) &&
-      !processor.model
+      processor.provider !== "agent" ||
+      processor.service !== "codex" ||
+      processor.model
     ) {
-      throw new Error(`${id} local and openai processors require a model`)
-    } else if (processor.provider === "agent" && !processor.service) {
-      throw new Error(`${id} agent processors require a service`)
+      throw new Error(`${id} subtitle revisions must use agent / codex`)
     }
     if (!Array.isArray(candidate.tracks)) {
       throw new Error(`${id}.tracks must be an array`)
@@ -716,7 +764,7 @@ function resolveActiveTracks(
   explicit: unknown,
 ) {
   if (!explicit || typeof explicit !== "object" || Array.isArray(explicit)) {
-    throw new Error("status.json must contain activeSubtitleTracks")
+    throw new Error("media item record must contain activeSubtitleTracks")
   }
   const explicitMap = explicit as Record<string, unknown>
   for (const [languageCode, trackId] of Object.entries(explicitMap)) {

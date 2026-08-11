@@ -12,12 +12,12 @@ Read [references/language-contract.md](references/language-contract.md) whenever
 ## Require the Correct Evidence
 
 1. Require a normalized model transcript with ordered `word`, `token`, or `grapheme-group` timing from the original audio. It remains the timing source even when a proofread artifact supplies the translation text.
-2. Consume the detected source language from the schema-version 2 model transcript. Ask only which language the user wants for the translated subtitles, using ordinary language names. Never ask for codes. Resolve the source and output to distinct canonical BCP 47 tags before invoking scripts.
+2. Consume the detected source language from the schema-version 3 model transcript. Ask only which language the user wants for the translated subtitles, using ordinary language names. Never ask for codes. Resolve the source and output to distinct canonical BCP 47 tags before invoking scripts.
 3. A creator-provided manual CC track may be used as optional spelling and terminology evidence. Its cue boundaries are never timing authority.
 4. Never inspect, download, import, or reference platform automatic captions.
-5. Inspect available capabilities, choose one suitable content processor internally, and verify that it supports the requested language pair. Default to the current Agent for text translation. A local model or explicitly authorized OpenAI model may be used when it better matches the user's plain-language privacy or quality request. Schema support does not prove capability.
+5. Use the current Agent for complete-sentence reconstruction, translation, and polishing. Record it as `agent / codex`. Cloud STT APIs are not subtitle-text processors in this product. Schema support does not prove language capability.
 6. Do not ask the user for a model ID, provider, processor, BCP 47 tag, or command parameter. Explain only the relevant data boundary and result in ordinary language.
-7. Obtain explicit consent before audio or subtitle text leaves the device. Never persist an API key.
+7. A supported cloud STT API may only receive audio for transcription after explicit consent. Never send subtitle text to any cloud API model and never persist an API key.
 
 ## Prepare Complete Sentences
 
@@ -53,14 +53,27 @@ python3 scripts/reflow_subtitles.py prepare \
 
 The proofread manifest must match the transcript sentence IDs, timed-unit ranges, language, and timing artifact exactly. Its final `outputText` becomes each translation segment's `sourceText`. Inherit its manual CC references and do not pass new `--reference-artifact` values in this path.
 
-Record the content processor before writing the translation. For Codex:
+When translating directly from a model transcript, read the fine-grained timed units and create a reviewed sentence-boundary file before writing translation text:
+
+```json
+{"schemaVersion":1,"boundaryAfterUnitIds":["U000021","U000047"]}
+```
+
+The final ID must be the final timed unit. Record the Agent-reviewed sentence boundaries first. When translating from a proofread artifact, this review is inherited and this command must not be used again.
+
+```bash
+python3 scripts/reflow_subtitles.py record-sentence-review \
+  --manifest MANIFEST \
+  --boundaries BOUNDARIES.json \
+  --source-output INPUT.sentence.vtt
+```
+
+Then record the fixed content processor:
 
 ```bash
 python3 scripts/reflow_subtitles.py record-content-processor \
-  --manifest MANIFEST --provider agent --service codex
+  --manifest MANIFEST
 ```
-
-For a local or OpenAI model, use `--provider local|openai --model MODEL_NAME`. Use OpenAI only after explicit subtitle-text upload authorization.
 
 ## Translate Then Polish
 
@@ -86,8 +99,6 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   WORKSPACE VIDEO_ID input.final.vtt output.final.vtt \
   --source-language SOURCE_BCP47 \
   --output-language TARGET_BCP47 \
-  --processor-provider agent \
-  --processor-service codex \
   --artifact-kind translation \
   --revision REVISION \
   --manifest MANIFEST \

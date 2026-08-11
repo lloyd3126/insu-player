@@ -30,6 +30,6 @@ export class HomePage {
   }
 
   async openLibrary() {
-    return this.openNavigationDialog(/影音中心/, "影音中心")
+    return this.openNavigationDialog(/影片中心/, "影片中心")
   }
 }

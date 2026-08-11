@@ -8,19 +8,13 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 video_url="$1"
 shift
 content_choice=0
-provider_choice=0
 for argument in "$@"; do
   case "$argument" in
     --translate|--proofread) content_choice=1 ;;
-    --provider) provider_choice=1 ;;
   esac
 done
 [ "$content_choice" -eq 1 ] || {
   printf 'error: ask the user whether to proofread the source language or translate it, then pass --proofread or --translate TARGET_BCP47\n' >&2
-  exit 1
-}
-[ "$provider_choice" -eq 1 ] || {
-  printf 'error: the Agent must resolve --provider local or --provider openai from the approved data boundary before invocation\n' >&2
   exit 1
 }
 exec "$PORTABLE_SKILL/scripts/process-video.sh" "$PORTABLE_WORKSPACE" "$video_url" "$@"

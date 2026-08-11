@@ -2,7 +2,7 @@
 
 ## Language capability
 
-Consume the detected source language from the model transcript. Ask the user only for the desired translated language in ordinary language, then resolve both sides to a structurally valid BCP 47 source/target pair. Do not ask the user to guess the source language or provide codes. Before execution, verify that the resolved local or explicitly authorized OpenAI transcription model supports the spoken source language with usable timed units and that the internally selected local model, authorized OpenAI model, or Agent supports translation into the requested target language. Report unsupported or uncertain coverage instead of substituting English or Traditional Chinese.
+Consume the detected source language from the model transcript. Ask the user only for the desired translated language in ordinary language, then resolve both sides to a structurally valid BCP 47 source/target pair. Do not ask the user to guess the source language or provide codes. Before execution, verify that local Whisper or the explicitly authorized supported cloud STT contract supports the spoken source language and returned usable word timing, and that the current Agent can reliably translate into the requested target language. Report unsupported or uncertain coverage instead of substituting English or Traditional Chinese. Do not delegate subtitle text to another API model.
 
 Use `und` only while source language is genuinely unresolved. Resolve it before final translation. Preserve region and script subtags such as `pt-BR`, `zh-Hant`, `sr-Latn`, and `sr-Cyrl` when they affect wording or writing.
 
@@ -12,7 +12,7 @@ Use `word`, `token`, or `grapheme-group` as the source timing unit. Do not deriv
 
 ## Sentence reconstruction
 
-Use punctuation and transcript segments as candidates, then review with the selected source-language model. Protect abbreviations, decimals, paired punctuation, code, URLs, names, and language-specific terminators. Preserve short natural utterances as complete units.
+Use punctuation and transcript segments as candidates, then have the current Agent review the full source-language context and every sentence boundary. Protect abbreviations, decimals, paired punctuation, code, URLs, names, and language-specific terminators. Preserve short natural utterances as complete units.
 
 ## Translation
 

@@ -5,6 +5,10 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 SKILL_DIR=$(cd "$SCRIPT_DIR/.." && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
+# The homepage owns an isolated, session-only API-key boundary. Never inherit
+# cloud credentials from Codex, a terminal profile, or another parent process.
+unset OPENAI_API_KEY GROQ_API_KEY ELEVENLABS_API_KEY XAI_API_KEY OPENROUTER_API_KEY
+
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
   printf 'usage: serve-library.sh <workspace> [port]\n'
   exit 0

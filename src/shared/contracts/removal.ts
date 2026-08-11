@@ -15,10 +15,17 @@ export interface MediaRenditionRemovalTarget {
   renditionId: string
 }
 
+export interface SummaryArtifactRemovalTarget {
+  kind: "summary-artifact"
+  videoId: string
+  artifactId: string
+}
+
 export type RemovalTarget =
   | VideoRemovalTarget
   | SubtitleArtifactRemovalTarget
   | MediaRenditionRemovalTarget
+  | SummaryArtifactRemovalTarget
 
 export interface RemovalIssue {
   code: string

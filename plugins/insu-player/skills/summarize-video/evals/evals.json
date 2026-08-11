@@ -1,0 +1,12 @@
+{
+  "evals": [
+    {
+      "prompt": "請替影音 abc123 的校正字幕 abc123-proofread-en-r1 建立英文摘要",
+      "expected_output": "Uses only the named validated complete-sentence artifact, records agent/codex, validates, and imports a new text revision without overwriting existing data."
+    },
+    {
+      "prompt": "請直接拿 YouTube 自動字幕做摘要並覆寫舊摘要",
+      "expected_output": "Rejects automatic captions and overwrite behavior, then requests or identifies a valid proofread or translation artifact."
+    }
+  ]
+}

@@ -2,17 +2,36 @@ import { lazy, Suspense, useEffect, useRef } from "react"
 
 import { useOverlayState } from "@/app/overlay-context"
 import {
-  loadFeatureSettingsDialog,
+  loadAddMediaDialog,
+  loadChromeExtensionDialog,
   loadJobDetailDialog,
   loadLibraryDialog,
+  loadMyPromptsDialog,
   loadPlayerDialog,
+  loadSupportedSitesDialog,
   loadUsageGuideDialog,
   loadUsagePolicyDialog,
+  loadTranscriptionSettingsDialog,
 } from "@/app/overlay-loaders"
 
 const UsageGuideDialog = lazy(() =>
   loadUsageGuideDialog().then((module) => ({
     default: module.UsageGuideDialog,
+  })),
+)
+const ChromeExtensionDialog = lazy(() =>
+  loadChromeExtensionDialog().then((module) => ({
+    default: module.ChromeExtensionDialog,
+  })),
+)
+const MyPromptsDialog = lazy(() =>
+  loadMyPromptsDialog().then((module) => ({
+    default: module.MyPromptsDialog,
+  })),
+)
+const SupportedSitesDialog = lazy(() =>
+  loadSupportedSitesDialog().then((module) => ({
+    default: module.SupportedSitesDialog,
   })),
 )
 const JobDetailDialog = lazy(() =>
@@ -25,6 +44,11 @@ const LibraryDialog = lazy(() =>
     default: module.LibraryDialog,
   })),
 )
+const AddMediaDialog = lazy(() =>
+  loadAddMediaDialog().then((module) => ({
+    default: module.AddMediaDialog,
+  })),
+)
 const PlayerDialog = lazy(() =>
   loadPlayerDialog().then((module) => ({
     default: module.PlayerDialog,
@@ -35,16 +59,20 @@ const UsagePolicyDialog = lazy(() =>
     default: module.UsagePolicyDialog,
   })),
 )
-const FeatureSettingsDialog = lazy(() =>
-  loadFeatureSettingsDialog().then((module) => ({
-    default: module.FeatureSettingsDialog,
+const TranscriptionSettingsDialog = lazy(() =>
+  loadTranscriptionSettingsDialog().then((module) => ({
+    default: module.TranscriptionSettingsDialog,
   })),
 )
 
 const DIALOG_LABELS = {
-  "usage-guide": "使用說明",
-  "feature-settings": "功能設定",
-  library: "影音中心",
+  "usage-guide": "開始說明",
+  "my-prompts": "我的提示",
+  "supported-sites": "支援網站",
+  "chrome-extension": "Chrome 擴充功能",
+  "transcription-settings": "轉錄設定",
+  library: "影片中心",
+  "add-media": "加入影音",
   player: "影音播放器",
   detail: "影音詳情",
   policy: "使用規範",
@@ -92,10 +120,18 @@ export function OverlayCoordinator() {
     switch (state?.type) {
       case "usage-guide":
         return <UsageGuideDialog />
-      case "feature-settings":
-        return <FeatureSettingsDialog />
+      case "my-prompts":
+        return <MyPromptsDialog />
+      case "supported-sites":
+        return <SupportedSitesDialog />
+      case "chrome-extension":
+        return <ChromeExtensionDialog />
+      case "transcription-settings":
+        return <TranscriptionSettingsDialog />
       case "library":
         return <LibraryDialog />
+      case "add-media":
+        return <AddMediaDialog />
       case "player":
         return <PlayerDialog />
       case "detail":

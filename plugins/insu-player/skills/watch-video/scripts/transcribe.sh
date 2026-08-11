@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: transcribe.sh <workspace> <video-id> --mode proofread|translate --language SOURCE_BCP47 --output-language BCP47 [--provider local|openai] [--model NAME] [--device cpu|cuda] [--allow-api-upload]\n'
+  printf 'usage: transcribe.sh <workspace> <video-id> --mode proofread|translate --language SOURCE_BCP47 --output-language BCP47 [--device cpu|cuda] [--consent-to-audio-upload]\n'
 }
 
 [ "$#" -ge 1 ] || { usage >&2; exit 1; }
@@ -15,23 +15,19 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then usage; exit 0; fi
 workspace_input="$1"
 video_id="$2"
 shift 2
-provider_name=""
-model_name=""
 language_code=""
 output_language=""
 content_mode=""
 device_name="cpu"
-allow_api_upload=0
+consent_to_audio_upload=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode) [ "$#" -ge 2 ] || caption_die "--mode requires a value"; content_mode="$2"; shift 2 ;;
-    --provider) [ "$#" -ge 2 ] || caption_die "--provider requires a value"; provider_name="$2"; shift 2 ;;
-    --model) [ "$#" -ge 2 ] || caption_die "--model requires a value"; model_name="$2"; shift 2 ;;
     --language) [ "$#" -ge 2 ] || caption_die "--language requires a value"; language_code="$2"; shift 2 ;;
     --output-language) [ "$#" -ge 2 ] || caption_die "--output-language requires a value"; output_language="$2"; shift 2 ;;
     --device) [ "$#" -ge 2 ] || caption_die "--device requires a value"; device_name="$2"; shift 2 ;;
-    --allow-api-upload) allow_api_upload=1; shift ;;
+    --consent-to-audio-upload) consent_to_audio_upload=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) caption_die "unknown option: $1" ;;
   esac
@@ -54,24 +50,17 @@ fi
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
 caption_require_runtime
-if [ -z "$provider_name" ]; then
-  configured_provider=$(caption_configured_provider)
-  if [ "$configured_provider" = "both" ]; then provider_name="local"; else provider_name="$configured_provider"; fi
-fi
-case "$provider_name" in local|openai) ;; *) caption_die "provider must be local or openai" ;; esac
-if [ -z "$model_name" ]; then
-  if [ "$provider_name" = "openai" ]; then
-    model_name="whisper-1"
-  else
-    model_name=$(caption_state_value "$CAPTION_STATE" DEFAULT_MODEL)
-    model_name="${model_name:-medium}"
-  fi
-fi
-case "$model_name" in ''|*[!A-Za-z0-9._-]*) caption_die "invalid model name: $model_name" ;; esac
+settings_resolver="$SCRIPT_DIR/resolve-transcription-settings.py"
+caption_require_file "$settings_resolver"
+IFS=$'\t' read -r provider_name provider_service model_name < <(
+  "$CAPTION_PYTHON" "$settings_resolver" --workspace "$CAPTION_WORKSPACE" --format tsv
+)
+[ -n "$provider_name" ] || caption_die "transcription settings did not provide a provider"
+[ -n "$provider_service" ] || caption_die "transcription settings did not provide a service"
 caption_require_provider "$provider_name"
 [ -f "$CAPTION_OPENAI_TRANSCRIBER" ] || caption_die "transcribe-media skill script is missing: $CAPTION_OPENAI_TRANSCRIBER"
-if [ "$provider_name" = "openai" ] && [ "$allow_api_upload" -ne 1 ]; then
-  caption_die "OpenAI transcription uploads audio externally; rerun with --allow-api-upload only after the user authorizes it"
+if [ "$provider_name" != "local" ] && [ "$consent_to_audio_upload" -ne 1 ]; then
+  caption_die "$provider_name transcription uploads audio externally; rerun with --consent-to-audio-upload only after the user authorizes audio transcription"
 fi
 
 job_dir="$CAPTION_JOBS/$video_id"
@@ -109,27 +98,35 @@ transcribe_args=(
   "$CAPTION_OPENAI_TRANSCRIBER" "$audio_file"
   --output-dir "$provider_output"
   --provider "$provider_name"
-  --model "$model_name"
   --device "$device_name"
   --ffmpeg "$CAPTION_FFMPEG"
   --whisper-cli "$CAPTION_WHISPER"
   --model-dir "$CAPTION_MODELS"
 )
+if [ -n "$model_name" ]; then transcribe_args+=(--model "$model_name"); fi
 if [ -n "$language_code" ]; then transcribe_args+=(--language "$language_code"); fi
-if [ "$provider_name" = "openai" ]; then transcribe_args+=(--consent-to-upload); fi
+if [ "$provider_name" != "local" ]; then transcribe_args+=(--consent-to-audio-upload); fi
 
-caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$content_mode" --stage model_transcription --source-language "$language_code" --output-language "$output_language" --timing-processor-provider "$provider_name" --timing-processor-model "$model_name" >/dev/null
-if [ "$provider_name" = "local" ]; then
-  provider_label="本機模型"
-else
-  provider_label="OpenAI API 模型"
-fi
-caption_note "Transcribing with provider=$provider_name model=$model_name device=$device_name..."
+pipeline_timing_args=(--timing-processor-provider "$provider_name" --timing-processor-service "$provider_service")
+if [ -n "$model_name" ]; then pipeline_timing_args+=(--timing-processor-model "$model_name"); fi
+caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$content_mode" --stage model_transcription --source-language "$language_code" --output-language "$output_language" "${pipeline_timing_args[@]}" >/dev/null
+case "$provider_name" in
+  local) provider_label="本機 Whisper" ;;
+  openai) provider_label="OpenAI API" ;;
+  groq) provider_label="Groq API" ;;
+  elevenlabs) provider_label="ElevenLabs API" ;;
+  xai) provider_label="xAI API" ;;
+  openrouter) provider_label="OpenRouter API" ;;
+esac
+caption_note "Transcribing with provider=$provider_name service=$provider_service model=${model_name:-none} device=$device_name..."
 transcribe_command=("$CAPTION_PYTHON" "${transcribe_args[@]}")
-if [ "$provider_name" = "openai" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+if [ "$provider_name" != "local" ]; then
+  provider_key=$(caption_provider_api_key "$provider_name")
+fi
+if [ "$provider_name" != "local" ] && [ -z "${!provider_key:-}" ]; then
   transcribe_command=(
-    "$CAPTION_PYTHON" "$CAPTION_ENVIRONMENT_SESSION"
-    --workspace "$CAPTION_WORKSPACE" --name OPENAI_API_KEY run --
+    "$CAPTION_PYTHON" "$CAPTION_PROVIDER_CREDENTIAL_SESSION"
+    --workspace "$CAPTION_WORKSPACE" --provider "$provider_name" run --
     "${transcribe_command[@]}"
   )
 fi
@@ -150,21 +147,30 @@ caption_require_file "$reflow_script"
 mkdir -p "$subtitle_work_dir"
 
 IFS=$'\t' read -r language_code engine_language < <(
-  "$CAPTION_PYTHON" -c 'import json,sys; payload=json.load(open(sys.argv[1], encoding="utf-8")); assert payload.get("schemaVersion") == 2; print("{}\t{}".format(payload["language"], payload["engineLanguage"]))' "$transcript_json"
+  "$CAPTION_PYTHON" -c 'import json,sys; payload=json.load(open(sys.argv[1], encoding="utf-8")); assert payload.get("schemaVersion") == 3; print("{}\t{}".format(payload["language"], payload["engineLanguage"]))' "$transcript_json"
 )
 [ -n "$language_code" ] || caption_die "transcript did not resolve a source language"
 [ -n "$engine_language" ] || caption_die "transcript did not record the model language parameter"
 if [ "$content_mode" = "proofread" ]; then output_language="$language_code"; fi
-caption_job_state transcription --job-dir "$job_dir" --provider "$provider_name" --model "$model_name" --language-tag "$language_code" --engine-language "$engine_language" >/dev/null
+transcription_args=(--job-dir "$job_dir" --provider "$provider_name" --service "$provider_service" --language-tag "$language_code" --engine-language "$engine_language")
+if [ -n "$model_name" ]; then transcription_args+=(--model "$model_name"); fi
+caption_job_state transcription "${transcription_args[@]}" >/dev/null
 
-"$SCRIPT_DIR/import-caption.sh" "$CAPTION_WORKSPACE" "$video_id" "$language_code" "$vtt_file" --source-type model-transcript --processor-provider "$provider_name" --processor-model "$model_name" --timing-unit-kind word
+import_args=("$CAPTION_WORKSPACE" "$video_id" "$language_code" "$vtt_file" --source-type model-transcript --processor-provider "$provider_name" --processor-service "$provider_service" --timing-unit-kind word)
+if [ -n "$model_name" ]; then import_args+=(--processor-model "$model_name"); fi
+"$SCRIPT_DIR/import-caption.sh" "${import_args[@]}"
 timing_source_artifact="$video_id-source-model-transcript-$language_code-r1"
 manual_reference_artifacts=()
+manual_reference_count=0
 while IFS= read -r reference_artifact; do
-  [ -n "$reference_artifact" ] && manual_reference_artifacts+=("$reference_artifact")
-done <<EOF
-$("$CAPTION_PYTHON" -c 'import json,sys; data=json.load(open(sys.argv[1], encoding="utf-8")); print("\n".join(str(item["id"]) for item in data["subtitleArtifacts"] if item.get("kind") == "source" and item.get("sourceType") == "manual-cc" and item.get("sourceLanguage") == sys.argv[2]))' "$job_dir/status.json" "$language_code")
-EOF
+  if [ -n "$reference_artifact" ]; then
+    manual_reference_artifacts+=("$reference_artifact")
+    manual_reference_count=$((manual_reference_count + 1))
+  fi
+done < <(
+  caption_job_state show --job-dir "$job_dir" |
+    "$CAPTION_PYTHON" -c 'import json,sys; data=json.load(sys.stdin); print("\n".join(str(item["id"]) for item in data["subtitleArtifacts"] if item.get("kind") == "source" and item.get("sourceType") == "manual-cc" and item.get("sourceLanguage") == sys.argv[1]))' "$language_code"
+)
 
 prepare_args=(
   "$reflow_script" prepare
@@ -176,7 +182,7 @@ prepare_args=(
   --timing-source-artifact "$timing_source_artifact"
   --source-output "$source_sentence_vtt"
 )
-if [ "${#manual_reference_artifacts[@]}" -gt 0 ]; then
+if [ "$manual_reference_count" -gt 0 ]; then
   for reference_artifact in "${manual_reference_artifacts[@]}"; do
     prepare_args+=(--reference-artifact "$reference_artifact")
   done
@@ -186,17 +192,17 @@ case "$output_language" in zh|zh-*) prepare_args+=(--punctuation-policy remove-c
 caption_validate_vtt "$source_sentence_vtt"
 caption_job_state asset --job-dir "$job_dir" --name wordTranscript --path "$transcript_json" >/dev/null
 caption_job_state asset --job-dir "$job_dir" --name contentPlan --path "$subtitle_manifest" >/dev/null
-pipeline_args=(--job-dir "$job_dir" --mode "$content_mode" --stage content_revision --source-language "$language_code" --output-language "$output_language" --timing-processor-provider "$provider_name" --timing-processor-model "$model_name")
-if [ "${#manual_reference_artifacts[@]}" -gt 0 ]; then
+pipeline_args=(--job-dir "$job_dir" --mode "$content_mode" --stage content_revision --source-language "$language_code" --output-language "$output_language" "${pipeline_timing_args[@]}")
+if [ "$manual_reference_count" -gt 0 ]; then
   for reference_artifact in "${manual_reference_artifacts[@]}"; do
     pipeline_args+=(--manual-reference-artifact "$reference_artifact")
   done
 fi
 caption_job_state subtitle-pipeline "${pipeline_args[@]}" >/dev/null
 if [ "$content_mode" = "proofread" ]; then
-  caption_job_state update --job-dir "$job_dir" --state needs_proofreading --stage content_revision --message "模型時間軸與完整句已完成，等待同語言校正" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_proofreading --stage content_revision --message "模型時間軸已完成，等待 Agent 重建完整句並校正" --progress 0 --clear-error --record-history >/dev/null
 else
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage content_revision --message "模型時間軸與完整句已完成，等待 $output_language 完整句翻譯" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage content_revision --message "模型時間軸已完成，等待 Agent 重建完整句並翻譯成 $output_language" --progress 0 --clear-error --record-history >/dev/null
 fi
 
 trap - ERR

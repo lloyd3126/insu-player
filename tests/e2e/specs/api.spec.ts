@@ -41,9 +41,9 @@ test.describe("Hono API contracts @api", () => {
     expect(range.headers()["content-range"]).toBe("bytes 0-3/18")
     expect(await range.text()).toBe("fake")
 
-    const forbidden = await request.post("/api/environment", {
+    const forbidden = await request.put("/api/providers/openai/credential", {
       headers: { Origin: "https://untrusted.example" },
-      data: { name: "OPENAI_API_KEY", value: "not-a-real-key" },
+      data: { value: "not-a-real-key" },
     })
     expect(forbidden.status()).toBe(403)
   })

@@ -4,4 +4,4 @@ Use this general profile for source or target languages whose writing system has
 
 Use clauses, completed predicates, coordination, punctuation, and genuine whitespace as candidates, but never split determiners from heads, auxiliaries from controlled predicates, prepositions from required complements, phrasal verbs, names, clitics, compounds, number-unit expressions, or locked terms.
 
-Whitespace is eligible only when both sides remain semantically and syntactically complete. Preserve abbreviations, URLs, code, quoted names, and punctuation in raw text. Use the selected language model for language-specific inflection, clitics, compounding, morphology, and word-order analysis; do not assume English grammar from the profile name.
+Whitespace is eligible only when both sides remain semantically and syntactically complete. Preserve abbreviations, URLs, code, quoted names, and punctuation in raw text. Use the current Agent for language-specific inflection, clitics, compounding, morphology, and word-order analysis. Do not assume English grammar from the profile name.
