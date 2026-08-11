@@ -1,0 +1,1030 @@
+import { existsSync, lstatSync } from "node:fs"
+
+import { asc, desc, eq } from "drizzle-orm"
+
+import type { AppDatabase } from "@server/db/client"
+import {
+  downloadQueueItems,
+  downloadQueueSettings,
+  operationEvents,
+  operations,
+} from "@server/db/schema"
+import type { JobRepository } from "@server/repositories/job-repository"
+import {
+  MediaSessionOperationError,
+  type ClaimedMediaSession,
+  type MediaSessionService,
+} from "@server/services/media-session-service"
+import type {
+  CreateLibraryItemsResponse,
+  DownloadLibraryItem,
+  DownloadQueueItemState,
+  DownloadSourceInput,
+  LibraryItem,
+  LibraryResponse,
+} from "@shared/contracts/library"
+
+const MAX_CREATE_SIZE = 50
+const QUEUE_SETTINGS_ID = "default"
+const ACTIVE_ITEM_STATES = new Set<DownloadQueueItemState>([
+  "checking",
+  "queued",
+  "downloading",
+  "verifying",
+  "needs_confirmation",
+])
+const PROCESS_ITEM_STATES = new Set<DownloadQueueItemState>([
+  "checking",
+  "downloading",
+  "verifying",
+])
+const VERIFIED_MEDIA_STATES = new Set([
+  "downloaded",
+  "needs_transcription",
+  "transcribing",
+  "needs_proofreading",
+  "proofreading",
+  "needs_translation",
+  "translating",
+  "needs_segmentation",
+  "segmenting",
+  "preparing_player",
+  "ready",
+])
+
+function libraryItemPriority(item: LibraryItem) {
+  if (item.kind === "media") return 4
+  if (PROCESS_ITEM_STATES.has(item.state)) return 0
+  if (item.state === "queued") return 1
+  if (["needs_confirmation", "failed"].includes(item.state)) return 2
+  return 3
+}
+
+function compareLibraryItems(left: LibraryItem, right: LibraryItem) {
+  const priority = libraryItemPriority(left) - libraryItemPriority(right)
+  if (priority !== 0) return priority
+  if (
+    left.kind === "download" &&
+    right.kind === "download" &&
+    left.state === "queued" &&
+    right.state === "queued"
+  ) {
+    return (left.queueAhead ?? Number.MAX_SAFE_INTEGER) -
+      (right.queueAhead ?? Number.MAX_SAFE_INTEGER)
+  }
+  const leftAt = left.kind === "media" ? left.job.updatedAt : left.updatedAt
+  const rightAt = right.kind === "media" ? right.job.updatedAt : right.updatedAt
+  return rightAt.localeCompare(leftAt)
+}
+
+function now() {
+  return new Date().toISOString()
+}
+
+function processIsAlive(pid: unknown) {
+  if (!Number.isInteger(pid) || Number(pid) <= 0) return false
+  try {
+    process.kill(Number(pid), 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function normalizeWebUrl(value: string, label: string, maxLength = 8_192) {
+  if (!value || value.length > maxLength || /[\u0000-\u001F\u007F]/.test(value)) {
+    throw new DownloadQueueOperationError(`${label}無效`, "invalid-url", 400)
+  }
+  let url: URL
+  try {
+    url = new URL(value.trim())
+  } catch {
+    throw new DownloadQueueOperationError(
+      `${label}必須是完整的 http 或 https 網址`,
+      "invalid-url",
+      400,
+    )
+  }
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    !url.hostname ||
+    url.username ||
+    url.password ||
+    ["127.0.0.1", "localhost", "::1"].includes(url.hostname)
+  ) {
+    throw new DownloadQueueOperationError(`${label}無效`, "invalid-url", 400)
+  }
+  if (url.searchParams.has("list") || /(?:^|\/)playlist(?:\/|$)/i.test(url.pathname)) {
+    throw new DownloadQueueOperationError(
+      "不接受播放清單網址",
+      "playlist-not-allowed",
+      400,
+    )
+  }
+  url.hash = ""
+  return url.toString()
+}
+
+interface NormalizedSource {
+  kind: DownloadSourceInput["kind"]
+  pageUrl: string
+  sourceKey: string
+  sessionId: string | null
+  candidateFingerprint: string | null
+  authentication: "none" | "browser-session"
+  authenticationConsentAt: string | null
+}
+
+export class DownloadQueueOperationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: 400 | 404 | 409 | 500,
+  ) {
+    super(message)
+  }
+}
+
+export class DownloadQueueService {
+  private readonly active = new Map<
+    string,
+    { child: ReturnType<typeof Bun.spawn>; dispose: () => void }
+  >()
+  private readonly cancelled = new Set<string>()
+
+  constructor(
+    private readonly workspace: string,
+    private readonly db: AppDatabase,
+    private readonly jobs: JobRepository,
+    private readonly downloadScript: string,
+    private readonly mediaSessions: MediaSessionService,
+    private readonly defaultConcurrency = 2,
+  ) {
+    this.ensureSettings()
+  }
+
+  private ensureSettings() {
+    const timestamp = now()
+    this.db
+      .insert(downloadQueueSettings)
+      .values({
+        id: QUEUE_SETTINGS_ID,
+        paused: false,
+        concurrency: this.defaultConcurrency,
+        updatedAt: timestamp,
+      })
+      .onConflictDoNothing()
+      .run()
+    const settings = this.db
+      .select()
+      .from(downloadQueueSettings)
+      .where(eq(downloadQueueSettings.id, QUEUE_SETTINGS_ID))
+      .get()
+    if (!settings || settings.concurrency < 1 || settings.concurrency > 8) {
+      throw new DownloadQueueOperationError(
+        "下載排程設定無效",
+        "invalid-queue-settings",
+        500,
+      )
+    }
+    return settings
+  }
+
+  private script() {
+    if (
+      !existsSync(this.downloadScript) ||
+      lstatSync(this.downloadScript).isSymbolicLink() ||
+      !lstatSync(this.downloadScript).isFile()
+    ) {
+      throw new DownloadQueueOperationError(
+        "影音下載程式無法使用",
+        "runtime-unavailable",
+        500,
+      )
+    }
+    return this.downloadScript
+  }
+
+  create(
+    sources: DownloadSourceInput[],
+    rightsConfirmed: boolean,
+  ): CreateLibraryItemsResponse {
+    if (!rightsConfirmed) {
+      throw new DownloadQueueOperationError(
+        "開始下載前請先確認內容權利",
+        "rights-not-confirmed",
+        400,
+      )
+    }
+    if (
+      !Array.isArray(sources) ||
+      sources.length === 0 ||
+      sources.length > MAX_CREATE_SIZE
+    ) {
+      throw new DownloadQueueOperationError(
+        `每次請加入 1 到 ${MAX_CREATE_SIZE} 個影音來源`,
+        "invalid-create-size",
+        400,
+      )
+    }
+    const normalized = sources.map((source) => this.normalizeSource(source))
+    if (new Set(normalized.map((source) => source.sourceKey)).size !== normalized.length) {
+      throw new DownloadQueueOperationError(
+        "不能同時加入重複來源",
+        "duplicate-source",
+        400,
+      )
+    }
+    const jobsByUrl = new Map(
+      this.jobs
+        .listDownloadProjections()
+        .filter((job) => VERIFIED_MEDIA_STATES.has(job.state))
+        .map((job) => [job.sourceUrl, job]),
+    )
+    const itemIds: string[] = []
+    for (const source of normalized) {
+      const queued = this.db
+        .select()
+        .from(downloadQueueItems)
+        .where(eq(downloadQueueItems.sourceKey, source.sourceKey))
+        .get()
+      if (queued) {
+        this.requeueExisting(queued, source)
+        itemIds.push(queued.id)
+        continue
+      }
+      const job = jobsByUrl.get(source.pageUrl)
+      if (job) {
+        itemIds.push(`media:${job.videoId}`)
+        continue
+      }
+      const itemId = `library-${crypto.randomUUID()}`
+      const operationId = `download-${crypto.randomUUID()}`
+      const timestamp = now()
+      this.db.transaction((transaction) => {
+        transaction
+          .insert(operations)
+          .values({
+            id: operationId,
+            videoId: null,
+            parentOperationId: null,
+            kind: "media-download",
+            state: "queued",
+            stage: "awaiting-download",
+            progress: 0,
+            message: "等待下載",
+            inputsJson: {
+              sourceKind: source.kind,
+              pageUrl: source.pageUrl,
+              candidateFingerprint: source.candidateFingerprint,
+              sessionRequired: Boolean(source.sessionId),
+            },
+            outputsJson: {},
+            consentJson: {
+              rightsConfirmed: true,
+              authentication: source.authentication,
+              authenticationConsentAt: source.authenticationConsentAt,
+            },
+            resumable: !source.sessionId,
+            attempt: 1,
+            pid: null,
+            errorCode: null,
+            errorMessage: null,
+            createdAt: timestamp,
+            startedAt: null,
+            updatedAt: timestamp,
+            completedAt: null,
+          })
+          .run()
+        transaction
+          .insert(operationEvents)
+          .values({
+            operationId,
+            sequence: 1,
+            type: "created",
+            state: "queued",
+            stage: "awaiting-download",
+            progress: 0,
+            message: "等待下載",
+            dataJson: {},
+            createdAt: timestamp,
+          })
+          .run()
+        transaction
+          .insert(downloadQueueItems)
+          .values({
+            id: itemId,
+            sourceKind: source.kind,
+            pageUrl: source.pageUrl,
+            sourceUrl: source.pageUrl,
+            sourceKey: source.sourceKey,
+            sessionId: source.sessionId,
+            operationId,
+            videoId: null,
+            rightsConfirmed: true,
+            lowQualityApproved: false,
+            authentication: source.authentication,
+            authenticationConsentAt: source.authenticationConsentAt,
+            createdAt: timestamp,
+            completedAt: null,
+          })
+          .run()
+      })
+      itemIds.push(itemId)
+    }
+    this.schedule()
+    return { accepted: true, itemIds }
+  }
+
+  private requeueExisting(
+    item: typeof downloadQueueItems.$inferSelect,
+    source: NormalizedSource,
+  ) {
+    if (!item.rightsConfirmed) {
+      throw new DownloadQueueOperationError(
+        "下載項目缺少內容權利確認",
+        "rights-not-confirmed",
+        409,
+      )
+    }
+    const operation = this.operation(item.operationId)
+    this.updateItem(item.id, {
+      sessionId: source.sessionId,
+      authentication: source.authentication,
+      authenticationConsentAt: source.authenticationConsentAt,
+    })
+    if (!["failed", "cancelled"].includes(operation.state)) return
+    this.updateOperation(item.operationId, {
+      state: "queued",
+      stage: "awaiting-download",
+      message: "等待下載",
+      progress: 0,
+      inputsJson: {
+        sourceKind: source.kind,
+        pageUrl: source.pageUrl,
+        candidateFingerprint: source.candidateFingerprint,
+        sessionRequired: Boolean(source.sessionId),
+      },
+      consentJson: {
+        rightsConfirmed: true,
+        authentication: source.authentication,
+        authenticationConsentAt: source.authenticationConsentAt,
+      },
+      resumable: !source.sessionId,
+      attempt: operation.attempt + 1,
+      pid: null,
+      errorCode: null,
+      errorMessage: null,
+      completedAt: null,
+    })
+    this.updateItem(item.id, { completedAt: null })
+  }
+
+  list(): LibraryResponse {
+    this.synchronize()
+    const settings = this.ensureSettings()
+    const rows = this.db
+      .select()
+      .from(downloadQueueItems)
+      .orderBy(asc(downloadQueueItems.createdAt))
+      .all()
+    const summaries = this.jobs.list()
+    const jobsById = new Map(summaries.map((job) => [job.videoId, job]))
+    const jobsByUrl = new Map(summaries.map((job) => [job.sourceUrl, job]))
+    const queuedIds = rows
+      .filter((item) => this.operation(item.operationId).state === "queued")
+      .map((item) => item.id)
+    const linkedVideoIds = new Set<string>()
+    const items: LibraryItem[] = rows.map((item) => {
+      const operation = this.operation(item.operationId)
+      const job =
+        (item.videoId ? jobsById.get(item.videoId) : undefined) ??
+        jobsByUrl.get(item.pageUrl)
+      if (job) linkedVideoIds.add(job.videoId)
+      if (operation.state === "downloaded" && job) {
+        return { kind: "media", id: item.id, job }
+      }
+      return this.publicDownloadItem(
+        item,
+        operation,
+        job,
+        operation.state === "queued" ? queuedIds.indexOf(item.id) : null,
+      )
+    })
+    for (const job of summaries) {
+      if (!linkedVideoIds.has(job.videoId)) {
+        items.push({ kind: "media", id: `media:${job.videoId}`, job })
+      }
+    }
+    items.sort(compareLibraryItems)
+    const states = rows.map((item) => this.operation(item.operationId).state)
+    return {
+      items,
+      queue: {
+        paused: settings.paused,
+        concurrency: settings.concurrency,
+        queuedCount: states.filter((state) => state === "queued").length,
+        activeCount: states.filter((state) =>
+          PROCESS_ITEM_STATES.has(state as DownloadQueueItemState),
+        ).length,
+        attentionCount: states.filter((state) =>
+          ["needs_confirmation", "failed", "cancelled"].includes(state),
+        ).length,
+      },
+      serverTime: now(),
+    }
+  }
+
+  private publicDownloadItem(
+    item: typeof downloadQueueItems.$inferSelect,
+    operation: typeof operations.$inferSelect,
+    job: ReturnType<JobRepository["list"]>[number] | undefined,
+    queueAhead: number | null,
+  ): DownloadLibraryItem {
+    let title = job?.title
+    if (!title) {
+      try {
+        title = new URL(item.pageUrl).hostname
+      } catch {
+        title = "等待下載的影音"
+      }
+    }
+    return {
+      kind: "download",
+      id: item.id,
+      sourceKind: item.sourceKind as DownloadLibraryItem["sourceKind"],
+      pageUrl: item.pageUrl,
+      sourceUrl: item.sourceUrl,
+      videoId: item.videoId,
+      title,
+      thumbnailUrl: job?.thumbnailUrl ?? null,
+      state: operation.state as DownloadQueueItemState,
+      stage: operation.stage,
+      progress: operation.progress,
+      message: operation.message,
+      errorCode: operation.errorCode,
+      queueAhead,
+      lowQualityApproved: item.lowQualityApproved,
+      authentication: item.authentication as DownloadLibraryItem["authentication"],
+      authenticationConsentAt: item.authenticationConsentAt,
+      createdAt: item.createdAt,
+      updatedAt: operation.updatedAt,
+      completedAt: item.completedAt,
+    }
+  }
+
+  private normalizeSource(source: DownloadSourceInput): NormalizedSource {
+    if (!source || !["page", "embed", "network-media"].includes(source.kind)) {
+      throw new DownloadQueueOperationError(
+        "影音來源類型無效",
+        "invalid-source",
+        400,
+      )
+    }
+    const pageUrl = normalizeWebUrl(source.pageUrl, "頁面網址", 2_048)
+    if (source.kind !== "page" && !source.sessionId) {
+      throw new DownloadQueueOperationError(
+        "嵌入或網路媒體需要短期工作階段",
+        "media-session-required",
+        400,
+      )
+    }
+    if (
+      source.candidateFingerprint &&
+      !/^[0-9a-f]{64}$/.test(source.candidateFingerprint)
+    ) {
+      throw new DownloadQueueOperationError(
+        "媒體候選識別碼無效",
+        "invalid-source",
+        400,
+      )
+    }
+    const session = source.sessionId
+      ? this.mediaSessions.describe(source.sessionId)
+      : {
+          authentication: "none" as const,
+          authenticationConsentAt: null,
+          sourceKind: "page" as const,
+          pageUrl,
+          candidateFingerprint: source.candidateFingerprint ?? null,
+        }
+    if (
+      session.sourceKind !== source.kind ||
+      session.pageUrl !== pageUrl ||
+      (source.candidateFingerprint &&
+        session.candidateFingerprint !== source.candidateFingerprint)
+    ) {
+      throw new DownloadQueueOperationError(
+        "短期工作階段與選取的影音來源不一致",
+        "media-session-mismatch",
+        400,
+      )
+    }
+    const stableIdentity =
+      source.kind === "page"
+        ? pageUrl
+        : source.candidateFingerprint ?? pageUrl
+    return {
+      kind: source.kind,
+      pageUrl,
+      sourceKey: `${source.kind}:${stableIdentity}`,
+      sessionId: source.sessionId ?? null,
+      candidateFingerprint: source.candidateFingerprint ?? null,
+      authentication: session.authentication,
+      authenticationConsentAt: session.authenticationConsentAt,
+    }
+  }
+
+  private operation(operationId: string) {
+    const operation = this.db
+      .select()
+      .from(operations)
+      .where(eq(operations.id, operationId))
+      .get()
+    if (!operation) {
+      throw new DownloadQueueOperationError(
+        "下載工作狀態不存在",
+        "operation-not-found",
+        500,
+      )
+    }
+    return operation
+  }
+
+  private item(itemId: string) {
+    const item = this.db
+      .select()
+      .from(downloadQueueItems)
+      .where(eq(downloadQueueItems.id, itemId))
+      .get()
+    if (!item) {
+      throw new DownloadQueueOperationError(
+        "下載項目不存在",
+        "item-not-found",
+        404,
+      )
+    }
+    return item
+  }
+
+  private updateOperation(
+    operationId: string,
+    values: Partial<typeof operations.$inferInsert>,
+  ) {
+    const current = this.operation(operationId)
+    const changed = Object.entries(values).some(([key, value]) => {
+      const previous = current[key as keyof typeof current]
+      return typeof value === "object"
+        ? JSON.stringify(previous) !== JSON.stringify(value)
+        : previous !== value
+    })
+    if (!changed) return
+    const timestamp = now()
+    const next = { ...current, ...values, updatedAt: timestamp }
+    this.db
+      .update(operations)
+      .set({ ...values, updatedAt: timestamp })
+      .where(eq(operations.id, operationId))
+      .run()
+    const lastEvent = this.db
+      .select({ sequence: operationEvents.sequence })
+      .from(operationEvents)
+      .where(eq(operationEvents.operationId, operationId))
+      .orderBy(desc(operationEvents.sequence))
+      .get()
+    this.db
+      .insert(operationEvents)
+      .values({
+        operationId,
+        sequence: (lastEvent?.sequence ?? 0) + 1,
+        type: "state-changed",
+        state: String(next.state),
+        stage: String(next.stage),
+        progress: Number(next.progress),
+        message: String(next.message),
+        dataJson: {},
+        createdAt: timestamp,
+      })
+      .run()
+  }
+
+  private updateItem(
+    itemId: string,
+    values: Partial<typeof downloadQueueItems.$inferInsert>,
+  ) {
+    this.db
+      .update(downloadQueueItems)
+      .set(values)
+      .where(eq(downloadQueueItems.id, itemId))
+      .run()
+  }
+
+  private schedule() {
+    const settings = this.ensureSettings()
+    if (settings.paused) return
+    let occupied = this.active.size
+    occupied += this.db
+      .select()
+      .from(downloadQueueItems)
+      .all()
+      .filter((item) => {
+        const operation = this.operation(item.operationId)
+        return (
+          PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState) &&
+          !this.active.has(item.id) &&
+          processIsAlive(operation.pid)
+        )
+      }).length
+    if (occupied >= settings.concurrency) return
+    const queued = this.db
+      .select()
+      .from(downloadQueueItems)
+      .orderBy(asc(downloadQueueItems.createdAt))
+      .all()
+      .filter((item) => this.operation(item.operationId).state === "queued")
+    for (const item of queued.slice(0, settings.concurrency - occupied)) {
+      this.launch(item)
+    }
+  }
+
+  private launch(item: typeof downloadQueueItems.$inferSelect) {
+    let session: ClaimedMediaSession | null = null
+    try {
+      session = item.sessionId ? this.mediaSessions.claim(item.sessionId) : null
+    } catch (error) {
+      const code =
+        error instanceof MediaSessionOperationError
+          ? error.code
+          : "media-session-failed"
+      this.failItem(
+        item,
+        "source-resolution",
+        "瀏覽器媒體工作階段已失效，請重新加入",
+        code,
+        "ephemeral media session unavailable",
+      )
+      return
+    }
+    const targetUrl = session?.sourceUrl ?? item.pageUrl
+    const refererUrl =
+      session?.sourceKind === "network-media"
+        ? session.frameUrl ?? session.pageUrl
+        : item.pageUrl
+    if (!targetUrl) {
+      session?.dispose()
+      this.failItem(
+        item,
+        "source-resolution",
+        "影音來源缺少可下載網址",
+        "source-unavailable",
+        "download source is unavailable",
+      )
+      return
+    }
+    let scriptPath: string
+    try {
+      scriptPath = this.script()
+    } catch (error) {
+      session?.dispose()
+      this.failItem(
+        item,
+        "start",
+        "影音下載程式無法使用",
+        "runtime-unavailable",
+        error instanceof Error ? error.message : String(error),
+      )
+      return
+    }
+    const args = [
+      scriptPath,
+      this.workspace,
+      targetUrl,
+      "--download-only",
+      "--library-source-url",
+      item.pageUrl,
+      "--source-kind",
+      item.sourceKind,
+      "--referer",
+      refererUrl,
+    ]
+    if (session?.cookieFile) args.push("--cookie-file", session.cookieFile)
+    if (item.lowQualityApproved) args.push("--allow-low-quality")
+    let child: ReturnType<typeof Bun.spawn>
+    try {
+      child = Bun.spawn(args, {
+        cwd: this.workspace,
+        stdout: "ignore",
+        stderr: "pipe",
+      })
+    } catch {
+      session?.dispose()
+      this.failItem(
+        item,
+        "start",
+        "無法啟動下載",
+        "start-failed",
+        "download process failed to start",
+      )
+      return
+    }
+    this.active.set(item.id, {
+      child,
+      dispose: session?.dispose ?? (() => undefined),
+    })
+    this.updateOperation(item.operationId, {
+      state: "checking",
+      stage: "source-resolution",
+      message: "正在確認影音來源",
+      progress: 1,
+      errorCode: null,
+      errorMessage: null,
+      pid: child.pid,
+      startedAt: now(),
+      completedAt: null,
+    })
+    void this.finish(item, child).catch(() => this.settleUnexpectedFailure(item))
+  }
+
+  private failItem(
+    item: typeof downloadQueueItems.$inferSelect,
+    stage: string,
+    message: string,
+    errorCode: string,
+    errorMessage: string,
+  ) {
+    const timestamp = now()
+    this.updateOperation(item.operationId, {
+      state: "failed",
+      stage,
+      message,
+      progress: 0,
+      errorCode,
+      errorMessage,
+      pid: null,
+      completedAt: timestamp,
+    })
+    this.updateItem(item.id, { completedAt: timestamp })
+    this.schedule()
+  }
+
+  private settleUnexpectedFailure(item: typeof downloadQueueItems.$inferSelect) {
+    try {
+      const active = this.active.get(item.id)
+      active?.dispose()
+      this.active.delete(item.id)
+      this.cancelled.delete(item.id)
+      this.failItem(
+        item,
+        "internal-error",
+        "下載完成狀態無法確認，首頁服務仍保持運作",
+        "download-finalization-failed",
+        "download finalization failed",
+      )
+    } catch {
+      this.active.delete(item.id)
+      this.cancelled.delete(item.id)
+    }
+  }
+
+  private async finish(
+    item: typeof downloadQueueItems.$inferSelect,
+    child: ReturnType<typeof Bun.spawn>,
+  ) {
+    const stderrPromise =
+      typeof child.stderr === "number" || child.stderr === undefined
+        ? Promise.resolve("")
+        : new Response(child.stderr).text()
+    const [exitCode, stderr] = await Promise.all([child.exited, stderrPromise])
+    const active = this.active.get(item.id)
+    active?.dispose()
+    this.active.delete(item.id)
+    const cancelled = this.cancelled.delete(item.id)
+    const job = this.jobs
+      .listDownloadProjections()
+      .find((candidate) => candidate.sourceUrl === item.pageUrl)
+    const timestamp = now()
+    if (cancelled) {
+      this.updateOperation(item.operationId, {
+        state: "cancelled",
+        stage: "cancelled",
+        message: "下載已取消",
+        errorCode: null,
+        errorMessage: null,
+        pid: null,
+        completedAt: timestamp,
+      })
+      this.updateItem(item.id, { completedAt: timestamp })
+    } else if (exitCode === 0 && job && VERIFIED_MEDIA_STATES.has(job.state)) {
+      this.updateOperation(item.operationId, {
+        videoId: job.videoId,
+        state: "downloaded",
+        stage: "complete",
+        message: "影音已下載，等待處理",
+        progress: 100,
+        outputsJson: { videoId: job.videoId },
+        errorCode: null,
+        errorMessage: null,
+        pid: null,
+        completedAt: timestamp,
+      })
+      this.updateItem(item.id, { videoId: job.videoId, completedAt: timestamp })
+    } else if (stderr.includes("low-quality fallback requires user confirmation")) {
+      this.updateOperation(item.operationId, {
+        videoId: job?.videoId ?? null,
+        state: "needs_confirmation",
+        stage: "quality-confirmation",
+        message: "可用畫質低於 720p，需要你的確認",
+        progress: 0,
+        errorCode: "low-quality-confirmation-required",
+        errorMessage: "quality below 720p requires confirmation",
+        pid: null,
+        completedAt: null,
+      })
+      this.updateItem(item.id, { videoId: job?.videoId ?? null })
+    } else {
+      this.failItem(
+        item,
+        "media-download",
+        "影音下載失敗",
+        "download-failed",
+        "download process failed",
+      )
+    }
+    this.schedule()
+  }
+
+  private synchronize() {
+    const jobs = this.jobs.listDownloadProjections()
+    const byUrl = new Map(jobs.map((job) => [job.sourceUrl, job]))
+    for (const item of this.db.select().from(downloadQueueItems).all()) {
+      const operation = this.operation(item.operationId)
+      if (!ACTIVE_ITEM_STATES.has(operation.state as DownloadQueueItemState)) continue
+      const job = byUrl.get(item.pageUrl)
+      if (PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState) && job) {
+        const isComplete = VERIFIED_MEDIA_STATES.has(job.state)
+        const isVerifying = ["media_validation", "media_publish"].includes(job.stage)
+        const state = isComplete
+          ? "downloaded"
+          : isVerifying
+            ? "verifying"
+            : job.state === "checking"
+              ? "checking"
+              : "downloading"
+        const progress = isComplete
+          ? 100
+          : Math.max(
+              operation.progress,
+              Math.min(99, Math.round(job.progress * 10) / 10),
+            )
+        this.updateOperation(item.operationId, {
+          videoId: job.videoId,
+          state,
+          stage: isComplete ? "complete" : job.stage,
+          progress,
+          message: isComplete
+            ? "影音已下載，等待處理"
+            : job.message || "正在下載影音",
+          outputsJson: isComplete ? { videoId: job.videoId } : {},
+          completedAt: isComplete ? now() : null,
+        })
+        this.updateItem(item.id, {
+          videoId: job.videoId,
+          completedAt: isComplete ? now() : null,
+        })
+      }
+      if (
+        PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState) &&
+        !this.active.has(item.id) &&
+        !processIsAlive(operation.pid) &&
+        !job?.state.startsWith("downloaded") &&
+        !(job && VERIFIED_MEDIA_STATES.has(job.state))
+      ) {
+        this.failItem(
+          item,
+          "interrupted",
+          "下載程序已中斷",
+          "interrupted",
+          "download process interrupted",
+        )
+      }
+    }
+    this.schedule()
+  }
+
+  retry(itemId: string, lowQualityApproved = false) {
+    const item = this.item(itemId)
+    const operation = this.operation(item.operationId)
+    if (!["failed", "cancelled", "needs_confirmation"].includes(operation.state)) {
+      throw new DownloadQueueOperationError(
+        "目前狀態不能重新下載",
+        "retry-not-allowed",
+        409,
+      )
+    }
+    if (item.sessionId && !this.mediaSessions.has(item.sessionId)) {
+      throw new DownloadQueueOperationError(
+        "瀏覽器媒體工作階段已失效，請重新從擴充功能加入",
+        "media-session-expired",
+        409,
+      )
+    }
+    this.updateOperation(item.operationId, {
+      state: "queued",
+      stage: "awaiting-download",
+      message: "等待下載",
+      progress: 0,
+      errorCode: null,
+      errorMessage: null,
+      pid: null,
+      attempt: operation.attempt + 1,
+      completedAt: null,
+    })
+    this.updateItem(item.id, {
+      lowQualityApproved: lowQualityApproved || item.lowQualityApproved,
+      completedAt: null,
+    })
+    this.schedule()
+    return this.list()
+  }
+
+  approveLowQuality(itemId: string) {
+    const item = this.item(itemId)
+    if (this.operation(item.operationId).state !== "needs_confirmation") {
+      throw new DownloadQueueOperationError(
+        "目前項目不需要畫質確認",
+        "quality-approval-not-allowed",
+        409,
+      )
+    }
+    return this.retry(itemId, true)
+  }
+
+  pause() {
+    const settings = this.ensureSettings()
+    if (settings.paused) {
+      throw new DownloadQueueOperationError(
+        "下載排程已暫停",
+        "pause-not-allowed",
+        409,
+      )
+    }
+    this.db
+      .update(downloadQueueSettings)
+      .set({ paused: true, updatedAt: now() })
+      .where(eq(downloadQueueSettings.id, QUEUE_SETTINGS_ID))
+      .run()
+    return this.list()
+  }
+
+  resume() {
+    const settings = this.ensureSettings()
+    if (!settings.paused) {
+      throw new DownloadQueueOperationError(
+        "下載排程正在執行",
+        "resume-not-allowed",
+        409,
+      )
+    }
+    this.db
+      .update(downloadQueueSettings)
+      .set({ paused: false, updatedAt: now() })
+      .where(eq(downloadQueueSettings.id, QUEUE_SETTINGS_ID))
+      .run()
+    this.schedule()
+    return this.list()
+  }
+
+  cancel(itemId: string) {
+    const item = this.item(itemId)
+    const operation = this.operation(item.operationId)
+    if (operation.state === "queued") {
+      const timestamp = now()
+      this.updateOperation(item.operationId, {
+        state: "cancelled",
+        stage: "cancelled",
+        message: "下載已取消",
+        completedAt: timestamp,
+      })
+      this.updateItem(item.id, { completedAt: timestamp })
+    } else if (PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState)) {
+      const active = this.active.get(item.id)
+      if (!active) {
+        throw new DownloadQueueOperationError(
+          "下載程序不屬於目前服務，請等待狀態更新",
+          "process-not-owned",
+          409,
+        )
+      }
+      this.cancelled.add(item.id)
+      active.child.kill("SIGTERM")
+    } else {
+      throw new DownloadQueueOperationError(
+        "目前狀態不能取消",
+        "cancel-not-allowed",
+        409,
+      )
+    }
+    this.schedule()
+    return this.list()
+  }
+}

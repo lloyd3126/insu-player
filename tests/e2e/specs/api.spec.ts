@@ -23,6 +23,24 @@ test.describe("Hono API contracts @api", () => {
       ],
     })
 
+    const library = await request.get("/api/library")
+    await expect(library).toBeOK()
+    expect(await library.json()).toMatchObject({
+      items: [
+        {
+          kind: "media",
+          id: "media:demo-video",
+          job: { videoId: "demo-video", watchable: true },
+        },
+      ],
+      queue: {
+        paused: false,
+        queuedCount: 0,
+        activeCount: 0,
+        attentionCount: 0,
+      },
+    })
+
     const captions = await request.get("/api/jobs/demo-video/captions")
     await expect(captions).toBeOK()
     expect(await captions.json()).toMatchObject({

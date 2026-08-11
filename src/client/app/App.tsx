@@ -16,8 +16,9 @@ import {
 } from "@/app/overlay-context"
 import { Button } from "@/components/ui/button"
 import { POLICY_KEY } from "@/features/policy/constants"
-import { useJobsQuery } from "@/hooks/use-jobs-query"
+import { useLibraryQuery } from "@/hooks/use-library-query"
 import { BrowserLibraryPage } from "@/features/library/BrowserLibraryPage"
+import { ExtensionConnectionBridge } from "@/features/home/ExtensionConnectionBridge"
 
 const NAV_ITEMS: Array<{
   label: string
@@ -75,7 +76,7 @@ function LocalServiceStatus() {
 
 function HomeApp() {
   const { open: openOverlay } = useOverlayActions()
-  const jobs = useJobsQuery()
+  const library = useLibraryQuery()
 
   useEffect(() => {
     try {
@@ -89,6 +90,7 @@ function HomeApp() {
 
   return (
     <div className="app-shell">
+      <ExtensionConnectionBridge />
       <header className="site-header">
         <a className="brand" href="/" aria-label="回到 INSU Player 首頁">
           <img src={birdImage} alt="" />
@@ -108,12 +110,15 @@ function HomeApp() {
             className="nav-library"
             variant="outline"
             onClick={() =>
-              openOverlay({ type: "library", view: null })
+              openOverlay({
+                type: "library",
+                view: library.data?.items.length ? "grid" : "list",
+              })
             }
           >
             <LibraryBigIcon data-icon="inline-start" />
             影片中心
-            <strong>{jobs.data?.jobs.length ?? "—"}</strong>
+            <strong>{library.data?.items.length ?? "—"}</strong>
           </Button>
         </nav>
       </header>
@@ -149,7 +154,7 @@ function HomeApp() {
                 variant="outline"
                 size="lg"
                 onClick={() =>
-                  openOverlay({ type: "add-media", tab: "sources" })
+                  openOverlay({ type: "add-media" })
                 }
               >
                 <ListPlusIcon data-icon="inline-start" />

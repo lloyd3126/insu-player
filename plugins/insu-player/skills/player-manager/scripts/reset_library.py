@@ -15,15 +15,15 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DATA_TABLES = (
     "agent_intents",
     "active_subtitle_tracks",
     "active_summary_artifacts",
     "collection_items",
     "collections",
-    "download_batch_items",
-    "download_batches",
+    "download_queue_items",
+    "download_queue_settings",
     "extension_pairings",
     "job_assets",
     "job_history",
@@ -49,7 +49,11 @@ DATA_TABLES = (
     "tag_assignments",
     "tags",
 )
-BOOTSTRAP_TABLES = {"runtime_capabilities", "transcription_settings"}
+BOOTSTRAP_TABLES = {
+    "download_queue_settings",
+    "runtime_capabilities",
+    "transcription_settings",
+}
 DATABASE_FILES = ("app.db", "app.db-wal", "app.db-shm")
 SESSION_FILES = (
     ".insu-player-server.json",

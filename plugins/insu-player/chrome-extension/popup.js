@@ -1,6 +1,8 @@
 import { normalizeCandidates } from "./media-discovery.js"
 
 const connectionElement = document.querySelector("#connection")
+const connectSection = document.querySelector("#connect-section")
+const connectButton = document.querySelector("#connect-insu")
 const sourceSection = document.querySelector("#source-section")
 const pageTitleElement = document.querySelector("#page-title")
 const candidateList = document.querySelector("#candidate-list")
@@ -12,6 +14,7 @@ const feedback = document.querySelector("#feedback")
 const consentDialog = document.querySelector("#cookie-consent")
 const cookieCancelButton = document.querySelector("#cookie-cancel")
 const cookieConfirmButton = document.querySelector("#cookie-confirm")
+const openLibraryButton = document.querySelector("#open-library")
 
 let activeTab = null
 let candidates = []
@@ -267,7 +270,7 @@ enqueueButton.addEventListener("click", async () => {
     }
     await send({
       type: "API_REQUEST",
-      path: "/api/extension/download-batches",
+      path: "/api/extension/library/items",
       init: {
         method: "POST",
         body: JSON.stringify({
@@ -301,19 +304,72 @@ document.querySelector("#open-library").addEventListener("click", async () => {
   }
 })
 
+function activeTabOrigin() {
+  if (!activeTab?.url) return null
+  try {
+    return new URL(activeTab.url).origin
+  } catch {
+    return null
+  }
+}
+
+connectButton.addEventListener("click", async () => {
+  const serverOrigin = activeTabOrigin()
+  if (!activeTab?.id || !serverOrigin) return
+  connectButton.disabled = true
+  setFeedback("正在連接目前的 INSU Player")
+  try {
+    const status = await send({
+      type: "CONNECT_CURRENT_INSU",
+      tabId: activeTab.id,
+      serverOrigin,
+    })
+    connectionElement.textContent = `已連接本機服務 · ${new URL(status.serverOrigin).port}`
+    connectionElement.dataset.online = "true"
+    connectSection.hidden = true
+    openLibraryButton.disabled = false
+    setFeedback("連接完成。現在可以前往影音頁，再從工具列加入下載佇列。")
+  } catch (error) {
+    setFeedback(error.message, true)
+  } finally {
+    connectButton.disabled = false
+  }
+})
+
 async function initialize() {
   try {
+    ;[activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
     const status = await send({ type: "GET_CONNECTION" })
     if (!status.paired) {
-      connectionElement.textContent = "尚未配對，請到 INSU Player 的擴充功能 → 連接完成配對"
+      connectionElement.textContent = "尚未連接本機 INSU Player"
       connectionElement.dataset.online = "false"
+      openLibraryButton.disabled = true
+      const serverOrigin = activeTabOrigin()
+      if (activeTab?.id && serverOrigin) {
+        try {
+          await send({
+            type: "CHECK_CURRENT_INSU",
+            tabId: activeTab.id,
+            serverOrigin,
+          })
+          connectSection.hidden = false
+          return
+        } catch {
+          // The user may be on an ordinary media page.
+        }
+      }
+      setFeedback("請先在 Chrome 開啟 INSU Player 首頁，再點一次擴充功能。")
       return
     }
     connectionElement.textContent = `已連接本機服務 · ${new URL(status.serverOrigin).port}`
     connectionElement.dataset.online = "true"
-    ;[activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    openLibraryButton.disabled = false
     if (!activeTab?.id || !/^https?:/i.test(activeTab.url || "")) {
       setFeedback("目前分頁不是可加入的網頁", true)
+      return
+    }
+    if (activeTabOrigin() === status.serverOrigin) {
+      setFeedback("已連接。前往要加入的影音頁，再開啟擴充功能。")
       return
     }
     pageTitleElement.textContent = activeTab.title || activeTab.url

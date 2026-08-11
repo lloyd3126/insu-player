@@ -1,5 +1,4 @@
 import type {
-  AddMediaTab,
   ChromeExtensionTab,
   JobDetailTab,
   OverlayDestination,
@@ -13,7 +12,6 @@ const USAGE_GUIDE_TABS = new Set([
   "handoff",
 ])
 const CHROME_EXTENSION_TABS = new Set(["install", "connect", "usage"])
-const ADD_MEDIA_TABS = new Set(["sources", "downloads", "handoff"])
 const LIBRARY_VIEWS = new Set(["grid", "list"])
 const LIBRARY_STATUSES = new Set(["all", "active", "attention", "watchable", "ready"])
 const JOB_DETAIL_TABS = new Set([
@@ -32,7 +30,6 @@ const SUBTITLE_MANAGEMENT_VIEWS = new Set([
 ])
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,159}$/
-const DOWNLOAD_BATCH_ID_PATTERN = /^batch-\d{13}-[0-9a-f]{8}$/
 
 function decodeSegment(segment: string) {
   try {
@@ -102,17 +99,9 @@ function overlayDestinationFromLocation(
     }
     return null
   }
-  if (segments[0] === "library" && segments[1] === "add" && segments.length === 3) {
-    const tab = setValue<AddMediaTab>(ADD_MEDIA_TABS, segments[2])
-    if (!tab) return null
-    const batchId = new URLSearchParams(search).get("batch")?.trim()
-    return {
-      type: "add-media",
-      tab,
-      ...(batchId && DOWNLOAD_BATCH_ID_PATTERN.test(batchId) ? { batchId } : {}),
-    }
+  if (segments[0] === "library" && segments[1] === "add") {
+    return segments.length === 2 ? { type: "add-media" } : null
   }
-  if (segments[0] === "library" && segments[1] === "add") return null
   if (segments[0] === "library" && segments.length <= 2) {
     const params = new URLSearchParams(search)
     const query = params.get("q")?.trim().slice(0, 200)
@@ -235,8 +224,7 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
       }
       break
     case "add-media":
-      path = `/library/add/${overlay.tab}`
-      if (overlay.batchId) search.set("batch", overlay.batchId)
+      path = "/library/add"
       break
     case "detail":
       path =

@@ -4,7 +4,7 @@
 
 INSU Player 是為 Codex Agent 設計的本機影音與字幕工作台。把你有權處理的單支影音網址交給 `$watch-video`，Agent 會開啟目前專案的首頁，再協調下載、轉錄、翻譯、字幕重排與播放。長時間下載或轉錄可由附著目前 task 的 heartbeat 稍後接續。
 
-產品以一個固定的 React 首頁為中心，導覽依序保留開始說明、我的提示、轉錄設定、支援網站、擴充功能與影片中心，而且只顯示文字。播放器、詳情、字幕對照和處理進度都在同一頁內開啟，不會為每支影音另建一個首頁，也不保留舊版首頁或資產 fallback。React Router 只負責把目前開啟的 modal、影音與 tab 寫進網址，因此重新整理後會回到同一畫面。
+產品以一個固定的 React 首頁為中心，導覽依序保留開始說明、我的提示、轉錄設定、支援網站、擴充功能與影片中心。前五個入口只顯示文字，影片中心保留識別圖示與數量。播放器、詳情、字幕對照和處理進度都在同一頁內開啟，不會為每支影音另建一個首頁，也不保留舊版首頁或資產 fallback。React Router 只負責把目前開啟的 modal、影音與 tab 寫進網址，因此重新整理後會回到同一畫面。
 
 ## 安裝 Codex plugin
 
@@ -63,7 +63,7 @@ Agent 處理一支影音時會：
 
 | 入口 | 內容 |
 | --- | --- |
-| 開始說明 | 以「初始化」、「下一步」、「加入影音」與「操作流程」四個 tabs 分開呈現，每個 tab 只放一個主要段落 |
+| 開始說明 | 以「1 初始化」、「2 加入影音」與「3 交給 Agent」三個 tabs 依序引導，每個 tab 只放一個主要段落 |
 | 初始化 | 顯示初始化工作卡與 workspace 能力檢查，引導初次使用者完成本機環境 |
 | 加入一支影音 | 貼上單支影音網址，確認格式正確後複製已帶入網址的完整提示 |
 | 我的提示 | 複製常用的處理、雙語字幕與中斷復原提示，顯示由 Agent 維護的 workspace 提示，也可複製建立提示 |
@@ -71,16 +71,18 @@ Agent 處理一支影音時會：
 | 轉錄設定 | 以單一表格列出本機與雲端語音辨識模型，可查看就緒狀態、選用模型與開啟詳情 |
 | 模型詳情 | 本機模型可下載、取消、驗證與移除。雲端模型可設定或清除該 provider 共用的 API Key。選擇只套用到之後的新工作，停止服務會清除 Key |
 | 影片中心 | 以頂部 tabs 切換「我的影音」與「詳細資訊」 |
-| 加入影音 | 從首頁直接逐行加入最多 50 個單支影音網址，在介面建立下載佇列並取得不超過 1080p 的最高相容 MP4。下載完成後再複製提示，請 Agent 接續字幕流程 |
-| 我的影音 | 只顯示全寬搜尋列與影音卡片。有影音時預設開啟，網格最多三欄 |
-| 詳細資訊 | 顯示摘要統計、狀態篩選與固定欄寬列表。空庫時預設開啟 |
-| 擴充功能 | 首頁 navbar 的獨立 modal，標題為「Chrome 擴充功能」，以「安裝」、「連接」與「使用」三個 tabs 說明未封裝載入、目前 workspace 配對及從目前分頁加入影音 |
+| 加入影音 | 從首頁直接逐行加入最多 50 個單支影音網址，確認權利後加入全域下載佇列並取得不超過 1080p 的最高相容 MP4。送出後直接回到影片中心，不另開下載頁 |
+| 我的影音 | 顯示全寬搜尋列與最多三欄的影音卡片。等待下載、下載中、需要確認、失敗與已完成影音都在相同位置，完成時同一張卡片原位轉成可播放狀態 |
+| 詳細資訊 | 顯示摘要統計、狀態篩選與固定欄寬列表，包含每個下載項目的狀態、進度及重試或取消操作。空庫時預設開啟 |
+| 擴充功能 | 首頁 navbar 的獨立 modal，標題為「Chrome 擴充功能」，以「安裝」、「連接」與「使用」三個 tabs 說明未封裝載入、直接連接目前 workspace 及從目前分頁加入影音 |
 
 ### Chrome 擴充功能
 
-未封裝 Extension 位於 `plugins/insu-player/chrome-extension/`，不需建置或上架商店。使用者從首頁 navbar 開啟「擴充功能」，依序使用「安裝」、「連接」與「使用」三個 tabs。配對綁定目前 workspace 的 token 與實際 localhost origin，不掃描或猜測其他 port。
+未封裝 Extension 位於 `plugins/insu-player/chrome-extension/`，不需建置或上架商店。使用者從首頁 navbar 開啟「擴充功能」，依序使用「安裝」、「連接」與「使用」三個 tabs。保持首頁開啟並點 Chrome 工具列中的 INSU Player，再按「連接目前的 INSU Player」即可。Extension 只認目前分頁的精確 localhost origin，不掃描或猜測其他 port。單次 challenge、Extension origin、protocol、build、data schema 與 token 驗證都在背景完成。
 
 一般操作只讀取目前分頁並送入現有下載佇列。使用者可以選擇頁面、embed、直接 MP4 或已結束的 M3U8。iframe 與網路串流偵測需要暫時網站權限，下載需要登入狀態時會再開啟明確同意視窗。只會收集目前頁面、frame 與媒體 host 需要的 Cookie，傳到本機服務的短期工作階段，寫成權限 `0600` 的暫存 cookie jar。Cookie 值不會寫入 `app.db`、operation、log 或 API 回覆，下載程序結束或服務重啟時就會刪除。
+
+下載工作沒有使用者可見的批次。影片中心只顯示有哪些影音正在等待、目前進度與是否需要處理，並提供一個全域暫停或繼續控制。下載完成後 library item 保留同一個 ID 並轉成可播放影音。需要接續字幕時，從「詳細資訊」點影音標題或設定，再在「關於影音」複製下一步提示交給 Agent。
 
 擴充功能不繞過 DRM、付費牆、會員、私人存取、地區限制或帳號控制。第一版只接受已結束的 HLS，拒絕直播、SAMPLE-AES、CENC、EME、Widevine、FairPlay、PlayReady 與無法還原實際網路來源的 blob。Chrome 專用 `/extension/library` 頁面只顯示搜尋、影音卡片、觀看與字幕選擇，不顯示 Agent 提示或轉錄設定。
 
@@ -128,12 +130,12 @@ Agent 處理一支影音時會：
 - 首頁服務啟動時會清除從 Codex、terminal profile 或 parent process 繼承的 `OPENAI_API_KEY`、`GROQ_API_KEY`、`ELEVENLABS_API_KEY`、`XAI_API_KEY` 與 `OPENROUTER_API_KEY`。需要雲端轉錄時，使用者必須在「轉錄設定」開啟對應模型詳情，為本次服務重新設定 provider Key。Key 不會寫入 `.env`、`app.db`、log、job metadata 或 API 回應。直接執行轉錄工具時仍可從該命令的 process environment 取得 Key。
 - 服務只綁定 localhost，不對 LAN 或 Internet 開放。
 - INSU Player 不繞過 DRM、付費牆、會員、私人存取、地區限制或帳號控制。
-- Chrome Extension 的必要權限只用於目前分頁與 localhost。iframe、網路串流與 Cookie 使用額外權限，成功加入後會回收。Extension 配對、短期媒體工作階段與 cookie jar 都會在完整重建時清除。
+- Chrome Extension 的必要權限只用於目前分頁與 localhost。iframe、網路串流與 Cookie 使用額外權限，成功加入後會回收。Extension 連接、短期媒體工作階段與 cookie jar 都會在完整重建時清除。
 - 清理預設只移除可重建中間檔，保留影音、字幕、狀態、log 與播放進度。
 
 ### 需要重新開始時重置影音庫
 
-如果目前沒有需要保留的影音，或想用全新的資料驗證流程，可以請 Agent 完整重建目前專案的 INSU Player。這會清空影音、字幕、本次服務 API Key、工作紀錄、Chrome Extension 配對與 SQLite 資料庫，並移除短期 Cookie 工作階段與舊的相容資料，但會保留程式碼、workspace-local Bun、Whisper 與已下載模型：
+如果目前沒有需要保留的影音，或想用全新的資料驗證流程，可以請 Agent 完整重建目前專案的 INSU Player。這會清空影音、字幕、本次服務 API Key、工作紀錄、Chrome Extension 連接與 SQLite 資料庫，並移除短期 Cookie 工作階段與舊的相容資料，但會保留程式碼、workspace-local Bun、Whisper 與已下載模型：
 
 ```text
 完整重建目前專案的 INSU Player。清空影音、字幕、API Key、工作紀錄與資料庫，移除所有相容層。保留程式碼、Bun runtime、Whisper 與模型。請先產生唯讀預覽和 digest，等我確認後執行，最後重啟首頁並驗證影音庫為 0 筆。
@@ -158,8 +160,8 @@ Agent 處理一支影音時會：
 | 層級 | 技術 | 職責 |
 | --- | --- | --- |
 | 前端 | React、React Router、Vite、shadcn/ui、Lucide、Markmap | 固定首頁、可重新整理的 modal/tab 路由、下載佇列、模型管理、摘要心智圖、字幕對照與同源播放器 |
-| API | Hono on Bun | localhost JSON API、Extension 配對與短期媒體工作階段、批次最高相容畫質下載、統一模型目錄、provider session credential、模型下載與驗證、摘要 revision、exact-height rendition、媒體 Range request、WebVTT 與播放進度 |
-| 查詢投影 | Drizzle、Bun SQLite | 以目前唯一 schema 保存下載批次、Extension 配對 metadata、模型選擇、摘要依賴並投影工作流程。Cookie 值不入庫，舊 schema 不遷移、不讀取，也沒有相容層 |
+| API | Hono on Bun | localhost JSON API、Extension 連接與短期媒體工作階段、多支影音最高相容畫質下載、統一模型目錄、provider session credential、模型下載與驗證、摘要 revision、exact-height rendition、媒體 Range request、WebVTT 與播放進度 |
+| 查詢投影 | Drizzle、Bun SQLite | 以目前唯一 schema 保存下載佇列項目、Extension 連接 metadata、模型選擇、摘要依賴並投影工作流程。Cookie 值不入庫，舊 schema 不遷移、不讀取，也沒有相容層 |
 | 工作流程 | SQLite `operations`、`operation_events` | 作為中斷復原與進度的唯一事實來源 |
 | 執行環境 | project-local workspace | 保存 runtime、媒體、字幕、模型、cache 與播放進度 |
 
@@ -191,9 +193,11 @@ scripts/build-web.sh
 ```bash
 INSU_BUN="$PWD/.local/insu-player/.agent-tools/insu-player/bun-runtime/bin/bun"
 "$INSU_BUN" run check
-"$INSU_BUN" test src
+"$INSU_BUN" run test
 "$INSU_BUN" run build
 INSU_BUN="$INSU_BUN" "$INSU_BUN" run test:e2e --workers=1
+PLAYWRIGHT_BROWSERS_PATH="$PWD/.local/insu-player/.agent-tools/playwright" "$INSU_BUN" x playwright install chromium
+"$INSU_BUN" run test:extension
 python3 -m unittest discover -s tests -v
 ```
 

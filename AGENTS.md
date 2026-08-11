@@ -24,7 +24,7 @@
 - `$watch-video` 是對使用者的主要入口。
 - 下載、安裝、轉錄、指定畫質或其他長時間工作超出目前 turn 時，使用 `$monitor-player-job` 建立附著目前 task 的 heartbeat。排程只負責重新喚醒 Agent。SQLite 中的 media item、operation、event 與已註冊產物是事實來源，log 只用於診斷。不得建立 standalone task、worktree、sleep 輪詢、cron、daemon 或檔案狀態 fallback。完成、重複失敗或需要使用者決策時停止 heartbeat。
 - 固定首頁是唯一觀看入口。播放器在同源 iframe modal 內開啟。
-- 未封裝 Chrome Extension 只能使用 `plugins/insu-player/chrome-extension/`，並與目前 workspace 的實際 localhost origin 明確配對。它只能共用既有下載佇列與 `/extension/library` 卡片頁，不得建立第二套資料庫、下載器、播放器或 Agent 提示介面。Cookie 必須由使用者在當下同意，只能進入短期記憶體工作階段與權限 `0600` 的暫存 jar，禁止寫入 SQLite、log、metadata 或回覆，工作結束與服務啟動時必須刪除。不得繞過 DRM，直播與受保護 HLS 必須直接拒絕。
+- 未封裝 Chrome Extension 只能使用 `plugins/insu-player/chrome-extension/`，並由目前開啟的首頁分頁直接連接目前 workspace 的精確 localhost origin。不得掃描或猜測 port。使用者只看到一次連接操作，challenge、Extension origin、protocol、build、data schema 與 token 驗證留在背景。它只能共用既有下載佇列與 `/extension/library` 卡片頁，不得建立第二套資料庫、下載器、播放器或 Agent 提示介面。Cookie 必須由使用者在當下同意，只能進入短期記憶體工作階段與權限 `0600` 的暫存 jar，禁止寫入 SQLite、log、metadata 或回覆，工作結束與服務啟動時必須刪除。不得繞過 DRM，直播與受保護 HLS 必須直接拒絕。
 - SQLite 中的 media item、operation event、artifact catalog 與 playback state 是中斷復原的唯一事實來源。
 - 只接受現行 clean-break 資料契約：media record schema 2、model transcript schema 3、proofread／translation manifest schema 5、segmentation manifest schema 4、media catalog schema 1。舊版、缺欄或無效資料直接失敗，不得建立 migration、legacy reader、推定值或相容 fallback。沒有外部使用者時直接刪除舊產物並重建。
 - 只沿用 build ID 與 data schema 都完全相同的 workspace server。若 descriptor 指向其他 build，必須明確停止該 workspace 的程序再重新啟動，server 不得自動終止或接管舊程序。

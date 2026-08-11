@@ -16,7 +16,7 @@ import path from "node:path"
 import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { JobRepository } from "@server/repositories/job-repository"
-import { DownloadBatchService } from "@server/services/download-batch-service"
+import { DownloadQueueService } from "@server/services/download-queue-service"
 import { ExtensionPairingService } from "@server/services/extension-pairing-service"
 import { MediaSessionService } from "@server/services/media-session-service"
 import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
@@ -27,6 +27,7 @@ import { RuntimeService } from "@server/services/runtime-service"
 import { SummaryService } from "@server/services/summary-service"
 import type { MediaOperations } from "@server/services/media-service"
 import type { RemovalTarget } from "@shared/contracts/removal"
+import { EXTENSION_CONNECTION_PROTOCOL_VERSION } from "@shared/contracts/browser-extension"
 
 const repositoryRoot = path.resolve(import.meta.dir, "../..")
 const migrations = path.join(
@@ -39,6 +40,7 @@ let sqlite: ReturnType<typeof openAppDatabase>["sqlite"]
 let database: ReturnType<typeof openAppDatabase>["db"]
 let jobRepository: JobRepository
 let mediaSessionService: MediaSessionService
+let downloadQueueService: DownloadQueueService
 let app: ReturnType<typeof createApplication>
 let previewedTarget: RemovalTarget | null = null
 let executedRemoval: { target: RemovalTarget; planDigest: string } | null = null
@@ -335,18 +337,19 @@ beforeEach(() => {
   const mediaSessions = new MediaSessionService(workspace)
   jobRepository = jobs
   mediaSessionService = mediaSessions
+  downloadQueueService = new DownloadQueueService(
+    workspace,
+    opened.db,
+    jobs,
+    path.join(
+      repositoryRoot,
+      "plugins/insu-player/skills/watch-video/scripts/download-video.sh",
+    ),
+    mediaSessions,
+  )
   app = createApplication({
     jobs,
-    downloads: new DownloadBatchService(
-      workspace,
-      opened.db,
-      jobs,
-      path.join(
-        repositoryRoot,
-        "plugins/insu-player/skills/watch-video/scripts/download-video.sh",
-      ),
-      mediaSessions,
-    ),
+    downloads: downloadQueueService,
     extensionPairing: new ExtensionPairingService(
       opened.db,
       path.join(repositoryRoot, "plugins/insu-player/chrome-extension"),
@@ -401,9 +404,7 @@ describe("Hono application", () => {
       "/extension/usage",
       "/settings",
       "/settings/models/cloud.groq.whisper-large-v3",
-      "/library/add/sources",
-      "/library/add/downloads",
-      "/library/add/handoff",
+      "/library/add",
       "/library/list",
       "/jobs/demo-video/activity",
       "/player/demo-video?caption=zh-TW",
@@ -432,8 +433,9 @@ describe("Hono application", () => {
       status: "ok",
       runtime: "bun",
       framework: "hono",
-      buildId: "insu-player-browser-bridge",
-      dataSchemaVersion: 4,
+      buildId: "insu-player-library-queue-v1",
+      dataSchemaVersion: 5,
+      extensionProtocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       database: "sqlite",
       port: 4178,
     })
@@ -485,9 +487,29 @@ describe("Hono application", () => {
     })
     expect(start.status).toBe(201)
     const invitation = (await start.json()) as {
+      protocolVersion: number
       challengeId: string
       token: string
     }
+    expect(invitation.protocolVersion).toBe(
+      EXTENSION_CONNECTION_PROTOCOL_VERSION,
+    )
+
+    const incompatibleClaim = await app.request(
+      `${origin}/api/extension/pairing/claim`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: extensionOrigin,
+        },
+        body: JSON.stringify({
+          challengeId: invitation.challengeId,
+          token: invitation.token,
+        }),
+      },
+    )
+    expect(incompatibleClaim.status).toBe(400)
 
     const claim = await app.request(`${origin}/api/extension/pairing/claim`, {
       method: "POST",
@@ -496,6 +518,7 @@ describe("Hono application", () => {
         Origin: extensionOrigin,
       },
       body: JSON.stringify({
+        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
         challengeId: invitation.challengeId,
         token: invitation.token,
       }),
@@ -506,6 +529,7 @@ describe("Hono application", () => {
     const pairingStatus = await app.request(`${origin}/api/extension/pairing`)
     expect(pairingStatus.status).toBe(200)
     expect(await pairingStatus.json()).toMatchObject({
+      protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       paired: true,
       extensionOrigin,
       extensionDirectory: expect.stringContaining(
@@ -515,14 +539,28 @@ describe("Hono application", () => {
 
     const authenticationHeaders = {
       Origin: extensionOrigin,
+      "X-INSU-Extension-Protocol": String(
+        EXTENSION_CONNECTION_PROTOCOL_VERSION,
+      ),
       "X-INSU-Extension-Token": invitation.token,
     }
+    expect(
+      (
+        await app.request(`${origin}/api/extension/health`, {
+          headers: {
+            Origin: extensionOrigin,
+            "X-INSU-Extension-Token": invitation.token,
+          },
+        })
+      ).status,
+    ).toBe(409)
     const health = await app.request(`${origin}/api/extension/health`, {
       headers: authenticationHeaders,
     })
     expect(health.status).toBe(200)
     expect(await health.json()).toMatchObject({
       ok: true,
+      extensionProtocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       libraryUrl: `${origin}/extension/library`,
     })
 
@@ -573,7 +611,7 @@ describe("Hono application", () => {
     })
 
     const enqueue = await app.request(
-      `${origin}/api/extension/download-batches`,
+      `${origin}/api/extension/library/items`,
       {
         method: "POST",
         headers: {
@@ -593,8 +631,9 @@ describe("Hono application", () => {
       },
     )
     expect(enqueue.status).toBe(202)
-    expect(await enqueue.json()).toMatchObject({
-      batch: { items: [{ state: "downloaded", videoId: "demo-video" }] },
+    expect(await enqueue.json()).toEqual({
+      accepted: true,
+      itemIds: ["media:demo-video"],
     })
 
     const database = readFileSync(path.join(workspace, "app.db"))
@@ -1101,9 +1140,9 @@ describe("Hono application", () => {
     }
   })
 
-  test("rejects playlists before creating a direct download batch", async () => {
+  test("rejects playlists before creating library items", async () => {
     const response = await app.request(
-      "http://127.0.0.1:4178/api/download-batches",
+      "http://127.0.0.1:4178/api/library/items",
       {
         method: "POST",
         headers: {
@@ -1123,13 +1162,19 @@ describe("Hono application", () => {
     )
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ error: "不接受播放清單網址" })
-    const batches = await app.request("http://127.0.0.1:4178/api/download-batches")
-    expect(await batches.json()).toMatchObject({ batches: [] })
+    const library = await app.request("http://127.0.0.1:4178/api/library")
+    expect(await library.json()).toMatchObject({
+      items: [{ kind: "media", id: "media:demo-video" }],
+      queue: { queuedCount: 0, activeCount: 0 },
+    })
+    expect(
+      (await app.request("http://127.0.0.1:4178/api/download-batches")).status,
+    ).toBe(404)
   })
 
-  test("requires content rights and reuses an existing watchable video in a direct batch", async () => {
+  test("requires content rights and reuses an existing watchable library item", async () => {
     const origin = "http://127.0.0.1:4178"
-    const missingRights = await app.request(`${origin}/api/download-batches`, {
+    const missingRights = await app.request(`${origin}/api/library/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: origin },
       body: JSON.stringify({
@@ -1142,7 +1187,7 @@ describe("Hono application", () => {
       error: "開始下載前請先確認內容權利",
     })
 
-    const response = await app.request(`${origin}/api/download-batches`, {
+    const response = await app.request(`${origin}/api/library/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: origin },
       body: JSON.stringify({
@@ -1151,52 +1196,102 @@ describe("Hono application", () => {
       }),
     })
     expect(response.status).toBe(202)
-    expect(await response.json()).toMatchObject({
+    expect(await response.json()).toEqual({
       accepted: true,
-      batch: {
-        state: "complete",
-        rightsConfirmed: true,
-        items: [
-          {
-            videoId: "demo-video",
-            title: "雙語測試影音",
-            state: "downloaded",
-            stage: "complete",
-            progress: 100,
-            message: "影音已存在於影音庫",
-          },
-        ],
-      },
+      itemIds: ["media:demo-video"],
     })
   })
 
-  test("keeps health and batch APIs available while an unpublished download is active", async () => {
+  test("keeps one stable library item ID when a download becomes playable", async () => {
     const timestamp = "2026-08-11T01:00:00.000Z"
     sqlite
       .query(
-        "INSERT INTO media_items (video_id, title, source_url, state, effective_state, stage, progress, message, created_at, updated_at, completed_at, last_error, watchable, size_bytes, thumbnail_url, watch_url, has_log, duration_seconds, record_json, record_revision, projected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, NULL, NULL, 0, NULL, ?, 1, ?)",
+        "INSERT INTO operations (id, video_id, parent_operation_id, kind, state, stage, progress, message, inputs_json, outputs_json, consent_json, resumable, attempt, pid, error_code, error_message, created_at, started_at, updated_at, completed_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, NULL, NULL, NULL, ?, ?, ?, ?)",
       )
       .run(
-        "active-download",
-        "Active Download",
-        "https://example.test/active-download",
-        "downloading",
-        "downloading",
-        "media_download",
-        42,
-        "正在下載 1080p 影片",
+        "operation-complete-download",
+        "demo-video",
+        "media-download",
+        "downloaded",
+        "complete",
+        100,
+        "影音已下載，等待處理",
+        "{}",
+        '{"videoId":"demo-video"}',
+        '{"rightsConfirmed":true}',
         timestamp,
         timestamp,
-        JSON.stringify({ schemaVersion: 1, videoId: "active-download" }),
+        timestamp,
         timestamp,
       )
+    sqlite
+      .query(
+        "INSERT INTO download_queue_items (id, source_kind, page_url, source_url, source_key, session_id, operation_id, video_id, rights_confirmed, low_quality_approved, authentication, authentication_consent_at, created_at, completed_at) VALUES (?, 'page', ?, ?, ?, NULL, ?, ?, 1, 0, 'none', NULL, ?, ?)",
+      )
+      .run(
+        "library-stable-demo",
+        "https://example.test/video",
+        "https://example.test/video",
+        "page:https://example.test/video",
+        "operation-complete-download",
+        "demo-video",
+        timestamp,
+        timestamp,
+      )
+
+    expect(downloadQueueService.list()).toMatchObject({
+      items: [
+        {
+          id: "library-stable-demo",
+          kind: "media",
+          job: { videoId: "demo-video", watchable: true },
+        },
+      ],
+      queue: { activeCount: 0, queuedCount: 0 },
+    })
+  })
+
+  test("persists the global queue pause without starting newly added items", async () => {
+    const origin = "http://127.0.0.1:4178"
+    const paused = await app.request(`${origin}/api/download-queue/pause`, {
+      method: "POST",
+      headers: { Origin: origin },
+    })
+    expect(paused.status).toBe(200)
+    expect(await paused.json()).toMatchObject({ queue: { paused: true } })
+
+    const created = await app.request(`${origin}/api/library/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({
+        sources: [
+          { kind: "page", pageUrl: "https://example.test/queued-one" },
+          { kind: "page", pageUrl: "https://example.test/queued-two" },
+        ],
+        rightsConfirmed: true,
+      }),
+    })
+    expect(created.status).toBe(202)
+    const library = await app.request(`${origin}/api/library`)
+    expect(await library.json()).toMatchObject({
+      items: [
+        { kind: "download", state: "queued", queueAhead: 0 },
+        { kind: "download", state: "queued", queueAhead: 1 },
+        { kind: "media", id: "media:demo-video" },
+      ],
+      queue: { paused: true, queuedCount: 2, activeCount: 0 },
+    })
+  })
+
+  test("keeps health and library APIs available while an unpublished download is active", async () => {
+    const timestamp = "2026-08-11T01:00:00.000Z"
     sqlite
       .query(
         "INSERT INTO operations (id, video_id, parent_operation_id, kind, state, stage, progress, message, inputs_json, outputs_json, consent_json, resumable, attempt, pid, error_code, error_message, created_at, started_at, updated_at, completed_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, NULL, NULL, ?, ?, ?, NULL)",
       )
       .run(
         "operation-active-download",
-        "active-download",
+        null,
         "media-download",
         "downloading",
         "media_download",
@@ -1217,43 +1312,38 @@ describe("Hono application", () => {
       .run("operation-active-download", timestamp)
     sqlite
       .query(
-        "INSERT INTO download_batches (id, state, rights_confirmed, created_at, updated_at) VALUES (?, 'active', 1, ?, ?)",
-      )
-      .run("batch-1770000000000-deadbeef", timestamp, timestamp)
-    sqlite
-      .query(
-        "INSERT INTO download_batch_items (id, batch_id, ordinal, source_kind, page_url, source_url, source_key, session_id, operation_id, video_id, low_quality_approved, authentication, authentication_consent_at, created_at, completed_at) VALUES (?, ?, 0, 'page', ?, ?, ?, NULL, ?, ?, 0, 'none', NULL, ?, NULL)",
+        "INSERT INTO download_queue_items (id, source_kind, page_url, source_url, source_key, session_id, operation_id, video_id, rights_confirmed, low_quality_approved, authentication, authentication_consent_at, created_at, completed_at) VALUES (?, 'page', ?, ?, ?, NULL, ?, NULL, 1, 0, 'none', NULL, ?, NULL)",
       )
       .run(
-        "batch-item-active-download",
-        "batch-1770000000000-deadbeef",
+        "library-active-download",
         "https://example.test/active-download",
         "https://example.test/active-download",
         "page:https://example.test/active-download",
         "operation-active-download",
-        "active-download",
         timestamp,
       )
 
     expect(
       existsSync(path.join(workspace, "jobs", "active-download", "media-work", "catalog.json")),
     ).toBe(false)
-    const batches = await app.request("http://127.0.0.1:4178/api/download-batches")
-    expect(batches.status).toBe(200)
-    expect(await batches.json()).toMatchObject({
-      batches: [
+    const library = await app.request("http://127.0.0.1:4178/api/library")
+    expect(library.status).toBe(200)
+    expect(await library.json()).toMatchObject({
+      items: [
         {
-          id: "batch-1770000000000-deadbeef",
-          items: [
-            {
-              title: "Active Download",
-              state: "downloading",
-              stage: "media_download",
-              progress: 42,
-            },
-          ],
+          id: "library-active-download",
+          kind: "download",
+          state: "downloading",
+          stage: "media_download",
+          progress: 10,
+        },
+        {
+          id: "media:demo-video",
+          kind: "media",
+          job: { videoId: "demo-video" },
         },
       ],
+      queue: { activeCount: 1, queuedCount: 0 },
     })
     const health = await app.request("http://127.0.0.1:4178/api/health")
     expect(health.status).toBe(200)
@@ -1263,7 +1353,7 @@ describe("Hono application", () => {
     const fakeDownload = path.join(workspace, "fake-download.sh")
     writeFileSync(fakeDownload, "#!/bin/sh\nsleep 1\nexit 7\n")
     chmodSync(fakeDownload, 0o700)
-    const downloads = new DownloadBatchService(
+    const downloads = new DownloadQueueService(
       workspace,
       database,
       jobRepository,
@@ -1275,7 +1365,8 @@ describe("Hono application", () => {
       [{ kind: "page", pageUrl: "https://example.test/process-liveness" }],
       true,
     )
-    expect(created.batch.items[0]).toMatchObject({ state: "checking", progress: 1 })
+    let current = downloads.list().items.find((item) => item.id === created.itemIds[0])
+    expect(current).toMatchObject({ kind: "download", state: "checking", progress: 1 })
 
     for (let index = 0; index < 5; index += 1) {
       const health = await app.request("http://127.0.0.1:4178/api/health")
@@ -1283,12 +1374,12 @@ describe("Hono application", () => {
     }
 
     const deadline = Date.now() + 3_000
-    let completed = downloads.batch(created.batch.id).items[0]
-    while (completed.state === "checking" && Date.now() < deadline) {
+    while (current?.kind === "download" && current.state === "checking" && Date.now() < deadline) {
       await Bun.sleep(25)
-      completed = downloads.batch(created.batch.id).items[0]
+      current = downloads.list().items.find((item) => item.id === created.itemIds[0])
     }
-    expect(completed).toMatchObject({
+    expect(current).toMatchObject({
+      kind: "download",
       state: "failed",
       errorCode: "download-failed",
     })

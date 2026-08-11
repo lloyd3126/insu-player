@@ -19,6 +19,10 @@
 
     <main>
       <div id="connection" class="status" role="status">正在連接本機服務</div>
+      <section id="connect-section" hidden>
+        <p class="connection-help">目前分頁已偵測到 INSU Player。按一次即可讓擴充功能記住這個本機服務。</p>
+        <button id="connect-insu" class="primary" type="button">連接目前的 INSU Player</button>
+      </section>
       <section id="source-section" hidden>
         <p id="page-title" class="page-title"></p>
         <div id="candidate-list" class="candidate-list" role="radiogroup" aria-label="選擇影音來源"></div>

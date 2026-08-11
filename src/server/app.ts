@@ -8,9 +8,9 @@ import { contentTypeFor, safeContainedFile } from "@server/lib/files"
 import { JobRepository } from "@server/repositories/job-repository"
 import { CaptionService } from "@server/services/caption-service"
 import {
-  DownloadBatchOperationError,
-  type DownloadBatchService,
-} from "@server/services/download-batch-service"
+  DownloadQueueOperationError,
+  type DownloadQueueService,
+} from "@server/services/download-queue-service"
 import {
   ExtensionPairingError,
   type ExtensionPairingService,
@@ -44,6 +44,7 @@ import {
   type SummaryService,
 } from "@server/services/summary-service"
 import type { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
+import { EXTENSION_CONNECTION_PROTOCOL_VERSION } from "@shared/contracts/browser-extension"
 import {
   SERVER_BUILD_ID,
   DATA_SCHEMA_VERSION,
@@ -52,7 +53,7 @@ import {
 export interface ApplicationOptions {
   jobs: JobRepository
   media: MediaOperations
-  downloads: DownloadBatchService
+  downloads: DownloadQueueService
   extensionPairing: ExtensionPairingService
   mediaSessions: MediaSessionService
   models: TranscriptionModelCatalogService
@@ -102,7 +103,7 @@ const downloadSourceSchema = z
   })
   .strict()
 
-const createDownloadBatchSchema = z
+const createLibraryItemsSchema = z
   .object({
     sources: z.array(downloadSourceSchema).min(1).max(50),
     rightsConfirmed: z.boolean(),
@@ -111,6 +112,7 @@ const createDownloadBatchSchema = z
 
 const extensionPairingClaimSchema = z
   .object({
+    protocolVersion: z.literal(EXTENSION_CONNECTION_PROTOCOL_VERSION),
     challengeId: z.string().regex(/^pair-[0-9a-f-]{36}$/),
     token: z.string().min(32).max(128),
   })
@@ -273,6 +275,17 @@ function chromeExtensionOrigin(request: Request) {
     : null
 }
 
+function authenticatedExtensionOrigin(request: Request) {
+  return (
+    chromeExtensionOrigin(request) ??
+    (/^chrome-extension:\/\/[a-p]{32}$/.test(
+      request.headers.get("x-insu-extension-origin") ?? "",
+    )
+      ? request.headers.get("x-insu-extension-origin")
+      : null)
+  )
+}
+
 function extensionErrorResponse(context: Context, error: unknown) {
   if (
     error instanceof ExtensionPairingError ||
@@ -314,7 +327,7 @@ function operationErrorResponse(
   context: Context,
   error: unknown,
   expected:
-    | typeof DownloadBatchOperationError
+    | typeof DownloadQueueOperationError
     | typeof LocalModelOperationError
     | typeof ProviderCredentialError
     | typeof SummaryOperationError,
@@ -387,7 +400,7 @@ export function createApplication(options: ApplicationOptions) {
       context.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
       context.header(
         "Access-Control-Allow-Headers",
-        "Content-Type, X-INSU-Extension-Token",
+        "Content-Type, X-INSU-Extension-Origin, X-INSU-Extension-Protocol, X-INSU-Extension-Token",
       )
       context.header("Access-Control-Max-Age", "600")
       context.header("Vary", "Origin")
@@ -461,6 +474,7 @@ export function createApplication(options: ApplicationOptions) {
       framework: "hono",
       buildId: SERVER_BUILD_ID,
       dataSchemaVersion: DATA_SCHEMA_VERSION,
+      extensionProtocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       database: "sqlite",
       port,
     })
@@ -487,7 +501,7 @@ export function createApplication(options: ApplicationOptions) {
         const origin = chromeExtensionOrigin(context.req.raw)
         if (!origin) {
           throw new ExtensionPairingError(
-            "只接受 Chrome 擴充功能配對",
+            "只接受 Chrome 擴充功能連接",
             "invalid-extension-origin",
             400,
           )
@@ -498,6 +512,7 @@ export function createApplication(options: ApplicationOptions) {
             payload.challengeId,
             payload.token,
             origin,
+            payload.protocolVersion,
           ),
           201,
         )
@@ -516,12 +531,18 @@ export function createApplication(options: ApplicationOptions) {
     try {
       options.extensionPairing.authenticate(
         context.req.header("x-insu-extension-token") ?? null,
-        chromeExtensionOrigin(context.req.raw),
+        authenticatedExtensionOrigin(context.req.raw),
+        context.req.header("x-insu-extension-protocol") ?? null,
       )
       return context.json({
         ok: true,
+        runtime: "bun",
+        framework: "hono",
         port: Number(new URL(context.req.url).port || 80),
         libraryUrl: `${new URL(context.req.url).origin}/extension/library`,
+        buildId: SERVER_BUILD_ID,
+        dataSchemaVersion: DATA_SCHEMA_VERSION,
+        extensionProtocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       })
     } catch (error) {
       return extensionErrorResponse(context, error)
@@ -534,7 +555,8 @@ export function createApplication(options: ApplicationOptions) {
       try {
         options.extensionPairing.authenticate(
           context.req.header("x-insu-extension-token") ?? null,
-          chromeExtensionOrigin(context.req.raw),
+          authenticatedExtensionOrigin(context.req.raw),
+          context.req.header("x-insu-extension-protocol") ?? null,
         )
         return context.json(
           await options.mediaSessions.create(context.req.valid("json")),
@@ -546,13 +568,14 @@ export function createApplication(options: ApplicationOptions) {
     },
   )
   app.post(
-    "/api/extension/download-batches",
-    zValidator("json", createDownloadBatchSchema),
+    "/api/extension/library/items",
+    zValidator("json", createLibraryItemsSchema),
     (context) => {
       try {
         options.extensionPairing.authenticate(
           context.req.header("x-insu-extension-token") ?? null,
-          chromeExtensionOrigin(context.req.raw),
+          authenticatedExtensionOrigin(context.req.raw),
+          context.req.header("x-insu-extension-protocol") ?? null,
         )
         const payload = context.req.valid("json")
         return context.json(
@@ -560,11 +583,11 @@ export function createApplication(options: ApplicationOptions) {
           202,
         )
       } catch (error) {
-        if (error instanceof DownloadBatchOperationError) {
+        if (error instanceof DownloadQueueOperationError) {
           return operationErrorResponse(
             context,
             error,
-            DownloadBatchOperationError,
+            DownloadQueueOperationError,
           )
         }
         return extensionErrorResponse(context, error)
@@ -594,12 +617,10 @@ export function createApplication(options: ApplicationOptions) {
       }
     },
   )
-  app.get("/api/download-batches", (context) =>
-    context.json(options.downloads.list()),
-  )
+  app.get("/api/library", (context) => context.json(options.downloads.list()))
   app.post(
-    "/api/download-batches",
-    zValidator("json", createDownloadBatchSchema),
+    "/api/library/items",
+    zValidator("json", createLibraryItemsSchema),
     (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
@@ -609,62 +630,66 @@ export function createApplication(options: ApplicationOptions) {
           202,
         )
       } catch (error) {
-        return operationErrorResponse(context, error, DownloadBatchOperationError)
+        return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
     },
   )
-  app.get("/api/download-batches/:batchId", (context) => {
-    try {
-      return context.json(options.downloads.batch(context.req.param("batchId")))
-    } catch (error) {
-      return operationErrorResponse(context, error, DownloadBatchOperationError)
-    }
-  })
   for (const action of ["pause", "resume"] as const) {
-    app.post(`/api/download-batches/:batchId/${action}`, (context) => {
+    app.post(`/api/download-queue/${action}`, (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
         return context.json(
           action === "pause"
-            ? options.downloads.pause(context.req.param("batchId"))
-            : options.downloads.resume(context.req.param("batchId")),
+            ? options.downloads.pause()
+            : options.downloads.resume(),
         )
       } catch (error) {
-        return operationErrorResponse(context, error, DownloadBatchOperationError)
+        return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
     })
   }
   app.post(
-    "/api/download-batches/:batchId/items/:itemId/retry",
+    "/api/library/items/:itemId/retry",
     zValidator("json", retryDownloadItemSchema),
     (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
         return context.json(
           options.downloads.retry(
-            context.req.param("batchId"),
             context.req.param("itemId"),
             context.req.valid("json").lowQualityApproved,
           ),
         )
       } catch (error) {
-        return operationErrorResponse(context, error, DownloadBatchOperationError)
+        return operationErrorResponse(context, error, DownloadQueueOperationError)
+      }
+    },
+  )
+  app.post(
+    "/api/library/items/:itemId/approve-low-quality",
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(
+          options.downloads.approveLowQuality(context.req.param("itemId")),
+        )
+      } catch (error) {
+        return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
     },
   )
   app.delete(
-    "/api/download-batches/:batchId/items/:itemId",
+    "/api/library/items/:itemId/download",
     (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
         return context.json(
           options.downloads.cancel(
-            context.req.param("batchId"),
             context.req.param("itemId"),
           ),
         )
       } catch (error) {
-        return operationErrorResponse(context, error, DownloadBatchOperationError)
+        return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
     },
   )

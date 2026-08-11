@@ -14,8 +14,9 @@
     "build:server": "bun build src/server/bun.ts --target=bun --minify --outfile plugins/insu-player/skills/watch-video/assets/server/insu-player-server.js",
     "check": "tsc --noEmit",
     "doctor": "react-doctor . --no-telemetry --no-supply-chain --yes",
-    "test": "bun test src plugins/insu-player/chrome-extension/media-discovery.test.js",
-    "test:e2e": "playwright test"
+    "test": "bun test src plugins/insu-player/chrome-extension/*.test.js",
+    "test:e2e": "playwright test",
+    "test:extension": "PLAYWRIGHT_BROWSERS_PATH=.local/insu-player/.agent-tools/playwright playwright test --config playwright.extension.config.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

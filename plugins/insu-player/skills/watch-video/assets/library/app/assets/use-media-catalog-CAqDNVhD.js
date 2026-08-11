@@ -1,0 +1,1 @@
+import{t as e}from"./client-DxVF7Sgd.js";import{t}from"./useQuery-B90hqcid.js";var n=new Set([`discovering`,`probing`,`downloading`,`merging`,`validating`]);function r(r){return t({queryKey:[`job-media`,r],queryFn:()=>e.media(r),enabled:!!r,refetchInterval:e=>e.state.data?.operation&&n.has(e.state.data.operation.state)?1e3:!1})}export{r as t};

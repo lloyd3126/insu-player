@@ -582,7 +582,7 @@
 
 .library-panel { border: 1px solid var(--line); background: #131416; }
 .library-view-tabs { min-height: 0; }
-.library-toolbar { padding: 1.2rem; border-bottom: 1px solid var(--line); }
+.library-toolbar { display: grid; gap: 0.8rem; padding: 1.2rem; border-bottom: 1px solid var(--line); }
 .library-toolbar__controls {
   display: grid;
   width: 100%;
@@ -610,6 +610,20 @@
 .library-media-search { width: 100%; margin-bottom: 1.2rem; }
 .library-media-search input { width: 100%; min-width: 0; }
 .library-media-panel .video-grid { padding: 0; }
+.library-media-panel > .library-queue-control { margin-bottom: 0.8rem; }
+.library-queue-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  background: #141516;
+}
+.library-queue-control > div { display: grid; gap: 0.25rem; }
+.library-queue-control strong { font-size: 0.78rem; font-weight: 560; }
+.library-queue-control small { color: var(--quiet); font-size: 0.66rem; }
+.library-queue-control > small[role="alert"] { color: var(--destructive); }
 
 .video-grid {
   display: grid;
@@ -726,6 +740,16 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
+.video-grid-card--download { align-content: start; gap: 0.7rem; }
+.video-grid-card--download [data-slot="card-header"],
+.video-grid-card--download [data-slot="card-content"],
+.video-grid-card--download [data-slot="card-footer"] { padding: 0 0.1rem; }
+.video-grid-card--download [data-slot="card-footer"] {
+  min-height: 2.25rem;
+  justify-content: flex-end;
+}
+.video-grid-card__thumbnail--download { border: 1px solid var(--line); background: #1a1b1d; }
+.video-grid-card__thumbnail--download > svg { width: 1.6rem; height: 1.6rem; color: var(--muted-foreground); }
 
 .search-control {
   position: relative;
@@ -782,6 +806,16 @@
 .job-title-cell small { color: var(--quiet); font: 0.64rem ui-monospace, monospace; }
 .job-thumbnail { display: grid; width: 5.6rem; aspect-ratio: 16 / 9; flex: 0 0 auto; place-items: center; overflow: hidden; background: #242529; color: var(--quiet); font-size: 0.55rem; }
 .job-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.job-thumbnail--download > svg { width: 1.1rem; height: 1.1rem; }
+.library-download-title { overflow: hidden; }
+.library-download-title > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-download-status { display: grid; min-width: 0; gap: 0.45rem; }
+.library-download-status__heading { display: flex; min-width: 0; align-items: center; gap: 0.5rem; }
+.library-download-status__heading > small { overflow: hidden; color: var(--quiet); font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
+.library-download-status [data-slot="progress"] { min-width: 7rem; }
+.library-download-status [data-slot="progress-value"] { color: var(--quiet); font-size: 0.64rem; }
+.library-download-actions { display: grid; justify-items: end; gap: 0.35rem; }
+.library-download-actions > small { max-width: 14rem; color: var(--destructive); font-size: 0.62rem; text-align: right; }
 
 .status-badge { max-width: 100%; border-radius: 0.2rem; font-weight: 520; white-space: normal; }
 .status-badge--active { border-color: color-mix(in srgb, var(--claw) 55%, transparent); color: #c3bcff; }
@@ -1089,34 +1123,10 @@
 .model-detail-progress span { color: var(--quiet); font-size: 0.7rem; }
 .model-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; }
 
-/* Direct media queue */
+/* Direct media input */
+.add-media-content { width: min(100%, 60rem); margin: 0 auto; }
 .add-media-form { display: grid; gap: 1rem; }
 .add-media-form textarea { min-height: 8rem; resize: vertical; }
-.download-queue-section { display: flex; min-height: 12rem; max-height: 22rem; flex: 1 1 auto; flex-direction: column; }
-.download-queue-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 1rem; padding: 0 0 0.8rem; }
-.download-queue-heading > div { display: grid; gap: 0.25rem; }
-.download-queue-heading strong { font-size: 0.85rem; font-weight: 560; }
-.download-queue-heading small { color: var(--quiet); font-size: 0.68rem; }
-.download-queue-table-region { min-height: 0; flex: 1 1 auto; overflow: auto; scrollbar-gutter: stable; }
-.download-queue-table { min-width: 58rem; table-layout: fixed; }
-.download-queue-table th:nth-child(2),
-.download-queue-table td:nth-child(2) { width: 8rem; }
-.download-queue-table th:nth-child(3),
-.download-queue-table td:nth-child(3) { width: 16rem; }
-.download-queue-table th:nth-child(4),
-.download-queue-table td:nth-child(4) { width: 8.5rem; }
-.download-queue-source { display: grid; min-width: 0; gap: 0.25rem; }
-.download-queue-source strong,
-.download-queue-source small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.download-queue-source small { color: var(--quiet); }
-.download-queue-progress { display: flex; gap: 0.35rem 0.75rem; }
-.download-queue-progress [data-slot="progress-label"],
-.download-queue-progress [data-slot="progress-value"] { color: var(--quiet); font-size: 0.68rem; font-weight: 400; }
-.download-queue-actions { display: flex; justify-content: flex-end; }
-.download-queue-action-stack { display: grid; justify-items: end; gap: 0.35rem; }
-.download-queue-action-stack small { max-width: 10rem; color: var(--destructive); font-size: 0.62rem; text-align: right; }
-.downloaded-media-summary { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--muted-foreground); font-size: 0.72rem; }
-.downloaded-media-summary svg { width: 1rem; height: 1rem; color: #75d6a0; }
 
 /* Video summaries */
 .video-summary-panel { display: flex; height: 100%; min-height: 0; flex-direction: column; gap: 1.15rem; overflow: auto; padding-inline-end: 0.9rem; scrollbar-gutter: stable; }
@@ -1379,6 +1389,8 @@
   .app-dialog__body { padding: 1rem; }
   .library-toolbar__controls { grid-template-columns: minmax(0, 1fr); }
   .library-toolbar__controls > [data-slot="button"] { width: 100%; }
+  .library-queue-control { align-items: stretch; flex-direction: column; }
+  .library-queue-control > [data-slot="button"] { width: 100%; }
   .search-control { flex: 1 1 100%; }
   .search-control input { width: 100%; min-width: 0; }
   .usage-layout .prompt-action-card [data-slot="card-header"] {

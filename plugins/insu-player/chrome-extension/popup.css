@@ -17,6 +17,7 @@ h2 { margin-top: 6px; font-size: 20px; }
 main { padding: 16px 20px 20px; }
 .status { padding: 10px 12px; border: 1px solid #2d3230; background: #111413; color: #c7cbc6; font-size: 12px; }
 .status[data-online="true"] { border-color: #53651f; color: #c9e871; }
+.connection-help { margin-top: 14px; color: #c7cbc6; font-size: 12px; line-height: 1.55; }
 .page-title { margin: 16px 0 10px; overflow: hidden; color: #f5f6f3; font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .candidate-list { display: grid; gap: 7px; max-height: 178px; overflow: auto; scrollbar-gutter: stable; }
 .candidate { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 9px; align-items: start; padding: 10px; border: 1px solid #292e2c; background: #0e1110; cursor: pointer; }

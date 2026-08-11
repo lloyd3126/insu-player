@@ -1,4 +1,10 @@
-import type { DownloadSourceKind } from "@shared/contracts/download-batch"
+import type { DownloadSourceKind } from "@shared/contracts/library"
+
+export const EXTENSION_CONNECTION_PROTOCOL_VERSION = 2 as const
+export const EXTENSION_CONNECT_REQUEST_MESSAGE =
+  "INSU_EXTENSION_CONNECT_REQUEST" as const
+export const EXTENSION_CONNECT_RESPONSE_MESSAGE =
+  "INSU_EXTENSION_CONNECT_RESPONSE" as const
 
 export interface BrowserCookieInput {
   name: string
@@ -34,6 +40,7 @@ export interface CreateBrowserMediaSessionResponse {
 }
 
 export interface ExtensionPairingStatus {
+  protocolVersion: typeof EXTENSION_CONNECTION_PROTOCOL_VERSION
   paired: boolean
   extensionOrigin: string | null
   pairedAt: string | null
@@ -43,6 +50,7 @@ export interface ExtensionPairingStatus {
 }
 
 export interface StartExtensionPairingResponse {
+  protocolVersion: typeof EXTENSION_CONNECTION_PROTOCOL_VERSION
   challengeId: string
   token: string
   expiresAt: string
@@ -50,6 +58,21 @@ export interface StartExtensionPairingResponse {
 }
 
 export interface ClaimExtensionPairingRequest {
+  protocolVersion: typeof EXTENSION_CONNECTION_PROTOCOL_VERSION
   challengeId: string
   token: string
+}
+
+export interface ExtensionConnectRequestMessage {
+  type: typeof EXTENSION_CONNECT_REQUEST_MESSAGE
+  protocolVersion: typeof EXTENSION_CONNECTION_PROTOCOL_VERSION
+  requestId: string
+}
+
+export interface ExtensionConnectResponseMessage {
+  type: typeof EXTENSION_CONNECT_RESPONSE_MESSAGE
+  protocolVersion: typeof EXTENSION_CONNECTION_PROTOCOL_VERSION
+  requestId: string
+  payload?: StartExtensionPairingResponse
+  error?: string
 }

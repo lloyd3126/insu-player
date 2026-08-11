@@ -54,10 +54,8 @@ CREATE TABLE `collections` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `download_batch_items` (
+CREATE TABLE `download_queue_items` (
 	`id` text PRIMARY KEY NOT NULL,
-	`batch_id` text NOT NULL,
-	`ordinal` integer NOT NULL,
 	`source_kind` text NOT NULL,
 	`page_url` text NOT NULL,
 	`source_url` text NOT NULL,
@@ -65,23 +63,22 @@ CREATE TABLE `download_batch_items` (
 	`session_id` text,
 	`operation_id` text NOT NULL,
 	`video_id` text,
+	`rights_confirmed` integer NOT NULL,
 	`low_quality_approved` integer NOT NULL,
 	`authentication` text NOT NULL,
 	`authentication_consent_at` text,
 	`created_at` text NOT NULL,
 	`completed_at` text,
-	FOREIGN KEY (`batch_id`) REFERENCES `download_batches`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`operation_id`) REFERENCES `operations`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `download_batch_item_source_idx` ON `download_batch_items` (`batch_id`,`source_key`);--> statement-breakpoint
-CREATE UNIQUE INDEX `download_batch_item_operation_idx` ON `download_batch_items` (`operation_id`);--> statement-breakpoint
-CREATE INDEX `download_batch_item_batch_idx` ON `download_batch_items` (`batch_id`,`ordinal`);--> statement-breakpoint
-CREATE TABLE `download_batches` (
+CREATE UNIQUE INDEX `download_queue_item_source_idx` ON `download_queue_items` (`source_key`);--> statement-breakpoint
+CREATE UNIQUE INDEX `download_queue_item_operation_idx` ON `download_queue_items` (`operation_id`);--> statement-breakpoint
+CREATE INDEX `download_queue_item_created_idx` ON `download_queue_items` (`created_at`);--> statement-breakpoint
+CREATE TABLE `download_queue_settings` (
 	`id` text PRIMARY KEY NOT NULL,
-	`state` text NOT NULL,
-	`rights_confirmed` integer NOT NULL,
-	`created_at` text NOT NULL,
+	`paused` integer DEFAULT false NOT NULL,
+	`concurrency` integer DEFAULT 2 NOT NULL,
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint

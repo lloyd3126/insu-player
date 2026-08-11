@@ -1,11 +1,17 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import {
+  BanIcon,
+  DownloadIcon,
+  PauseIcon,
   PlayIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
   SearchIcon,
   SettingsIcon,
 } from "lucide-react"
 import { useMemo, useState } from "react"
 
+import { api } from "@/api/client"
 import { useOverlay, type LibraryView } from "@/app/overlay-context"
 import {
   loadJobDetailDialog,
@@ -19,12 +25,7 @@ import {
 } from "@/components/shared/AsyncState"
 import { CaptionLanguageSelect } from "@/components/shared/CaptionLanguageSelect"
 import { Button } from "@/components/ui/button"
-import { MediaCard } from "@/features/library/MediaCard"
 import { Input } from "@/components/ui/input"
-import {
-  VideoCardRemovalDialog,
-  VideoListRemovalDialog,
-} from "@/features/job-detail/VideoRemovalDialog"
 import {
   Select,
   SelectContent,
@@ -33,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
   TableBody,
@@ -41,23 +43,33 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { useJobsQuery } from "@/hooks/use-jobs-query"
+import {
+  VideoCardRemovalDialog,
+  VideoListRemovalDialog,
+} from "@/features/job-detail/VideoRemovalDialog"
+import { MediaCard } from "@/features/library/MediaCard"
+import {
+  DownloadItemProgress,
+  DownloadMediaCard,
+} from "@/features/library/DownloadMediaCard"
+import { useLibraryQuery } from "@/hooks/use-library-query"
 import { getJobPreferredCaption, NO_CAPTION } from "@/lib/captions"
 import { cn } from "@/lib/utils"
-import type { JobSummary } from "@shared/contracts/job"
-import { ACTIVE_STATES, ATTENTION_STATES } from "@shared/domain/job-status"
+import type {
+  DownloadLibraryItem,
+  DownloadQueueSummary,
+  LibraryItem,
+  LibraryResponse,
+  MediaLibraryItem,
+} from "@shared/contracts/library"
 import { formatBytes } from "@shared/domain/format"
+import { ACTIVE_STATES, ATTENTION_STATES } from "@shared/domain/job-status"
 
 type Filter = "all" | "active" | "attention" | "watchable" | "ready"
 const FILTERS = [
@@ -67,13 +79,36 @@ const FILTERS = [
   { value: "watchable", label: "可觀看" },
   { value: "ready", label: "已完成" },
 ]
-const EMPTY_JOBS: JobSummary[] = []
+const ACTIVE_DOWNLOAD_STATES = new Set([
+  "checking",
+  "queued",
+  "downloading",
+  "verifying",
+])
+const ATTENTION_DOWNLOAD_STATES = new Set([
+  "needs_confirmation",
+  "failed",
+  "cancelled",
+])
 
-function matchesFilter(job: JobSummary, filter: Filter) {
-  const state = job.effectiveState || job.state
+function itemTitle(item: LibraryItem) {
+  return item.kind === "media" ? item.job.title : item.title
+}
+
+function itemVideoId(item: LibraryItem) {
+  return item.kind === "media" ? item.job.videoId : item.videoId
+}
+
+function matchesFilter(item: LibraryItem, filter: Filter) {
+  if (item.kind === "download") {
+    if (filter === "active") return ACTIVE_DOWNLOAD_STATES.has(item.state)
+    if (filter === "attention") return ATTENTION_DOWNLOAD_STATES.has(item.state)
+    return filter === "all"
+  }
+  const state = item.job.effectiveState || item.job.state
   if (filter === "active") return ACTIVE_STATES.has(state)
   if (filter === "attention") return ATTENTION_STATES.has(state)
-  if (filter === "watchable") return job.watchable
+  if (filter === "watchable") return item.job.watchable
   if (filter === "ready") return state === "ready"
   return true
 }
@@ -93,7 +128,7 @@ function LibrarySearch({
       <SearchIcon aria-hidden="true" />
       <Input
         type="search"
-        placeholder="搜尋標題或影音 ID"
+        placeholder="搜尋標題、影音 ID 或網址"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
@@ -101,7 +136,108 @@ function LibrarySearch({
   )
 }
 
-function JobRow({ job }: { job: JobSummary }) {
+function DownloadQueueControl({ queue }: { queue: DownloadQueueSummary }) {
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: queue.paused ? api.resumeDownloadQueue : api.pauseDownloadQueue,
+    onSuccess: (response) => {
+      queryClient.setQueryData<LibraryResponse>(["library"], response)
+    },
+  })
+  if (queue.activeCount === 0 && queue.queuedCount === 0 && !queue.paused) {
+    return null
+  }
+  return (
+    <div className="library-queue-control" aria-label="下載排程">
+      <div>
+        <strong>{queue.paused ? "下載排程已暫停" : "下載排程進行中"}</strong>
+        <small>
+          下載中 {queue.activeCount} 個 · 等待 {queue.queuedCount} 個 · 同時最多 {queue.concurrency} 個
+        </small>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={mutation.isPending}
+        onClick={() => mutation.mutate()}
+      >
+        {mutation.isPending ? (
+          <Spinner data-icon="inline-start" />
+        ) : queue.paused ? (
+          <PlayIcon data-icon="inline-start" />
+        ) : (
+          <PauseIcon data-icon="inline-start" />
+        )}
+        {queue.paused ? "繼續下載" : "暫停排程"}
+      </Button>
+      {mutation.isError ? <small role="alert">{mutation.error.message}</small> : null}
+    </div>
+  )
+}
+
+function DownloadItemActions({ item }: { item: DownloadLibraryItem }) {
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: (action: "cancel" | "retry" | "approve") => {
+      if (action === "cancel") return api.cancelLibraryDownload(item.id)
+      if (action === "approve") return api.approveLowQualityDownload(item.id)
+      return api.retryLibraryDownload(item.id)
+    },
+    onSuccess: (response) => {
+      queryClient.setQueryData<LibraryResponse>(["library"], response)
+    },
+  })
+  if (item.state === "needs_confirmation") {
+    return (
+      <div className="library-download-actions">
+        <Button
+          size="sm"
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate("approve")}
+        >
+          {mutation.isPending ? <Spinner data-icon="inline-start" /> : null}
+          同意低於 720p
+        </Button>
+        {mutation.isError ? <small role="alert">{mutation.error.message}</small> : null}
+      </div>
+    )
+  }
+  const retryable = item.state === "failed" || item.state === "cancelled"
+  const cancellable = ACTIVE_DOWNLOAD_STATES.has(item.state)
+  if (!retryable && !cancellable) return null
+  const action = retryable ? "retry" : "cancel"
+  const label = retryable ? `重新下載 ${item.title}` : `取消下載 ${item.title}`
+  return (
+    <div className="library-download-actions">
+      <Tooltip>
+        <TooltipTrigger
+          render={(
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={label}
+              disabled={mutation.isPending}
+              onClick={() => mutation.mutate(action)}
+            />
+          )}
+        >
+          {mutation.isPending ? (
+            <Spinner />
+          ) : retryable ? (
+            <RotateCcwIcon />
+          ) : (
+            <BanIcon />
+          )}
+        </TooltipTrigger>
+        <TooltipContent>{retryable ? "重新下載" : "取消下載"}</TooltipContent>
+      </Tooltip>
+      {mutation.isError ? <small role="alert">{mutation.error.message}</small> : null}
+    </div>
+  )
+}
+
+function MediaRow({ item }: { item: MediaLibraryItem }) {
+  const job = item.job
   const { actions } = useOverlay()
   const [selectedCaption, setSelectedCaption] = useState(() =>
     getJobPreferredCaption(job),
@@ -160,7 +296,7 @@ function JobRow({ job }: { job: JobSummary }) {
         <div className="job-actions">
           <Tooltip>
             <TooltipTrigger
-              render={
+              render={(
                 <Button
                   size="icon"
                   disabled={!job.watchable}
@@ -170,15 +306,15 @@ function JobRow({ job }: { job: JobSummary }) {
                   onPointerDown={() => void loadPlayerDialog()}
                   onClick={openPlayer}
                 />
-              }
+              )}
             >
-              <PlayIcon data-icon="inline-start" />
+              <PlayIcon />
             </TooltipTrigger>
             <TooltipContent>觀看</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
-              render={
+              render={(
                 <Button
                   size="icon"
                   variant="ghost"
@@ -188,9 +324,9 @@ function JobRow({ job }: { job: JobSummary }) {
                   onPointerDown={() => void loadJobDetailDialog()}
                   onClick={openDetails}
                 />
-              }
+              )}
             >
-              <SettingsIcon data-icon="inline-start" />
+              <SettingsIcon />
             </TooltipTrigger>
             <TooltipContent>設定</TooltipContent>
           </Tooltip>
@@ -201,12 +337,34 @@ function JobRow({ job }: { job: JobSummary }) {
   )
 }
 
-function JobGridCard({ job }: { job: JobSummary }) {
+function DownloadRow({ item }: { item: DownloadLibraryItem }) {
+  return (
+    <TableRow>
+      <TableCell data-label="影音">
+        <div className="job-title-cell">
+          <div className="job-thumbnail job-thumbnail--download">
+            <DownloadIcon aria-hidden="true" />
+          </div>
+          <div className="library-download-title">
+            <strong title={item.title}>{item.title}</strong>
+            <small title={item.pageUrl}>{item.pageUrl}</small>
+            <DownloadItemProgress item={item} />
+          </div>
+        </div>
+      </TableCell>
+      <TableCell data-label="字幕">—</TableCell>
+      <TableCell data-label="操作">
+        <DownloadItemActions item={item} />
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function MediaGridCard({ item }: { item: MediaLibraryItem }) {
+  const job = item.job
   const { actions } = useOverlay()
   const caption = getJobPreferredCaption(job)
-  const loadJobDialog = job.watchable
-    ? loadPlayerDialog
-    : loadJobDetailDialog
+  const loadJobDialog = job.watchable ? loadPlayerDialog : loadJobDetailDialog
   const openJob = async () => {
     await loadJobDialog()
     if (!job.watchable) {
@@ -230,21 +388,22 @@ function JobGridCard({ job }: { job: JobSummary }) {
   )
 }
 
-function Metrics({ jobs }: { jobs: JobSummary[] }) {
-  const totalSize = jobs.reduce((sum, job) => sum + job.sizeBytes, 0)
+function DownloadGridCard({ item }: { item: DownloadLibraryItem }) {
+  return (
+    <DownloadMediaCard item={item}>
+      <DownloadItemActions item={item} />
+    </DownloadMediaCard>
+  )
+}
+
+function Metrics({ items }: { items: LibraryItem[] }) {
+  const media = items.filter((item): item is MediaLibraryItem => item.kind === "media")
+  const totalSize = media.reduce((sum, item) => sum + item.job.sizeBytes, 0)
   const metrics = [
-    ["全部項目", jobs.length, "ARCHIVE"],
-    [
-      "處理中",
-      jobs.filter((job) => ACTIVE_STATES.has(job.effectiveState || job.state)).length,
-      "IN FLIGHT",
-    ],
-    [
-      "需要處理",
-      jobs.filter((job) => ATTENTION_STATES.has(job.effectiveState || job.state)).length,
-      "ATTENTION",
-    ],
-    ["可觀看", jobs.filter((job) => job.watchable).length, "SCREENABLE"],
+    ["全部項目", items.length, "ARCHIVE"],
+    ["處理中", items.filter((item) => matchesFilter(item, "active")).length, "IN FLIGHT"],
+    ["需要處理", items.filter((item) => matchesFilter(item, "attention")).length, "ATTENTION"],
+    ["可觀看", media.filter((item) => item.job.watchable).length, "SCREENABLE"],
     ["媒體容量", formatBytes(totalSize), "LOCAL STORAGE"],
   ] as const
   return (
@@ -262,12 +421,12 @@ function Metrics({ jobs }: { jobs: JobSummary[] }) {
 
 export function LibraryDialog() {
   const overlay = useOverlay()
-  const query = useJobsQuery()
-  const jobs = query.data?.jobs ?? EMPTY_JOBS
+  const query = useLibraryQuery()
+  const items = query.data?.items ?? []
   const active = overlay.state?.type === "library" ? overlay.state : null
   const search = active?.query ?? ""
   const filter = (active?.status ?? "all") as Filter
-  const selectedView = active?.view ?? (jobs.length > 0 ? "grid" : "list")
+  const selectedView = active?.view ?? (items.length > 0 ? "grid" : "list")
   const updateLibrary = (patch: {
     view?: LibraryView
     query?: string
@@ -286,28 +445,32 @@ export function LibraryDialog() {
   }
   const searched = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase("zh-TW")
-    return jobs.filter(
-      (job) =>
+    return items.filter((item) => {
+      const videoId = itemVideoId(item)
+      const sourceUrl = item.kind === "media" ? item.job.sourceUrl : item.pageUrl
+      return (
         !normalized ||
-          job.title.toLocaleLowerCase("zh-TW").includes(normalized) ||
-          job.videoId.toLocaleLowerCase("en").includes(normalized),
-    )
-  }, [jobs, search])
+        itemTitle(item).toLocaleLowerCase("zh-TW").includes(normalized) ||
+        Boolean(videoId?.toLocaleLowerCase("en").includes(normalized)) ||
+        sourceUrl.toLocaleLowerCase("en").includes(normalized)
+      )
+    })
+  }, [items, search])
   const filtered = useMemo(
-    () => searched.filter((job) => matchesFilter(job, filter)),
+    () => searched.filter((item) => matchesFilter(item, filter)),
     [filter, searched],
   )
   const feedback = (visibleCount: number) => (
     <>
       {query.isPending ? <LoadingState label="正在讀取影片中心" /> : null}
       {query.isError ? <ErrorState message={query.error.message} /> : null}
-      {query.isSuccess && jobs.length === 0 ? (
+      {query.isSuccess && items.length === 0 ? (
         <EmptyState
           title="目前還沒有影音"
-          description="把影音網址交給 Agent，任務建立後會自動出現在這裡。"
+          description="點首頁的加入影音，送出後會立即在這裡看到下載進度。"
         />
       ) : null}
-      {query.isSuccess && jobs.length > 0 && visibleCount === 0 ? (
+      {query.isSuccess && items.length > 0 && visibleCount === 0 ? (
         <EmptyState
           title="找不到符合條件的影音"
           description="調整搜尋字詞或狀態篩選。"
@@ -322,7 +485,7 @@ export function LibraryDialog() {
       onOpenChange={(open) => (open ? undefined : overlay.actions.close("library"))}
       kicker="LOCAL LIBRARY · LIVE"
       title="影片中心"
-      description="瀏覽我的影音，或查看處理狀態與字幕詳細資訊"
+      description="下載中與已完成的影音都集中在同一個位置"
       size="screen"
       layout="tabbed"
     >
@@ -347,6 +510,7 @@ export function LibraryDialog() {
           value="grid"
           className="grouped-dialog-panel library-view-panel library-media-panel"
         >
+          {query.data ? <DownloadQueueControl queue={query.data.queue} /> : null}
           <LibrarySearch
             className="library-media-search"
             value={search}
@@ -355,9 +519,13 @@ export function LibraryDialog() {
           {feedback(searched.length)}
           {searched.length > 0 ? (
             <div className="video-grid">
-              {searched.map((job) => (
-                <JobGridCard key={job.videoId} job={job} />
-              ))}
+              {searched.map((item) =>
+                item.kind === "media" ? (
+                  <MediaGridCard key={item.id} item={item} />
+                ) : (
+                  <DownloadGridCard key={item.id} item={item} />
+                ),
+              )}
             </div>
           ) : null}
         </TabsContent>
@@ -366,9 +534,10 @@ export function LibraryDialog() {
           value="list"
           className="grouped-dialog-panel library-view-panel library-details-panel"
         >
-          {query.data ? <Metrics jobs={jobs} /> : null}
+          {query.data ? <Metrics items={items} /> : null}
           <section className="library-panel" aria-label="影音詳細資訊">
             <div className="library-toolbar">
+              {query.data ? <DownloadQueueControl queue={query.data.queue} /> : null}
               <div className="library-toolbar__controls">
                 <LibrarySearch
                   value={search}
@@ -400,7 +569,7 @@ export function LibraryDialog() {
                   aria-label="立即重新整理"
                   onClick={() => query.refetch()}
                 >
-                  <RefreshCwIcon data-icon="inline-start" />
+                  <RefreshCwIcon />
                 </Button>
               </div>
             </div>
@@ -421,9 +590,13 @@ export function LibraryDialog() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((job) => (
-                      <JobRow key={job.videoId} job={job} />
-                    ))}
+                    {filtered.map((item) =>
+                      item.kind === "media" ? (
+                        <MediaRow key={item.id} item={item} />
+                      ) : (
+                        <DownloadRow key={item.id} item={item} />
+                      ),
+                    )}
                   </TableBody>
                 </Table>
               </div>

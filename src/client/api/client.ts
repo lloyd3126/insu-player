@@ -15,12 +15,11 @@ import type {
   TranscriptionModelDetailResponse,
 } from "@shared/contracts/resources"
 import type {
-  CreateDownloadBatchRequest,
-  CreateDownloadBatchResponse,
-  DownloadBatch,
-  DownloadBatchListResponse,
+  CreateLibraryItemsRequest,
+  CreateLibraryItemsResponse,
   DownloadSourceInput,
-} from "@shared/contracts/download-batch"
+  LibraryResponse,
+} from "@shared/contracts/library"
 import type {
   ExtensionPairingStatus,
   StartExtensionPairingResponse,
@@ -159,13 +158,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind, source, ...(videoId ? { videoId } : {}) }),
     }),
-  downloadBatches: () =>
-    fetchJson<DownloadBatchListResponse>("/api/download-batches"),
-  createDownloadBatch: (sources: DownloadSourceInput[], rightsConfirmed: true) =>
-    fetchJson<CreateDownloadBatchResponse>("/api/download-batches", {
+  library: () => fetchJson<LibraryResponse>("/api/library"),
+  createLibraryItems: (sources: DownloadSourceInput[], rightsConfirmed: true) =>
+    fetchJson<CreateLibraryItemsResponse>("/api/library/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources, rightsConfirmed } satisfies CreateDownloadBatchRequest),
+      body: JSON.stringify({ sources, rightsConfirmed } satisfies CreateLibraryItemsRequest),
     }),
   extensionPairing: () =>
     fetchJson<ExtensionPairingStatus>("/api/extension/pairing"),
@@ -177,34 +175,29 @@ export const api = {
     fetchJson<{ paired: false }>("/api/extension/pairing", {
       method: "DELETE",
     }),
-  retryDownloadBatchItem: (
-    batchId: string,
-    itemId: string,
-    lowQualityApproved = false,
-  ) =>
-    fetchJson<DownloadBatch>(
-      `/api/download-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/retry`,
+  retryLibraryDownload: (itemId: string, lowQualityApproved = false) =>
+    fetchJson<LibraryResponse>(
+      `/api/library/items/${encodeURIComponent(itemId)}/retry`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lowQualityApproved }),
       },
     ),
-  cancelDownloadBatchItem: (batchId: string, itemId: string) =>
-    fetchJson<DownloadBatch>(
-      `/api/download-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}`,
+  approveLowQualityDownload: (itemId: string) =>
+    fetchJson<LibraryResponse>(
+      `/api/library/items/${encodeURIComponent(itemId)}/approve-low-quality`,
+      { method: "POST" },
+    ),
+  cancelLibraryDownload: (itemId: string) =>
+    fetchJson<LibraryResponse>(
+      `/api/library/items/${encodeURIComponent(itemId)}/download`,
       { method: "DELETE" },
     ),
-  pauseDownloadBatch: (batchId: string) =>
-    fetchJson<DownloadBatch>(
-      `/api/download-batches/${encodeURIComponent(batchId)}/pause`,
-      { method: "POST" },
-    ),
-  resumeDownloadBatch: (batchId: string) =>
-    fetchJson<DownloadBatch>(
-      `/api/download-batches/${encodeURIComponent(batchId)}/resume`,
-      { method: "POST" },
-    ),
+  pauseDownloadQueue: () =>
+    fetchJson<LibraryResponse>("/api/download-queue/pause", { method: "POST" }),
+  resumeDownloadQueue: () =>
+    fetchJson<LibraryResponse>("/api/download-queue/resume", { method: "POST" }),
   downloadModel: (modelId: string) =>
     fetchJson<TranscriptionModelDetailResponse>(
       `/api/models/${encodeURIComponent(modelId)}/download`,

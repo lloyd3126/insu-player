@@ -12,7 +12,7 @@ import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { jobs as mediaItems } from "@server/db/schema"
 import { JobRepository } from "@server/repositories/job-repository"
-import { DownloadBatchService } from "@server/services/download-batch-service"
+import { DownloadQueueService } from "@server/services/download-queue-service"
 import { ExtensionPairingService } from "@server/services/extension-pairing-service"
 import { MediaSessionService } from "@server/services/media-session-service"
 import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
@@ -501,7 +501,7 @@ const jobs = new JobRepository(workspace, opened.db)
 const mediaSessions = new MediaSessionService(workspace)
 const app = createApplication({
   jobs,
-  downloads: new DownloadBatchService(
+  downloads: new DownloadQueueService(
     workspace,
     opened.db,
     jobs,

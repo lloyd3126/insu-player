@@ -27,6 +27,7 @@ function VideoRemovalFlow({
         : current,
     )
     void queryClient.invalidateQueries({ queryKey: ["jobs"] })
+    void queryClient.invalidateQueries({ queryKey: ["library"] })
     overlay.actions.open(
       { type: "library", view: null },
       { replace: true, returnTo: null },

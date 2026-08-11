@@ -2,32 +2,95 @@ import {
   candidateFingerprint,
   isSupportedMediaUrl,
 } from "./media-discovery.js"
+import {
+  CONNECTION_PROTOCOL_VERSION,
+  CONNECT_REQUEST_MESSAGE,
+  isConnectionChallenge,
+  isCurrentInsuHealth,
+  normalizeConnection,
+  normalizeLoopbackOrigin,
+} from "./connection-protocol.js"
 
 const STORAGE_KEY = "insuConnection"
 const SCAN_KEY = "insuScannedTabs"
 const CANDIDATE_KEY_PREFIX = "insuCandidates:"
 
 async function connection() {
-  return (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY] || null
+  const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY]
+  const current = normalizeConnection(stored)
+  if (stored && !current) await chrome.storage.local.remove(STORAGE_KEY)
+  return current
 }
 
 async function setConnection(value) {
-  await chrome.storage.local.set({ [STORAGE_KEY]: value })
+  const current = normalizeConnection(value)
+  if (!current) throw new Error("拒絕儲存無效的 INSU Player 連接")
+  await chrome.storage.local.set({ [STORAGE_KEY]: current })
 }
 
-async function apiFetch(path, init = {}, overrideOrigin) {
+class ApiError extends Error {
+  constructor(message, status, code) {
+    super(message)
+    this.status = status
+    this.code = code
+  }
+}
+
+async function apiFetch(
+  path,
+  init = {},
+  { overrideOrigin, authenticated = true } = {},
+) {
   const current = await connection()
   const serverOrigin = overrideOrigin || current?.serverOrigin
   if (!serverOrigin) throw new Error("尚未連接 INSU Player")
   const headers = new Headers(init.headers || {})
-  if (current?.token) headers.set("X-INSU-Extension-Token", current.token)
+  headers.set("X-INSU-Extension-Protocol", String(CONNECTION_PROTOCOL_VERSION))
+  headers.set(
+    "X-INSU-Extension-Origin",
+    new URL(chrome.runtime.getURL("/")).origin,
+  )
+  if (authenticated && current?.token) {
+    headers.set("X-INSU-Extension-Token", current.token)
+  }
   if (init.body) headers.set("Content-Type", "application/json")
   const response = await fetch(`${serverOrigin}${path}`, { ...init, headers })
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
-    throw new Error(payload.error || `INSU Player 回應 ${response.status}`)
+    throw new ApiError(
+      payload.error || `INSU Player 回應 ${response.status}`,
+      response.status,
+      payload.code,
+    )
   }
   return response.json()
+}
+
+async function inspectInsuOrigin(value) {
+  const serverOrigin = normalizeLoopbackOrigin(value)
+  if (!serverOrigin) throw new Error("目前分頁不是本機 INSU Player")
+  const response = await fetch(`${serverOrigin}/api/health`, {
+    cache: "no-store",
+  })
+  const health = response.ok ? await response.json() : null
+  if (!isCurrentInsuHealth(health)) {
+    throw new Error("目前分頁不是相同版本的 INSU Player")
+  }
+  return { serverOrigin, health }
+}
+
+async function requestConnectionFromTab(tabId, message) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, message)
+    if (response) return response
+  } catch {
+    // A homepage that was open before installation does not have the content bridge yet.
+  }
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content-bridge.js"],
+  })
+  return chrome.tabs.sendMessage(tabId, message)
 }
 
 async function scannedTabs() {
@@ -90,32 +153,71 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const run = async () => {
     switch (message?.type) {
-      case "PAIR_WITH_INSU": {
-        const payload = message.payload
+      case "CONNECT_CURRENT_INSU": {
+        const tab = await chrome.tabs.get(message.tabId).catch(() => null)
+        const { serverOrigin } = await inspectInsuOrigin(message.serverOrigin)
+        if (!tab?.url || new URL(tab.url).origin !== serverOrigin) {
+          throw new Error("目前分頁已變更，請回到 INSU Player 後再試一次")
+        }
+        const requestId = `connect-${crypto.randomUUID()}`
+        const bridgeResult = await requestConnectionFromTab(message.tabId, {
+          type: "REQUEST_INSU_CONNECTION",
+          requestId,
+          pageMessageType: CONNECT_REQUEST_MESSAGE,
+          protocolVersion: CONNECTION_PROTOCOL_VERSION,
+        })
+        if (!bridgeResult?.ok) {
+          throw new Error(bridgeResult?.error || "INSU Player 首頁沒有回應連接要求")
+        }
+        const payload = bridgeResult.payload
+        if (!isConnectionChallenge(payload, serverOrigin)) {
+          throw new Error("INSU Player 回傳了無效或過期的連接資料")
+        }
         const result = await apiFetch(
           "/api/extension/pairing/claim",
           {
             method: "POST",
             body: JSON.stringify({
+              protocolVersion: CONNECTION_PROTOCOL_VERSION,
               challengeId: payload.challengeId,
               token: payload.token,
             }),
           },
-          payload.serverOrigin,
+          { overrideOrigin: serverOrigin, authenticated: false },
         )
         await setConnection({
-          serverOrigin: payload.serverOrigin,
+          protocolVersion: CONNECTION_PROTOCOL_VERSION,
+          serverOrigin,
           token: payload.token,
-          pairedAt: new Date().toISOString(),
+          connectedAt: new Date().toISOString(),
         })
-        return result
+        const health = await apiFetch("/api/extension/health")
+        if (!isCurrentInsuHealth(health)) {
+          await chrome.storage.local.remove(STORAGE_KEY)
+          throw new Error("連接驗證失敗，請重新載入擴充功能後再試一次")
+        }
+        return { ...result, ...health, serverOrigin }
+      }
+      case "CHECK_CURRENT_INSU": {
+        const tab = await chrome.tabs.get(message.tabId).catch(() => null)
+        const inspected = await inspectInsuOrigin(message.serverOrigin)
+        if (!tab?.url || new URL(tab.url).origin !== inspected.serverOrigin) {
+          throw new Error("目前分頁不是本機 INSU Player")
+        }
+        return { available: true, serverOrigin: inspected.serverOrigin }
       }
       case "INSU_SERVER_ORIGIN": {
         const current = await connection()
-        if (!current?.token || !message.serverOrigin) return { updated: false }
+        const serverOrigin = normalizeLoopbackOrigin(message.serverOrigin)
+        if (!current?.token || !serverOrigin) return { updated: false }
         try {
-          await apiFetch("/api/extension/health", {}, message.serverOrigin)
-          await setConnection({ ...current, serverOrigin: message.serverOrigin })
+          const health = await apiFetch(
+            "/api/extension/health",
+            {},
+            { overrideOrigin: serverOrigin },
+          )
+          if (!isCurrentInsuHealth(health)) return { updated: false }
+          await setConnection({ ...current, serverOrigin })
           return { updated: true }
         } catch {
           return { updated: false }
@@ -126,8 +228,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (!current) return { paired: false }
         try {
           const health = await apiFetch("/api/extension/health")
+          if (!isCurrentInsuHealth(health)) {
+            await chrome.storage.local.remove(STORAGE_KEY)
+            return { paired: false, error: "擴充功能版本與目前服務不一致" }
+          }
           return { paired: true, ...current, ...health }
         } catch (error) {
+          if (
+            error instanceof ApiError &&
+            (error.status === 401 ||
+              error.code === "incompatible-extension-protocol")
+          ) {
+            await chrome.storage.local.remove(STORAGE_KEY)
+          }
           return { paired: false, error: error.message }
         }
       }

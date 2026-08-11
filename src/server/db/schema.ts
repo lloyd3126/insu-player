@@ -239,23 +239,10 @@ export const mediaDownloadRuns = sqliteTable(
   ],
 )
 
-export const downloadBatches = sqliteTable("download_batches", {
-  id: text("id").primaryKey(),
-  state: text("state").notNull(),
-  rightsConfirmed: integer("rights_confirmed", { mode: "boolean" })
-    .notNull(),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-})
-
-export const downloadBatchItems = sqliteTable(
-  "download_batch_items",
+export const downloadQueueItems = sqliteTable(
+  "download_queue_items",
   {
     id: text("id").primaryKey(),
-    batchId: text("batch_id")
-      .notNull()
-      .references(() => downloadBatches.id, { onDelete: "cascade" }),
-    ordinal: integer("ordinal").notNull(),
     sourceKind: text("source_kind").notNull(),
     pageUrl: text("page_url").notNull(),
     sourceUrl: text("source_url").notNull(),
@@ -265,6 +252,8 @@ export const downloadBatchItems = sqliteTable(
       .notNull()
       .references(() => operations.id, { onDelete: "cascade" }),
     videoId: text("video_id"),
+    rightsConfirmed: integer("rights_confirmed", { mode: "boolean" })
+      .notNull(),
     lowQualityApproved: integer("low_quality_approved", { mode: "boolean" })
       .notNull(),
     authentication: text("authentication").notNull(),
@@ -273,14 +262,18 @@ export const downloadBatchItems = sqliteTable(
     completedAt: text("completed_at"),
   },
   (table) => [
-    uniqueIndex("download_batch_item_source_idx").on(
-      table.batchId,
-      table.sourceKey,
-    ),
-    uniqueIndex("download_batch_item_operation_idx").on(table.operationId),
-    index("download_batch_item_batch_idx").on(table.batchId, table.ordinal),
+    uniqueIndex("download_queue_item_source_idx").on(table.sourceKey),
+    uniqueIndex("download_queue_item_operation_idx").on(table.operationId),
+    index("download_queue_item_created_idx").on(table.createdAt),
   ],
 )
+
+export const downloadQueueSettings = sqliteTable("download_queue_settings", {
+  id: text("id").primaryKey(),
+  paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+  concurrency: integer("concurrency").notNull().default(2),
+  updatedAt: text("updated_at").notNull(),
+})
 
 export const extensionPairings = sqliteTable("extension_pairings", {
   id: text("id").primaryKey(),

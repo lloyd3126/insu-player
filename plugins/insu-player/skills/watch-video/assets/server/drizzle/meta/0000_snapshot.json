@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "78d2f845-9ee7-4388-afc2-fff909aacfd9",
+  "id": "75df0ef0-aedb-4d77-9a64-716afe2c41f5",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "active_subtitle_tracks": {
@@ -398,27 +398,13 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "download_batch_items": {
-      "name": "download_batch_items",
+    "download_queue_items": {
+      "name": "download_queue_items",
       "columns": {
         "id": {
           "name": "id",
           "type": "text",
           "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "batch_id": {
-          "name": "batch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "ordinal": {
-          "name": "ordinal",
-          "type": "integer",
-          "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
@@ -471,6 +457,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "rights_confirmed": {
+          "name": "rights_confirmed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "low_quality_approved": {
           "name": "low_quality_approved",
           "type": "integer",
@@ -508,47 +501,32 @@
         }
       },
       "indexes": {
-        "download_batch_item_source_idx": {
-          "name": "download_batch_item_source_idx",
+        "download_queue_item_source_idx": {
+          "name": "download_queue_item_source_idx",
           "columns": [
-            "batch_id",
             "source_key"
           ],
           "isUnique": true
         },
-        "download_batch_item_operation_idx": {
-          "name": "download_batch_item_operation_idx",
+        "download_queue_item_operation_idx": {
+          "name": "download_queue_item_operation_idx",
           "columns": [
             "operation_id"
           ],
           "isUnique": true
         },
-        "download_batch_item_batch_idx": {
-          "name": "download_batch_item_batch_idx",
+        "download_queue_item_created_idx": {
+          "name": "download_queue_item_created_idx",
           "columns": [
-            "batch_id",
-            "ordinal"
+            "created_at"
           ],
           "isUnique": false
         }
       },
       "foreignKeys": {
-        "download_batch_items_batch_id_download_batches_id_fk": {
-          "name": "download_batch_items_batch_id_download_batches_id_fk",
-          "tableFrom": "download_batch_items",
-          "tableTo": "download_batches",
-          "columnsFrom": [
-            "batch_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "download_batch_items_operation_id_operations_id_fk": {
-          "name": "download_batch_items_operation_id_operations_id_fk",
-          "tableFrom": "download_batch_items",
+        "download_queue_items_operation_id_operations_id_fk": {
+          "name": "download_queue_items_operation_id_operations_id_fk",
+          "tableFrom": "download_queue_items",
           "tableTo": "operations",
           "columnsFrom": [
             "operation_id"
@@ -564,8 +542,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "download_batches": {
-      "name": "download_batches",
+    "download_queue_settings": {
+      "name": "download_queue_settings",
       "columns": {
         "id": {
           "name": "id",
@@ -574,26 +552,21 @@
           "notNull": true,
           "autoincrement": false
         },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "rights_confirmed": {
-          "name": "rights_confirmed",
+        "paused": {
+          "name": "paused",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": false
         },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
+        "concurrency": {
+          "name": "concurrency",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": 2
         },
         "updated_at": {
           "name": "updated_at",

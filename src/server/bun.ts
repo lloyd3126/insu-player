@@ -21,7 +21,7 @@ import {
 } from "@server/runtime-contract"
 import { MediaService } from "@server/services/media-service"
 import { NoteService } from "@server/services/note-service"
-import { DownloadBatchService } from "@server/services/download-batch-service"
+import { DownloadQueueService } from "@server/services/download-queue-service"
 import { ExtensionPairingService } from "@server/services/extension-pairing-service"
 import { MediaSessionService } from "@server/services/media-session-service"
 import { RemovalService } from "@server/services/removal-service"
@@ -199,7 +199,7 @@ const extensionPairing = new ExtensionPairingService(
 const app = createApplication({
   jobs,
   media: new MediaService(workspace, jobs, mediaScript),
-  downloads: new DownloadBatchService(
+  downloads: new DownloadQueueService(
     workspace,
     db,
     jobs,

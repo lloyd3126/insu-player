@@ -40,33 +40,9 @@ describe("overlay routes", () => {
     })).toBe("/extension/usage")
     expect(overlayFromLocation("/extension/library")).toBeNull()
     expect(overlayFromLocation("/extension/unknown")).toBeNull()
-    expect(overlayFromLocation("/library/add/downloads")).toEqual({
-      type: "add-media",
-      tab: "downloads",
-    })
-    expect(pathForOverlay({
-      type: "add-media",
-      tab: "handoff",
-    })).toBe("/library/add/handoff")
-    expect(
-      overlayFromLocation(
-        "/library/add/downloads",
-        "?batch=batch-1770000000000-deadbeef",
-      ),
-    ).toEqual({
-      type: "add-media",
-      tab: "downloads",
-      batchId: "batch-1770000000000-deadbeef",
-    })
-    expect(pathForOverlay({
-      type: "add-media",
-      tab: "handoff",
-      batchId: "batch-1770000000000-deadbeef",
-    })).toBe("/library/add/handoff?batch=batch-1770000000000-deadbeef")
-    expect(
-      overlayFromLocation("/library/add/downloads", "?batch=batch-demo"),
-    ).toEqual({ type: "add-media", tab: "downloads" })
-    expect(overlayFromLocation("/library/add")).toBeNull()
+    expect(overlayFromLocation("/library/add")).toEqual({ type: "add-media" })
+    expect(pathForOverlay({ type: "add-media" })).toBe("/library/add")
+    expect(overlayFromLocation("/library/add/downloads")).toBeNull()
     expect(overlayFromLocation("/library/add/unknown")).toBeNull()
     expect(overlayFromLocation("/settings/models/cloud.groq.whisper-large-v3")).toEqual({
       type: "transcription-settings",

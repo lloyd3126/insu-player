@@ -6,6 +6,11 @@ import {
   CHECK_SOURCE_SUPPORT_PROMPT,
   buildAddVideoPrompt,
 } from "../../../src/shared/prompts/insu-prompts"
+import {
+  EXTENSION_CONNECTION_PROTOCOL_VERSION,
+  EXTENSION_CONNECT_REQUEST_MESSAGE,
+  EXTENSION_CONNECT_RESPONSE_MESSAGE,
+} from "../../../src/shared/contracts/browser-extension"
 
 test.describe("INSU Player home @smoke", () => {
   test("shows six ordered text-only navigation destinations", async ({ page }) => {
@@ -62,96 +67,61 @@ test.describe("INSU Player home @smoke", () => {
     await expect(page).toHaveURL(/\/$/)
   })
 
-  test("opens the direct download queue from the homepage", async ({ page }) => {
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
-    let batch: Record<string, unknown> | null = null
-    const completedBatch = {
-      id: "batch-1770000000000-deadbeef",
-      state: "complete",
-      rightsConfirmed: true,
+  test("adds media from the homepage and shows it directly in the library", async ({ page }) => {
+    const pendingItem = {
+      kind: "download",
+      id: "library-demo",
+      sourceKind: "page",
+      pageUrl: "https://www.youtube.com/watch?v=demo-video",
+      sourceUrl: "https://www.youtube.com/watch?v=demo-video",
+      videoId: null,
+      title: "youtube.com",
+      thumbnailUrl: null,
+      state: "queued",
+      stage: "awaiting-download",
+      progress: 0,
+      message: "等待下載",
+      errorCode: null,
+      queueAhead: 0,
+      lowQualityApproved: false,
+      authentication: "none",
+      authenticationConsentAt: null,
       createdAt: "2026-08-11T00:00:00Z",
-      updatedAt: "2026-08-11T00:01:00Z",
-      items: [
-        {
-          id: "item-demo",
-          ordinal: 0,
-          sourceKind: "page",
-          pageUrl: "https://www.youtube.com/watch?v=demo-video",
-          sourceUrl: "https://www.youtube.com/watch?v=demo-video",
-          operationId: "operation-demo",
-          videoId: "demo-video",
-          title: "Demo Video",
-          state: "downloaded",
-          stage: "complete",
-          progress: 100,
-          message: "已下載並驗證 1080p MP4",
-          errorCode: null,
-          lowQualityApproved: false,
-          authentication: "none",
-          authenticationConsentAt: null,
-          createdAt: "2026-08-11T00:00:00Z",
-          updatedAt: "2026-08-11T00:01:00Z",
-          completedAt: "2026-08-11T00:01:00Z",
-        },
-      ],
+      updatedAt: "2026-08-11T00:00:00Z",
+      completedAt: null,
     }
-    const historicalBatch = {
-      ...completedBatch,
-      id: "batch-1760000000000-cafebabe",
-      items: [
-        {
-          ...completedBatch.items[0],
-          id: "item-historical",
-          operationId: "operation-historical",
-          videoId: "historical-video",
-          title: "Historical Video",
-          pageUrl: "https://www.youtube.com/watch?v=historical-video",
-          sourceUrl: "https://www.youtube.com/watch?v=historical-video",
-        },
-      ],
-    }
-    await page.route("**/api/jobs", (route) =>
+    await page.route("**/api/library/items", (route) =>
+      route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({ accepted: true, itemIds: [pendingItem.id] }),
+      }),
+    )
+    await page.route("**/api/library", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          jobs: [
-            { videoId: "demo-video", state: "downloaded" },
-            { videoId: "historical-video", state: "downloaded" },
-          ],
-          serverTime: "2026-08-11T00:01:00Z",
+          items: [pendingItem],
+          queue: {
+            paused: false,
+            concurrency: 2,
+            queuedCount: 1,
+            activeCount: 0,
+            attentionCount: 0,
+          },
+          serverTime: "2026-08-11T00:00:00Z",
         }),
       }),
     )
-    await page.route(/\/api\/download-batches$/, (route) => {
-      if (route.request().method() === "POST") {
-        batch = completedBatch
-        return route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ accepted: true, batch }),
-        })
-      }
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          batches: batch ? [batch, historicalBatch] : [historicalBatch],
-        }),
-      })
-    })
     const home = new HomePage(page)
     await home.goto()
 
     await page.getByRole("button", { name: "加入影音" }).click()
     const dialog = page.getByRole("dialog", { name: "加入影音" })
     await expect(dialog).toBeVisible()
-    await expect(page).toHaveURL(/\/library\/add\/sources$/)
-    await expect(dialog.getByRole("tab")).toHaveText([
-      "1 加入影音",
-      "2 下載進度",
-      "3 交給 Agent",
-    ])
+    await expect(page).toHaveURL(/\/library\/add$/)
+    await expect(dialog.getByRole("tab")).toHaveCount(0)
     await expect(dialog.getByLabel("單支影音網址")).toBeVisible()
     await expect(
       dialog.getByText("我確認這些是我自己的內容，或我已取得下載、轉錄與觀看的權利"),
@@ -162,78 +132,58 @@ test.describe("INSU Player home @smoke", () => {
     await dialog.getByRole("checkbox", {
       name: /我確認這些是我自己的內容/,
     }).click()
-    await dialog.getByRole("button", { name: "送出 1 個影音" }).click()
-    await expect(page).toHaveURL(
-      /\/library\/add\/downloads\?batch=batch-1770000000000-deadbeef$/,
-    )
-    await expect(dialog.getByRole("row", { name: /demo-video/ })).toBeVisible()
-    await dialog.getByRole("button", { name: "前往交給 Agent" }).click()
-    await expect(page).toHaveURL(
-      /\/library\/add\/handoff\?batch=batch-1770000000000-deadbeef$/,
-    )
-    await expect(
-      dialog.getByRole("heading", { name: "請 Agent 接續處理字幕" }),
-    ).toBeVisible()
-    await expect(
-      dialog.getByRole("button", { name: "複製提示" }).first(),
-    ).toBeEnabled()
-    await dialog.getByRole("button", { name: "複製提示" }).first().click()
-    const copiedPrompt = await page.evaluate(() => navigator.clipboard.readText())
-    expect(copiedPrompt).toContain("demo-video")
-    expect(copiedPrompt).not.toContain("historical-video")
+    await dialog.getByRole("button", { name: "加入 1 個影音" }).click()
+    await expect(page).toHaveURL(/\/library\/grid(?:\?|$)/)
+    const library = page.getByRole("dialog", { name: "影片中心" })
+    await expect(library.getByRole("heading", { name: "youtube.com" })).toBeVisible()
+    await expect(library.getByText("等待下載", { exact: true })).toBeVisible()
+    await expect(library.getByText("下一個開始下載")).toBeVisible()
     await page.reload()
-    await expect(page).toHaveURL(
-      /\/library\/add\/handoff\?batch=batch-1770000000000-deadbeef$/,
-    )
-    await expect(page.getByRole("dialog", { name: "加入影音" })).toBeVisible()
+    await expect(page).toHaveURL(/\/library\/grid(?:\?|$)/)
+    await expect(page.getByRole("dialog", { name: "影片中心" })).toBeVisible()
   })
 
-  test("keeps the last queue visible when one progress refresh fails", async ({ page }) => {
-    const activeBatch = {
-      id: "batch-1770000000000-deadbeef",
-      state: "active",
-      rightsConfirmed: true,
+  test("keeps the last library state visible when one progress refresh fails", async ({ page }) => {
+    const activeItem = {
+      kind: "download",
+      id: "library-active",
+      sourceKind: "page",
+      pageUrl: "https://www.youtube.com/watch?v=active-video",
+      sourceUrl: "https://www.youtube.com/watch?v=active-video",
+      videoId: "active-video",
+      title: "Active Video",
+      thumbnailUrl: null,
+      state: "downloading",
+      stage: "media_download",
+      progress: 45,
+      message: "正在下載 1080p 影片",
+      errorCode: null,
+      queueAhead: null,
+      lowQualityApproved: false,
+      authentication: "none",
+      authenticationConsentAt: null,
       createdAt: "2026-08-11T00:00:00Z",
       updatedAt: "2026-08-11T00:01:00Z",
-      items: [
-        {
-          id: "item-active",
-          ordinal: 0,
-          sourceKind: "page",
-          pageUrl: "https://www.youtube.com/watch?v=active-video",
-          sourceUrl: "https://www.youtube.com/watch?v=active-video",
-          operationId: "operation-active",
-          videoId: "active-video",
-          title: "Active Video",
-          state: "downloading",
-          stage: "media_download",
-          progress: 45,
-          message: "正在下載 1080p 影片",
-          errorCode: null,
-          lowQualityApproved: false,
-          authentication: "none",
-          authenticationConsentAt: null,
-          createdAt: "2026-08-11T00:00:00Z",
-          updatedAt: "2026-08-11T00:01:00Z",
-          completedAt: null,
-        },
-      ],
+      completedAt: null,
     }
     let reads = 0
-    await page.route("**/api/jobs", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ jobs: [], serverTime: "2026-08-11T00:01:00Z" }),
-      }),
-    )
-    await page.route(/\/api\/download-batches$/, (route) => {
+    await page.route("**/api/library", (route) => {
       reads += 1
       if (reads === 1) {
         return route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ batches: [activeBatch] }),
+          body: JSON.stringify({
+            items: [activeItem],
+            queue: {
+              paused: false,
+              concurrency: 2,
+              queuedCount: 0,
+              activeCount: 1,
+              attentionCount: 0,
+            },
+            serverTime: "2026-08-11T00:01:00Z",
+          }),
         })
       }
       return route.fulfill({
@@ -245,19 +195,15 @@ test.describe("INSU Player home @smoke", () => {
 
     const home = new HomePage(page)
     await home.goto()
-    await page.goto(
-      "/library/add/downloads?batch=batch-1770000000000-deadbeef",
-    )
-    const dialog = page.getByRole("dialog", { name: "加入影音" })
-    await expect(dialog.getByRole("row", { name: /Active Video/ })).toBeVisible()
-    await expect(dialog.getByText("45%")).toBeVisible()
-    await expect(
-      dialog.getByRole("alert").filter({ hasText: "下載狀態暫時無法更新" }),
-    ).toBeVisible({ timeout: 10_000 })
-    await expect(dialog.getByRole("row", { name: /Active Video/ })).toBeVisible()
-    await expect(page).toHaveURL(
-      /\/library\/add\/downloads\?batch=batch-1770000000000-deadbeef$/,
-    )
+    await home.navigation.getByRole("button", { name: /影片中心/ }).click()
+    const library = page.getByRole("dialog", { name: "影片中心" })
+    await expect(library.getByRole("heading", { name: "Active Video" })).toBeVisible()
+    await expect(library.getByText("45%")).toBeVisible()
+    await expect(library.getByText("temporary read failure")).toBeVisible({
+      timeout: 10_000,
+    })
+    await expect(library.getByRole("heading", { name: "Active Video" })).toBeVisible()
+    await expect(page).toHaveURL(/\/library\/grid$/)
   })
 
   test("keeps each getting-started section in its own tab", async ({ page }) => {
@@ -623,24 +569,12 @@ test.describe("INSU Player home @smoke", () => {
 
   test("opens Chrome extension guidance in its own three-tab modal", async ({ page }) => {
     let paired = false
-    await page.route("**/api/extension/pairing/start", (route) => {
-      paired = true
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          challengeId: "pair-00000000-0000-4000-8000-000000000000",
-          token: "pairing-token",
-          expiresAt: "2026-08-11T01:00:00Z",
-          serverOrigin: "http://127.0.0.1:8000",
-        }),
-      })
-    })
     await page.route(/\/api\/extension\/pairing$/, (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
+          protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
           paired,
           extensionOrigin: paired ? "chrome-extension://insu-player" : null,
           pairedAt: paired ? "2026-08-11T00:00:00Z" : null,
@@ -676,12 +610,13 @@ test.describe("INSU Player home @smoke", () => {
     }).click()
     await expect(page).toHaveURL(/\/extension\/connect$/)
     await expect(
-      extension.getByRole("button", { name: "連接 Chrome 擴充功能" }),
+      extension.getByRole("heading", { name: "連接目前的本機服務" }),
     ).toBeVisible()
-    await extension.getByRole("button", { name: "連接 Chrome 擴充功能" }).click()
+    await expect(extension).toContainText("按下連接目前的 INSU Player")
+    paired = true
     await expect(
       extension.getByRole("heading", { name: "Chrome 已連接" }),
-    ).toBeVisible()
+    ).toBeVisible({ timeout: 5_000 })
     await extension.getByRole("button", { name: "前往使用" }).click()
 
     await expect(page).toHaveURL(/\/extension\/usage$/)
@@ -696,6 +631,59 @@ test.describe("INSU Player home @smoke", () => {
     await expect(
       page.getByRole("tab", { name: "3 使用" }),
     ).toHaveAttribute("aria-selected", "true")
+  })
+
+  test("lets the loaded extension request a one-time connection from the current page", async ({ page }) => {
+    await page.route("**/api/extension/pairing/start", (route) =>
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
+          challengeId: "pair-00000000-0000-4000-8000-000000000000",
+          token: "connection-token-that-is-long-enough-for-validation",
+          expiresAt: "2099-08-11T01:00:00Z",
+          serverOrigin: "http://127.0.0.1:42871",
+        }),
+      }),
+    )
+    await page.goto("/")
+
+    const response = await page.evaluate(
+      ({ requestType, responseType, protocolVersion }) =>
+        new Promise<Record<string, unknown>>((resolve) => {
+          const requestId = "connect-00000000-0000-4000-8000-000000000000"
+          const listener = (event: MessageEvent) => {
+            if (
+              event.source === window &&
+              event.data?.type === responseType &&
+              event.data?.requestId === requestId
+            ) {
+              window.removeEventListener("message", listener)
+              resolve(event.data)
+            }
+          }
+          window.addEventListener("message", listener)
+          window.postMessage(
+            { type: requestType, protocolVersion, requestId },
+            window.location.origin,
+          )
+        }),
+      {
+        requestType: EXTENSION_CONNECT_REQUEST_MESSAGE,
+        responseType: EXTENSION_CONNECT_RESPONSE_MESSAGE,
+        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
+      },
+    )
+
+    expect(response).toMatchObject({
+      type: EXTENSION_CONNECT_RESPONSE_MESSAGE,
+      protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
+      payload: {
+        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
+        challengeId: "pair-00000000-0000-4000-8000-000000000000",
+      },
+    })
   })
 
   test("manages local and cloud transcription models in one current table", async ({ page }) => {

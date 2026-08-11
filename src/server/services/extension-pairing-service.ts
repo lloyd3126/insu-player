@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 
-import { and, desc, eq, isNull } from "drizzle-orm"
+import { and, desc, eq, isNull, like } from "drizzle-orm"
 
 import type { AppDatabase } from "@server/db/client"
 import { extensionPairings } from "@server/db/schema"
@@ -8,9 +8,11 @@ import type {
   ExtensionPairingStatus,
   StartExtensionPairingResponse,
 } from "@shared/contracts/browser-extension"
+import { EXTENSION_CONNECTION_PROTOCOL_VERSION } from "@shared/contracts/browser-extension"
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
 const EXTENSION_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-p]{32}$/
+const TOKEN_HASH_PREFIX = `v${EXTENSION_CONNECTION_PROTOCOL_VERSION}:`
 
 interface PairingChallenge {
   tokenHash: string
@@ -19,12 +21,13 @@ interface PairingChallenge {
 }
 
 function hashToken(token: string) {
-  return createHash("sha256").update(token).digest("hex")
+  return `${TOKEN_HASH_PREFIX}${createHash("sha256").update(token).digest("hex")}`
 }
 
 function tokenMatches(token: string, expectedHash: string) {
-  const actual = Buffer.from(hashToken(token), "hex")
-  const expected = Buffer.from(expectedHash, "hex")
+  if (!expectedHash.startsWith(TOKEN_HASH_PREFIX)) return false
+  const actual = Buffer.from(hashToken(token))
+  const expected = Buffer.from(expectedHash)
   return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
 
@@ -50,10 +53,16 @@ export class ExtensionPairingService {
     const pairing = this.db
       .select()
       .from(extensionPairings)
-      .where(isNull(extensionPairings.revokedAt))
+      .where(
+        and(
+          isNull(extensionPairings.revokedAt),
+          like(extensionPairings.tokenHash, `${TOKEN_HASH_PREFIX}%`),
+        ),
+      )
       .orderBy(desc(extensionPairings.pairedAt))
       .get()
     return {
+      protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       paired: Boolean(pairing),
       extensionOrigin: pairing?.extensionOrigin ?? null,
       pairedAt: pairing?.pairedAt ?? null,
@@ -74,6 +83,7 @@ export class ExtensionPairingService {
       serverOrigin,
     })
     return {
+      protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       challengeId,
       token,
       expiresAt: new Date(expiresAt).toISOString(),
@@ -81,11 +91,17 @@ export class ExtensionPairingService {
     }
   }
 
-  claim(challengeId: string, token: string, extensionOrigin: string) {
+  claim(
+    challengeId: string,
+    token: string,
+    extensionOrigin: string,
+    protocolVersion: number,
+  ) {
     this.prune()
+    this.assertProtocol(protocolVersion)
     if (!EXTENSION_ORIGIN_PATTERN.test(extensionOrigin)) {
       throw new ExtensionPairingError(
-        "只接受 Chrome 擴充功能配對",
+        "只接受 Chrome 擴充功能連接",
         "invalid-extension-origin",
         400,
       )
@@ -93,8 +109,8 @@ export class ExtensionPairingService {
     const challenge = this.challenges.get(challengeId)
     if (!challenge || !tokenMatches(token, challenge.tokenHash)) {
       throw new ExtensionPairingError(
-        "配對邀請無效或已過期",
-        "pairing-expired",
+        "連接邀請無效或已過期",
+        "connection-expired",
         409,
       )
     }
@@ -125,9 +141,14 @@ export class ExtensionPairingService {
     }
   }
 
-  authenticate(token: string | null, extensionOrigin: string | null) {
+  authenticate(
+    token: string | null,
+    extensionOrigin: string | null,
+    protocolVersion: string | null,
+  ) {
+    this.assertProtocol(protocolVersion)
     if (!token || !extensionOrigin || !EXTENSION_ORIGIN_PATTERN.test(extensionOrigin)) {
-      throw new ExtensionPairingError("擴充功能尚未配對", "not-paired", 401)
+      throw new ExtensionPairingError("擴充功能尚未連接", "not-connected", 401)
     }
     const pairing = this.db
       .select()
@@ -136,12 +157,13 @@ export class ExtensionPairingService {
         and(
           eq(extensionPairings.extensionOrigin, extensionOrigin),
           isNull(extensionPairings.revokedAt),
+          like(extensionPairings.tokenHash, `${TOKEN_HASH_PREFIX}%`),
         ),
       )
       .orderBy(desc(extensionPairings.pairedAt))
       .get()
     if (!pairing || !tokenMatches(token, pairing.tokenHash)) {
-      throw new ExtensionPairingError("擴充功能配對已失效", "not-paired", 401)
+      throw new ExtensionPairingError("擴充功能連接已失效", "not-connected", 401)
     }
     this.db
       .update(extensionPairings)
@@ -165,6 +187,16 @@ export class ExtensionPairingService {
     const current = Date.now()
     for (const [id, challenge] of this.challenges) {
       if (challenge.expiresAt <= current) this.challenges.delete(id)
+    }
+  }
+
+  private assertProtocol(protocolVersion: string | number | null) {
+    if (Number(protocolVersion) !== EXTENSION_CONNECTION_PROTOCOL_VERSION) {
+      throw new ExtensionPairingError(
+        "擴充功能版本與目前 INSU Player 不相容，請重新載入擴充功能",
+        "incompatible-extension-protocol",
+        409,
+      )
     }
   }
 }

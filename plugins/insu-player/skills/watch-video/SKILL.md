@@ -35,10 +35,10 @@ Keep the user on one workspace-scoped localhost library homepage while Codex man
 
 The homepage `加入影音` flow may download up to 50 single-video URLs without Agent assistance. For a prompt that lists already-downloaded video IDs:
 
-- Read the current download-batch records and require `rightsConfirmed=true` for every listed item. Do not ask the user to repeat that confirmation when the exact batch record exists. Stop if it is missing.
-- Require each item to be `downloaded` and each job to be at `awaiting_subtitle_choice`. Never reconstruct a batch from job titles, source URLs, filesystem guesses, or another workspace.
+- Read the exact current `download_queue_items` records for the listed video IDs and require `rightsConfirmed=true` on every item. Do not ask the user to repeat that confirmation when the item-level record exists. Stop if any record is missing.
+- Require each queue item to be `downloaded` and each job to be at `awaiting_subtitle_choice`. Never reconstruct queue membership from job titles, source URLs, filesystem guesses, or another workspace.
 - Do not download media again or change the active rendition. Continue from the existing original audio into the ordinary proofread or translation decision and timing workflow.
-- Resolve source language and create separate subtitle records for each video. Never copy one video's detected language or user choice to the rest of the batch.
+- Resolve source language and create separate subtitle records for each video. Never copy one video's detected language or user choice to another item.
 - A failed or still-active queue item stays outside the Agent continuation list.
 
 ## Preserve Playback Quality

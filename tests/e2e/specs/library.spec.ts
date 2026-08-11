@@ -85,12 +85,12 @@ test.describe("library and details @critical", () => {
 
     await expect.poll(() => playerBundleRequested).toBe(true)
     await expect(library).toBeVisible()
-    await expect(page).toHaveURL(/\/library$/)
+    await expect(page).toHaveURL(/\/library\/grid$/)
     await expect(
       page.getByRole("dialog", { name: "雙語測試影音" }),
     ).toBeVisible()
     await expect(page).toHaveURL(
-      /\/player\/demo-video\?caption=zh-TW&returnTo=%2Flibrary$/,
+      /\/player\/demo-video\?caption=zh-TW&returnTo=%2Flibrary%2Fgrid$/,
     )
   })
 
@@ -510,7 +510,7 @@ test.describe("library and details @critical", () => {
       name: "完整移除此影音",
     })
     await expect(removal).toBeVisible()
-    await expect(page).toHaveURL(/\/library$/)
+    await expect(page).toHaveURL(/\/library\/grid$/)
     await removal.getByRole("button", { name: "取消" }).click()
     await expect(removal).toBeHidden()
     await expect(library.locator(".metrics")).not.toBeVisible()
@@ -540,11 +540,21 @@ test.describe("library and details @critical", () => {
   })
 
   test("defaults to the list tab when the center is empty", async ({ page }) => {
-    await page.route("**/api/jobs", (route) =>
+    await page.route("**/api/library", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ jobs: [], serverTime: new Date().toISOString() }),
+        body: JSON.stringify({
+          items: [],
+          queue: {
+            paused: false,
+            concurrency: 2,
+            queuedCount: 0,
+            activeCount: 0,
+            attentionCount: 0,
+          },
+          serverTime: new Date().toISOString(),
+        }),
       }),
     )
     const home = new HomePage(page)

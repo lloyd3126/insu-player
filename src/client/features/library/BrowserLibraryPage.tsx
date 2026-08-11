@@ -19,9 +19,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { MediaCard } from "@/features/library/MediaCard"
-import { useJobsQuery } from "@/hooks/use-jobs-query"
+import { DownloadMediaCard } from "@/features/library/DownloadMediaCard"
+import { useLibraryQuery } from "@/hooks/use-library-query"
 import { getJobPreferredCaption, NO_CAPTION } from "@/lib/captions"
 import type { JobSummary } from "@shared/contracts/job"
+import type { LibraryItem } from "@shared/contracts/library"
 
 function BrowserMediaCard({
   job,
@@ -99,22 +101,27 @@ function BrowserPlayer({
 }
 
 export function BrowserLibraryPage() {
-  const query = useJobsQuery()
+  const query = useLibraryQuery()
   const [search, setSearch] = useState("")
   const [player, setPlayer] = useState<{
     job: JobSummary
     caption: string
   } | null>(null)
-  const jobs = query.data?.jobs ?? []
+  const items = query.data?.items ?? []
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("zh-TW")
-    return jobs.filter(
-      (job) =>
+    return items.filter((item) => {
+      const title = item.kind === "media" ? item.job.title : item.title
+      const videoId = item.kind === "media" ? item.job.videoId : item.videoId
+      const sourceUrl = item.kind === "media" ? item.job.sourceUrl : item.pageUrl
+      return (
         !term ||
-        job.title.toLocaleLowerCase("zh-TW").includes(term) ||
-        job.videoId.toLocaleLowerCase("en").includes(term),
-    )
-  }, [jobs, search])
+        title.toLocaleLowerCase("zh-TW").includes(term) ||
+        Boolean(videoId?.toLocaleLowerCase("en").includes(term)) ||
+        sourceUrl.toLocaleLowerCase("en").includes(term)
+      )
+    })
+  }, [items, search])
 
   return (
     <div className="browser-library-shell">
@@ -146,24 +153,28 @@ export function BrowserLibraryPage() {
         </label>
         {query.isPending ? <LoadingState label="正在讀取影音" /> : null}
         {query.isError ? <ErrorState message={query.error.message} /> : null}
-        {query.isSuccess && jobs.length === 0 ? (
+        {query.isSuccess && items.length === 0 ? (
           <EmptyState
             title="目前還沒有影音"
             description="從 Chrome 擴充功能加入影音後，下載工作會出現在這裡。"
           />
         ) : null}
-        {query.isSuccess && jobs.length > 0 && filtered.length === 0 ? (
+        {query.isSuccess && items.length > 0 && filtered.length === 0 ? (
           <EmptyState title="找不到影音" description="請調整搜尋字詞。" />
         ) : null}
         {filtered.length > 0 ? (
           <div className="video-grid browser-video-grid">
-            {filtered.map((job) => (
-              <BrowserMediaCard
-                key={job.videoId}
-                job={job}
-                onWatch={(caption) => setPlayer({ job, caption })}
-              />
-            ))}
+            {filtered.map((item: LibraryItem) =>
+              item.kind === "media" ? (
+                <BrowserMediaCard
+                  key={item.id}
+                  job={item.job}
+                  onWatch={(caption) => setPlayer({ job: item.job, caption })}
+                />
+              ) : (
+                <DownloadMediaCard key={item.id} item={item} />
+              ),
+            )}
           </div>
         ) : null}
       </main>

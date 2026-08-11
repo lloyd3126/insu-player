@@ -5,7 +5,6 @@ import {
   CopyIcon,
   Link2Icon,
   PanelsTopLeftIcon,
-  PlugZapIcon,
   UnplugIcon,
 } from "lucide-react"
 import { useState } from "react"
@@ -19,7 +18,6 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 
-const PAIRING_MESSAGE = "INSU_PLAYER_PAIR"
 const PAIRING_QUERY_KEY = ["extension-pairing"] as const
 
 function useExtensionPairing() {
@@ -76,6 +74,11 @@ export function ChromeExtensionInstallContent({
             title="選擇 INSU Player 資料夾"
             description="使用下方顯示的實際擴充功能目錄"
           />
+          <TutorialStep
+            number="04"
+            title="已載入過就按重新載入"
+            description="Chrome 才會套用資料夾中最新的連接流程"
+          />
         </TutorialStepList>
         <div className="extension-directory">
           <code>
@@ -107,18 +110,6 @@ export function ChromeExtensionConnectContent({
 }) {
   const queryClient = useQueryClient()
   const pairing = useExtensionPairing()
-  const startPairing = useMutation({
-    mutationFn: api.startExtensionPairing,
-    onSuccess: (payload) => {
-      window.postMessage(
-        { type: PAIRING_MESSAGE, payload },
-        window.location.origin,
-      )
-      window.setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: PAIRING_QUERY_KEY })
-      }, 500)
-    },
-  })
   const revokePairing = useMutation({
     mutationFn: api.revokeExtensionPairing,
     onSuccess: () =>
@@ -134,7 +125,7 @@ export function ChromeExtensionConnectContent({
         description={
           status?.paired
             ? "連接已完成，接下來可以從 Chrome 分頁加入影音。"
-            : "按下連接後，已載入的擴充功能會自動記住目前服務的實際連接埠。"
+            : "保持這個首頁開啟，再從 Chrome 工具列按一次連接。擴充功能會自動記住目前服務的實際連接埠。"
         }
         footer={status?.paired ? (
           <div className="extension-guide-actions">
@@ -144,22 +135,14 @@ export function ChromeExtensionConnectContent({
               onClick={() => revokePairing.mutate()}
             >
               <UnplugIcon data-icon="inline-start" />
-              解除配對
+              解除連接
             </Button>
             <Button onClick={onContinue}>
               前往使用
               <ArrowRightIcon data-icon="inline-end" />
             </Button>
           </div>
-        ) : (
-          <Button
-            disabled={startPairing.isPending || pairing.isPending}
-            onClick={() => startPairing.mutate()}
-          >
-            <PlugZapIcon data-icon="inline-start" />
-            {startPairing.isPending ? "正在配對" : "連接 Chrome 擴充功能"}
-          </Button>
-        )}
+        ) : undefined}
       >
         <div className="extension-pairing-status">
           <span>
@@ -171,18 +154,32 @@ export function ChromeExtensionConnectContent({
               <small>
                 {status?.paired
                   ? "擴充功能會自動沿用這個 workspace 的實際 localhost port"
-                  : "先載入擴充功能，再按下方按鈕完成一次性配對"}
+                  : "連接只會在目前開啟的本機 INSU Player 分頁完成"}
               </small>
             </span>
           </span>
           <Badge variant={status?.paired ? "secondary" : "outline"}>
-            {status?.paired ? "已配對" : "未配對"}
+            {status?.paired ? "已連接" : "未連接"}
           </Badge>
         </div>
-        {startPairing.isError ? (
-          <p className="extension-guide-error" role="alert">
-            {startPairing.error.message}
-          </p>
+        {!status?.paired ? (
+          <TutorialStepList>
+            <TutorialStep
+              number="01"
+              title="保持 INSU Player 首頁開啟"
+              description="目前這個分頁就是要連接的本機服務"
+            />
+            <TutorialStep
+              number="02"
+              title="點 Chrome 工具列中的 INSU Player"
+              description="擴充功能會確認目前分頁是相同版本的 INSU Player"
+            />
+            <TutorialStep
+              number="03"
+              title="按下連接目前的 INSU Player"
+              description="完成後這個畫面會自動更新為已連接"
+            />
+          </TutorialStepList>
         ) : null}
       </TutorialCard>
     </div>

@@ -16,7 +16,6 @@ export type UsageGuideTab =
   | "add-media"
   | "handoff"
 export type ChromeExtensionTab = "install" | "connect" | "usage"
-export type AddMediaTab = "sources" | "downloads" | "handoff"
 export type LibraryView = "grid" | "list"
 export type JobDetailTab =
   | "about"
@@ -51,7 +50,7 @@ export type OverlayDestination =
       query?: string
       status?: "all" | "active" | "attention" | "watchable" | "ready"
     }
-  | { type: "add-media"; tab: AddMediaTab; batchId?: string }
+  | { type: "add-media" }
   | { type: "player"; videoId: string; caption?: string; time?: number }
   | JobDetailDestination
   | { type: "policy"; required: boolean }
