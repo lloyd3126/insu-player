@@ -757,6 +757,23 @@ export class JobRepository {
     )
   }
 
+  listDownloadProjections() {
+    return this.db
+      .select({
+        videoId: jobs.videoId,
+        title: jobs.title,
+        sourceUrl: jobs.sourceUrl,
+        state: jobs.state,
+        stage: jobs.stage,
+        progress: jobs.progress,
+        message: jobs.message,
+        updatedAt: jobs.updatedAt,
+      })
+      .from(jobs)
+      .orderBy(desc(jobs.updatedAt))
+      .all()
+  }
+
   tailLog(videoId: string, requestedLines = 160) {
     const logPath = this.safeJobFile(
       this.jobDirectory(videoId),

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import {
+  chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -34,6 +36,9 @@ const migrations = path.join(
 
 let workspace = ""
 let sqlite: ReturnType<typeof openAppDatabase>["sqlite"]
+let database: ReturnType<typeof openAppDatabase>["db"]
+let jobRepository: JobRepository
+let mediaSessionService: MediaSessionService
 let app: ReturnType<typeof createApplication>
 let previewedTarget: RemovalTarget | null = null
 let executedRemoval: { target: RemovalTarget; planDigest: string } | null = null
@@ -304,6 +309,7 @@ beforeEach(() => {
   const status = seedJob()
   const opened = openAppDatabase(path.join(workspace, "app.db"), migrations)
   sqlite = opened.sqlite
+  database = opened.db
   sqlite
     .query(
       "INSERT INTO media_items (video_id, title, source_url, state, effective_state, stage, progress, message, created_at, updated_at, completed_at, last_error, watchable, size_bytes, thumbnail_url, watch_url, has_log, duration_seconds, record_json, record_revision, projected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0, ?, ?, 1, ?)",
@@ -327,6 +333,8 @@ beforeEach(() => {
     )
   const jobs = new JobRepository(workspace, opened.db)
   const mediaSessions = new MediaSessionService(workspace)
+  jobRepository = jobs
+  mediaSessionService = mediaSessions
   app = createApplication({
     jobs,
     downloads: new DownloadBatchService(
@@ -1146,17 +1154,147 @@ describe("Hono application", () => {
     expect(await response.json()).toMatchObject({
       accepted: true,
       batch: {
+        state: "complete",
         rightsConfirmed: true,
         items: [
           {
             videoId: "demo-video",
+            title: "雙語測試影音",
             state: "downloaded",
+            stage: "complete",
             progress: 100,
             message: "影音已存在於影音庫",
           },
         ],
       },
     })
+  })
+
+  test("keeps health and batch APIs available while an unpublished download is active", async () => {
+    const timestamp = "2026-08-11T01:00:00.000Z"
+    sqlite
+      .query(
+        "INSERT INTO media_items (video_id, title, source_url, state, effective_state, stage, progress, message, created_at, updated_at, completed_at, last_error, watchable, size_bytes, thumbnail_url, watch_url, has_log, duration_seconds, record_json, record_revision, projected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, NULL, NULL, 0, NULL, ?, 1, ?)",
+      )
+      .run(
+        "active-download",
+        "Active Download",
+        "https://example.test/active-download",
+        "downloading",
+        "downloading",
+        "media_download",
+        42,
+        "正在下載 1080p 影片",
+        timestamp,
+        timestamp,
+        JSON.stringify({ schemaVersion: 1, videoId: "active-download" }),
+        timestamp,
+      )
+    sqlite
+      .query(
+        "INSERT INTO operations (id, video_id, parent_operation_id, kind, state, stage, progress, message, inputs_json, outputs_json, consent_json, resumable, attempt, pid, error_code, error_message, created_at, started_at, updated_at, completed_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, NULL, NULL, ?, ?, ?, NULL)",
+      )
+      .run(
+        "operation-active-download",
+        "active-download",
+        "media-download",
+        "downloading",
+        "media_download",
+        10,
+        "正在下載影音",
+        "{}",
+        "{}",
+        "{}",
+        process.pid,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+    sqlite
+      .query(
+        "INSERT INTO operation_events (operation_id, sequence, type, state, stage, progress, message, data_json, created_at) VALUES (?, 1, 'created', 'downloading', 'media_download', 10, '正在下載影音', '{}', ?)",
+      )
+      .run("operation-active-download", timestamp)
+    sqlite
+      .query(
+        "INSERT INTO download_batches (id, state, rights_confirmed, created_at, updated_at) VALUES (?, 'active', 1, ?, ?)",
+      )
+      .run("batch-1770000000000-deadbeef", timestamp, timestamp)
+    sqlite
+      .query(
+        "INSERT INTO download_batch_items (id, batch_id, ordinal, source_kind, page_url, source_url, source_key, session_id, operation_id, video_id, low_quality_approved, authentication, authentication_consent_at, created_at, completed_at) VALUES (?, ?, 0, 'page', ?, ?, ?, NULL, ?, ?, 0, 'none', NULL, ?, NULL)",
+      )
+      .run(
+        "batch-item-active-download",
+        "batch-1770000000000-deadbeef",
+        "https://example.test/active-download",
+        "https://example.test/active-download",
+        "page:https://example.test/active-download",
+        "operation-active-download",
+        "active-download",
+        timestamp,
+      )
+
+    expect(
+      existsSync(path.join(workspace, "jobs", "active-download", "media-work", "catalog.json")),
+    ).toBe(false)
+    const batches = await app.request("http://127.0.0.1:4178/api/download-batches")
+    expect(batches.status).toBe(200)
+    expect(await batches.json()).toMatchObject({
+      batches: [
+        {
+          id: "batch-1770000000000-deadbeef",
+          items: [
+            {
+              title: "Active Download",
+              state: "downloading",
+              stage: "media_download",
+              progress: 42,
+            },
+          ],
+        },
+      ],
+    })
+    const health = await app.request("http://127.0.0.1:4178/api/health")
+    expect(health.status).toBe(200)
+  })
+
+  test("keeps serving health while a download child runs and after it fails", async () => {
+    const fakeDownload = path.join(workspace, "fake-download.sh")
+    writeFileSync(fakeDownload, "#!/bin/sh\nsleep 1\nexit 7\n")
+    chmodSync(fakeDownload, 0o700)
+    const downloads = new DownloadBatchService(
+      workspace,
+      database,
+      jobRepository,
+      fakeDownload,
+      mediaSessionService,
+      1,
+    )
+    const created = downloads.create(
+      [{ kind: "page", pageUrl: "https://example.test/process-liveness" }],
+      true,
+    )
+    expect(created.batch.items[0]).toMatchObject({ state: "checking", progress: 1 })
+
+    for (let index = 0; index < 5; index += 1) {
+      const health = await app.request("http://127.0.0.1:4178/api/health")
+      expect(health.status).toBe(200)
+    }
+
+    const deadline = Date.now() + 3_000
+    let completed = downloads.batch(created.batch.id).items[0]
+    while (completed.state === "checking" && Date.now() < deadline) {
+      await Bun.sleep(25)
+      completed = downloads.batch(created.batch.id).items[0]
+    }
+    expect(completed).toMatchObject({
+      state: "failed",
+      errorCode: "download-failed",
+    })
+    expect(
+      (await app.request("http://127.0.0.1:4178/api/health")).status,
+    ).toBe(200)
   })
 
   test("imports immutable text and mind-map summary revisions with exact dependencies", async () => {

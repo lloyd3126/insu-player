@@ -63,9 +63,10 @@ test.describe("INSU Player home @smoke", () => {
   })
 
   test("opens the direct download queue from the homepage", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     let batch: Record<string, unknown> | null = null
     const completedBatch = {
-      id: "batch-demo",
+      id: "batch-1770000000000-deadbeef",
       state: "complete",
       rightsConfirmed: true,
       createdAt: "2026-08-11T00:00:00Z",
@@ -79,7 +80,9 @@ test.describe("INSU Player home @smoke", () => {
           sourceUrl: "https://www.youtube.com/watch?v=demo-video",
           operationId: "operation-demo",
           videoId: "demo-video",
+          title: "Demo Video",
           state: "downloaded",
+          stage: "complete",
           progress: 100,
           message: "已下載並驗證 1080p MP4",
           errorCode: null,
@@ -92,12 +95,30 @@ test.describe("INSU Player home @smoke", () => {
         },
       ],
     }
+    const historicalBatch = {
+      ...completedBatch,
+      id: "batch-1760000000000-cafebabe",
+      items: [
+        {
+          ...completedBatch.items[0],
+          id: "item-historical",
+          operationId: "operation-historical",
+          videoId: "historical-video",
+          title: "Historical Video",
+          pageUrl: "https://www.youtube.com/watch?v=historical-video",
+          sourceUrl: "https://www.youtube.com/watch?v=historical-video",
+        },
+      ],
+    }
     await page.route("**/api/jobs", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          jobs: [{ videoId: "demo-video", state: "downloaded" }],
+          jobs: [
+            { videoId: "demo-video", state: "downloaded" },
+            { videoId: "historical-video", state: "downloaded" },
+          ],
           serverTime: "2026-08-11T00:01:00Z",
         }),
       }),
@@ -114,7 +135,9 @@ test.describe("INSU Player home @smoke", () => {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ batches: batch ? [batch] : [] }),
+        body: JSON.stringify({
+          batches: batch ? [batch, historicalBatch] : [historicalBatch],
+        }),
       })
     })
     const home = new HomePage(page)
@@ -140,19 +163,101 @@ test.describe("INSU Player home @smoke", () => {
       name: /我確認這些是我自己的內容/,
     }).click()
     await dialog.getByRole("button", { name: "送出 1 個影音" }).click()
-    await expect(page).toHaveURL(/\/library\/add\/downloads$/)
+    await expect(page).toHaveURL(
+      /\/library\/add\/downloads\?batch=batch-1770000000000-deadbeef$/,
+    )
     await expect(dialog.getByRole("row", { name: /demo-video/ })).toBeVisible()
     await dialog.getByRole("button", { name: "前往交給 Agent" }).click()
-    await expect(page).toHaveURL(/\/library\/add\/handoff$/)
+    await expect(page).toHaveURL(
+      /\/library\/add\/handoff\?batch=batch-1770000000000-deadbeef$/,
+    )
     await expect(
       dialog.getByRole("heading", { name: "請 Agent 接續處理字幕" }),
     ).toBeVisible()
     await expect(
       dialog.getByRole("button", { name: "複製提示" }).first(),
     ).toBeEnabled()
+    await dialog.getByRole("button", { name: "複製提示" }).first().click()
+    const copiedPrompt = await page.evaluate(() => navigator.clipboard.readText())
+    expect(copiedPrompt).toContain("demo-video")
+    expect(copiedPrompt).not.toContain("historical-video")
     await page.reload()
-    await expect(page).toHaveURL(/\/library\/add\/handoff$/)
+    await expect(page).toHaveURL(
+      /\/library\/add\/handoff\?batch=batch-1770000000000-deadbeef$/,
+    )
     await expect(page.getByRole("dialog", { name: "加入影音" })).toBeVisible()
+  })
+
+  test("keeps the last queue visible when one progress refresh fails", async ({ page }) => {
+    const activeBatch = {
+      id: "batch-1770000000000-deadbeef",
+      state: "active",
+      rightsConfirmed: true,
+      createdAt: "2026-08-11T00:00:00Z",
+      updatedAt: "2026-08-11T00:01:00Z",
+      items: [
+        {
+          id: "item-active",
+          ordinal: 0,
+          sourceKind: "page",
+          pageUrl: "https://www.youtube.com/watch?v=active-video",
+          sourceUrl: "https://www.youtube.com/watch?v=active-video",
+          operationId: "operation-active",
+          videoId: "active-video",
+          title: "Active Video",
+          state: "downloading",
+          stage: "media_download",
+          progress: 45,
+          message: "正在下載 1080p 影片",
+          errorCode: null,
+          lowQualityApproved: false,
+          authentication: "none",
+          authenticationConsentAt: null,
+          createdAt: "2026-08-11T00:00:00Z",
+          updatedAt: "2026-08-11T00:01:00Z",
+          completedAt: null,
+        },
+      ],
+    }
+    let reads = 0
+    await page.route("**/api/jobs", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ jobs: [], serverTime: "2026-08-11T00:01:00Z" }),
+      }),
+    )
+    await page.route(/\/api\/download-batches$/, (route) => {
+      reads += 1
+      if (reads === 1) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ batches: [activeBatch] }),
+        })
+      }
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "temporary read failure" }),
+      })
+    })
+
+    const home = new HomePage(page)
+    await home.goto()
+    await page.goto(
+      "/library/add/downloads?batch=batch-1770000000000-deadbeef",
+    )
+    const dialog = page.getByRole("dialog", { name: "加入影音" })
+    await expect(dialog.getByRole("row", { name: /Active Video/ })).toBeVisible()
+    await expect(dialog.getByText("45%")).toBeVisible()
+    await expect(
+      dialog.getByRole("alert").filter({ hasText: "下載狀態暫時無法更新" }),
+    ).toBeVisible({ timeout: 10_000 })
+    await expect(dialog.getByRole("row", { name: /Active Video/ })).toBeVisible()
+    await expect(page).toHaveURL(
+      /\/library\/add\/downloads\?batch=batch-1770000000000-deadbeef$/,
+    )
   })
 
   test("keeps each getting-started section in its own tab", async ({ page }) => {

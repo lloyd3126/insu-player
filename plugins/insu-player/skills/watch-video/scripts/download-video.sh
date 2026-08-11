@@ -157,7 +157,7 @@ caption_job_state init "${job_init_args[@]}" >/dev/null
 pipeline_output_language="$source_language"
 if [ "$translation_mode" = "translate" ]; then pipeline_output_language="$translation_target"; fi
 if [ "$download_only" -eq 1 ]; then
-  caption_job_state update --job-dir "$job_dir" --state checking --stage media_download --message "正在檢查影音來源" --progress 0 --clear-error --record-history >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state checking --stage source_resolution --message "正在確認影音來源" --progress 1 --clear-error --record-history >/dev/null
 else
   caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
   caption_job_state update --job-dir "$job_dir" --state checking --stage manual_caption --message "正在檢查人工 CC 字幕，平台自動字幕不會下載" --progress 0 --clear-error --record-history >/dev/null
@@ -175,9 +175,10 @@ initial_run_dir="$job_dir/media-work/runs/initial"
 mkdir -p "$initial_run_dir"
 attempt_log="$initial_run_dir/attempts.jsonl"
 media_selection_file="$initial_run_dir/selection.json"
+media_discovery_file="$initial_run_dir/discovery.json"
 media_catalog_file="$job_dir/media-work/catalog.json"
 printf '%s' "$metadata_json" | "$CAPTION_PYTHON" "$media_catalog_script" discover \
-  --job-dir "$job_dir" --video-id "$video_id" >/dev/null
+  --job-dir "$job_dir" --video-id "$video_id" --output "$media_discovery_file" >/dev/null
 probe_result=""
 probe_statuses=""
 
@@ -259,13 +260,16 @@ fi
 
 if [ ! -f "$source_dir/thumbnail.jpg" ]; then
   caption_note "Downloading a thumbnail..."
+  caption_job_state update --job-dir "$job_dir" --state downloading --stage thumbnail --message "正在取得縮圖" --progress 5 --clear-error >/dev/null
   if ! "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
     "${progress_security_args[@]}" \
-    --job-dir "$job_dir" --state downloading --stage thumbnail --message "正在取得縮圖" --success-message "縮圖檢查完成" --allow-failure -- \
+    --job-dir "$job_dir" --state downloading --stage thumbnail --message "正在取得縮圖" --success-message "縮圖檢查完成" --progress-start 5 --progress-end 8 --allow-failure -- \
     "$CAPTION_YTDLP" "${common_args[@]}" --skip-download --write-thumbnail --convert-thumbnails jpg --output "$source_dir/thumbnail.%(ext)s" "$video_url"; then
     caption_note "warning: thumbnail was unavailable; continuing"
   fi
 fi
+
+caption_job_state update --job-dir "$job_dir" --state downloading --stage media_probe --message "正在確認最高可用畫質" --progress 8 --clear-error >/dev/null
 
 video_file=""
 selected_height=""
@@ -304,7 +308,7 @@ else
 
       if "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
         "${progress_security_args[@]}" \
-        --job-dir "$job_dir" --state downloading --stage media_download --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --allow-failure -- \
+        --job-dir "$job_dir" --state downloading --stage media_download --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --progress-start 10 --progress-end 90 --allow-failure -- \
         "$CAPTION_YTDLP" "${common_args[@]}" \
         --format "$format_selector" --merge-output-format mp4 --recode-video mp4 --write-info-json \
         --output "$attempt_dir/video.%(ext)s" "$video_url"; then
@@ -334,6 +338,7 @@ fi
 
 media_probe_file="$video_file"
 if [ -n "$selected_attempt_dir" ]; then media_probe_file="$selected_attempt_dir/video.mp4"; fi
+caption_job_state update --job-dir "$job_dir" --state downloading --stage media_validation --message "正在驗證影音畫質與格式" --progress 90 --clear-error >/dev/null
 "$CAPTION_FFMPEG" -nostdin -hide_banner -i "$media_probe_file" 2> "$job_dir/media-info.txt" || true
 
 if [ -n "$selected_height" ]; then
@@ -350,9 +355,11 @@ if [ -n "$selected_height" ]; then
   )
   if [ "$allow_low_quality" -eq 1 ]; then finalize_args+=(--allow-low-quality); fi
   "$CAPTION_PYTHON" "$media_quality_script" "${finalize_args[@]}" >/dev/null
+  caption_job_state update --job-dir "$job_dir" --state downloading --stage media_publish --message "正在發佈已驗證影音" --progress 95 --clear-error >/dev/null
   "$CAPTION_PYTHON" "$media_catalog_script" publish \
     --job-dir "$job_dir" --video-id "$video_id" \
     --source-file "$media_probe_file" --selection "$media_selection_file" \
+    --discovery "$media_discovery_file" \
     --requested-height "$selected_height" --activate >/dev/null
   video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \
     --job-dir "$job_dir" --video-id "$video_id")
@@ -372,19 +379,6 @@ if [ -f "$source_dir/thumbnail.jpg" ]; then
   caption_job_state asset --job-dir "$job_dir" --name thumbnail --path "$source_dir/thumbnail.jpg" >/dev/null
 fi
 
-# A model-generated fine-grained timing source is mandatory for proofreading,
-# translation, and segmentation, even when creator CC is available as text evidence.
-if [ ! -f "$source_dir/audio.m4a" ]; then
-  caption_note "Extracting the model timing audio from the verified local media..."
-  "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-    "${progress_security_args[@]}" \
-    --job-dir "$job_dir" --state downloading --stage audio_preparation --message "正在從本機影音準備轉錄音訊" --success-message "轉錄音訊準備完成" -- \
-    "$CAPTION_FFMPEG" -nostdin -hide_banner -loglevel warning -i "$video_file" \
-    -vn -c:a aac -b:a 192k -movflags +faststart "$source_dir/audio.m4a"
-  caption_require_file "$source_dir/audio.m4a"
-  caption_job_state asset --job-dir "$job_dir" --name audio --path "$source_dir/audio.m4a" >/dev/null
-fi
-
 caption_job_state asset --job-dir "$job_dir" --name mediaInfo --path "$job_dir/media-info.txt" >/dev/null
 
 {
@@ -402,15 +396,32 @@ caption_job_state asset --job-dir "$job_dir" --name manifest --path "$job_dir/ma
 
 if [ "$download_only" -eq 1 ]; then
   caption_job_state update --job-dir "$job_dir" --state downloaded --stage awaiting_subtitle_choice --message "影音已下載，等待選擇字幕處理方式" --progress 100 --clear-error --record-history >/dev/null
-else
-  caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
-  if [ "$source_caption_ready" -eq 1 ]; then
-    next_message="影音與人工 CC 已可觀看，仍需模型從音訊建立細粒度時間軸"
-  else
-    next_message="影音與音訊已就緒，等待模型建立細粒度來源字幕"
-  fi
-  caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage model_transcription --message "$next_message" --progress 0 --clear-error --record-history >/dev/null
+  trap - ERR
+  caption_note "Download complete: $job_dir"
+  caption_note "Video ID: $video_id"
+  exit 0
 fi
+
+# A model-generated fine-grained timing source is mandatory for proofreading,
+# translation, and segmentation, even when creator CC is available as text evidence.
+if [ ! -f "$source_dir/audio.m4a" ]; then
+  caption_note "Extracting the model timing audio from the verified local media..."
+  "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
+    "${progress_security_args[@]}" \
+    --job-dir "$job_dir" --state downloading --stage audio_preparation --message "正在從本機影音準備轉錄音訊" --success-message "轉錄音訊準備完成" -- \
+    "$CAPTION_FFMPEG" -nostdin -hide_banner -loglevel warning -i "$video_file" \
+    -vn -c:a aac -b:a 192k -movflags +faststart "$source_dir/audio.m4a"
+  caption_require_file "$source_dir/audio.m4a"
+  caption_job_state asset --job-dir "$job_dir" --name audio --path "$source_dir/audio.m4a" >/dev/null
+fi
+
+caption_job_state subtitle-pipeline --job-dir "$job_dir" --mode "$translation_mode" --stage awaiting_model --source-language "$source_language" --output-language "$pipeline_output_language" >/dev/null
+if [ "$source_caption_ready" -eq 1 ]; then
+  next_message="影音與人工 CC 已可觀看，仍需模型從音訊建立細粒度時間軸"
+else
+  next_message="影音與音訊已就緒，等待模型建立細粒度來源字幕"
+fi
+caption_job_state update --job-dir "$job_dir" --state needs_transcription --stage model_transcription --message "$next_message" --progress 0 --clear-error --record-history >/dev/null
 
 trap - ERR
 caption_note "Download complete: $job_dir"

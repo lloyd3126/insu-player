@@ -31,6 +31,20 @@ const ACTIVE_ITEM_STATES = new Set([
   "verifying",
   "needs_confirmation",
 ])
+const PROCESS_ITEM_STATES = new Set(["checking", "downloading", "verifying"])
+const VERIFIED_MEDIA_STATES = new Set([
+  "downloaded",
+  "needs_transcription",
+  "transcribing",
+  "needs_proofreading",
+  "proofreading",
+  "needs_translation",
+  "translating",
+  "needs_segmentation",
+  "segmenting",
+  "preparing_player",
+  "ready",
+])
 function now() {
   return new Date().toISOString()
 }
@@ -162,8 +176,8 @@ export class DownloadBatchService {
     }
     const existing = new Map(
       this.jobs
-        .list()
-        .filter((job) => job.watchable)
+        .listDownloadProjections()
+        .filter((job) => VERIFIED_MEDIA_STATES.has(job.state))
         .map((job) => [job.sourceUrl, job]),
     )
     const batchId = `batch-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
@@ -254,6 +268,7 @@ export class DownloadBatchService {
           .run()
       })
     })
+    this.refreshBatch(batchId)
     this.schedule()
     return { accepted: true, batch: this.batch(batchId) }
   }
@@ -295,13 +310,22 @@ export class DownloadBatchService {
         409,
       )
     }
+    const jobs = this.jobs.listDownloadProjections()
+    const jobsById = new Map(jobs.map((job) => [job.videoId, job]))
+    const jobsByUrl = new Map(jobs.map((job) => [job.sourceUrl, job]))
     const items = this.db
       .select()
       .from(downloadBatchItems)
       .where(eq(downloadBatchItems.batchId, row.id))
       .orderBy(asc(downloadBatchItems.ordinal))
       .all()
-      .map((item) => this.publicItem(item))
+      .map((item) =>
+        this.publicItem(
+          item,
+          (item.videoId ? jobsById.get(item.videoId) : undefined) ??
+            jobsByUrl.get(item.pageUrl),
+        ),
+      )
     return {
       id: row.id,
       state: row.state as DownloadBatch["state"],
@@ -314,6 +338,7 @@ export class DownloadBatchService {
 
   private publicItem(
     item: typeof downloadBatchItems.$inferSelect,
+    job?: ReturnType<JobRepository["listDownloadProjections"]>[number],
   ): DownloadBatchItem {
     const operation = this.operation(item.operationId)
     return {
@@ -324,7 +349,9 @@ export class DownloadBatchService {
       sourceUrl: item.sourceUrl,
       operationId: item.operationId,
       videoId: item.videoId,
+      title: job?.title ?? null,
       state: operation.state as DownloadBatchItem["state"],
+      stage: operation.stage,
       progress: operation.progress,
       message: operation.message,
       errorCode: operation.errorCode,
@@ -474,7 +501,7 @@ export class DownloadBatchService {
       .filter((item) => {
         const operation = this.operation(item.operationId)
         return (
-          operation.state === "downloading" &&
+          PROCESS_ITEM_STATES.has(operation.state) &&
           !this.active.has(item.id) &&
           processIsAlive(operation.pid)
         )
@@ -611,17 +638,46 @@ export class DownloadBatchService {
       dispose: session?.dispose ?? (() => undefined),
     })
     this.updateOperation(item.operationId, {
-      state: "downloading",
-      stage: "media-download",
-      message: "正在下載影音",
-      progress: 0,
+      state: "checking",
+      stage: "source-resolution",
+      message: "正在確認影音來源",
+      progress: 1,
       errorCode: null,
       errorMessage: null,
       pid: child.pid,
       startedAt: now(),
       completedAt: null,
     })
-    void this.finish(item, child)
+    void this.finish(item, child).catch(() => {
+      this.settleUnexpectedFinishFailure(item)
+    })
+  }
+
+  private settleUnexpectedFinishFailure(
+    item: typeof downloadBatchItems.$inferSelect,
+  ) {
+    try {
+      const active = this.active.get(item.id)
+      active?.dispose()
+      this.active.delete(item.id)
+      this.cancelled.delete(item.id)
+      const timestamp = now()
+      this.updateOperation(item.operationId, {
+        state: "failed",
+        stage: "internal-error",
+        message: "下載完成狀態無法確認，首頁服務仍保持運作",
+        errorCode: "download-finalization-failed",
+        errorMessage: "download finalization failed",
+        pid: null,
+        completedAt: timestamp,
+      })
+      this.updateItem(item.id, { completedAt: timestamp })
+      this.refreshBatch(item.batchId)
+      this.schedule()
+    } catch {
+      this.active.delete(item.id)
+      this.cancelled.delete(item.id)
+    }
   }
 
   private async finish(
@@ -638,7 +694,7 @@ export class DownloadBatchService {
     this.active.delete(item.id)
     const cancelled = this.cancelled.delete(item.id)
     const job = this.jobs
-      .list()
+      .listDownloadProjections()
       .find((candidate) => candidate.sourceUrl === item.pageUrl)
     const timestamp = now()
     if (cancelled) {
@@ -706,33 +762,49 @@ export class DownloadBatchService {
   }
 
   private synchronize() {
-    const jobs = this.jobs.list()
+    const jobs = this.jobs.listDownloadProjections()
     const byUrl = new Map(jobs.map((job) => [job.sourceUrl, job]))
     for (const item of this.db.select().from(downloadBatchItems).all()) {
       const operation = this.operation(item.operationId)
       if (!ACTIVE_ITEM_STATES.has(operation.state)) continue
       const job = byUrl.get(item.pageUrl)
-      if (operation.state === "downloading" && job) {
-        const state = job.state === "downloaded" ? "downloaded" : "downloading"
+      if (PROCESS_ITEM_STATES.has(operation.state) && job) {
+        const isComplete = job.state === "downloaded"
+        const isVerifying = ["media_validation", "media_publish"].includes(
+          job.stage,
+        )
+        const state = isComplete
+          ? "downloaded"
+          : isVerifying
+            ? "verifying"
+            : job.state === "checking"
+              ? "checking"
+              : "downloading"
+        const progress = isComplete
+          ? 100
+          : Math.max(
+              operation.progress,
+              Math.min(99, Math.round(job.progress * 10) / 10),
+            )
         this.updateOperation(item.operationId, {
           videoId: job.videoId,
           state,
-          stage: job.state === "downloaded" ? "complete" : job.stage,
-          progress: job.state === "downloaded" ? 100 : job.progress,
+          stage: isComplete ? "complete" : job.stage,
+          progress,
           message:
-            job.state === "downloaded"
+            isComplete
               ? "影音已下載，等待處理"
               : job.message || "正在下載影音",
-          outputsJson: job.state === "downloaded" ? { videoId: job.videoId } : {},
-          completedAt: job.state === "downloaded" ? now() : null,
+          outputsJson: isComplete ? { videoId: job.videoId } : {},
+          completedAt: isComplete ? now() : null,
         })
         this.updateItem(item.id, {
           videoId: job.videoId,
-          completedAt: job.state === "downloaded" ? now() : null,
+          completedAt: isComplete ? now() : null,
         })
       }
       if (
-        operation.state === "downloading" &&
+        PROCESS_ITEM_STATES.has(operation.state) &&
         !this.active.has(item.id) &&
         !processIsAlive(operation.pid) &&
         job?.state !== "downloaded"
@@ -884,7 +956,7 @@ export class DownloadBatchService {
         completedAt: timestamp,
       })
       this.updateItem(item.id, { completedAt: timestamp })
-    } else if (operation.state === "downloading") {
+    } else if (PROCESS_ITEM_STATES.has(operation.state)) {
       const active = this.active.get(item.id)
       if (!active) {
         throw new DownloadBatchOperationError(

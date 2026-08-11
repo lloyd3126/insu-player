@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage", required=True)
     parser.add_argument("--message", required=True)
     parser.add_argument("--success-message")
+    parser.add_argument("--progress-start", type=float, default=0.0)
+    parser.add_argument("--progress-end", type=float, default=100.0)
     parser.add_argument("--allow-failure", action="store_true")
     parser.add_argument("--redact-value", action="append", default=[])
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -37,6 +39,12 @@ def main() -> int:
         command = command[1:]
     if not command:
         raise SystemExit("no command supplied after --")
+    if not 0 <= args.progress_start <= args.progress_end <= 100:
+        raise SystemExit("progress range must satisfy 0 <= start <= end <= 100")
+
+    def mapped_progress(percent: float) -> float:
+        span = args.progress_end - args.progress_start
+        return args.progress_start + span * max(0.0, min(100.0, percent)) / 100.0
 
     log_dir = args.job_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -57,7 +65,7 @@ def main() -> int:
             "state": args.state,
             "stage": args.stage,
             "message": args.message,
-            "progress": 0.0,
+            "progress": args.progress_start,
             "lastError": None,
             "process": {
                 "pid": process.pid,
@@ -71,7 +79,7 @@ def main() -> int:
     recent_lines: deque[str] = deque(maxlen=12)
     last_progress = -1.0
     last_update = 0.0
-    progress = 0.0
+    progress = args.progress_start
 
     try:
         assert process.stdout is not None
@@ -91,7 +99,7 @@ def main() -> int:
                 match = PERCENT_PATTERN.search(line)
                 now = time.monotonic()
                 if match:
-                    progress = float(match.group(1))
+                    progress = mapped_progress(float(match.group(1)))
                     if progress >= last_progress + 0.5 or now - last_update >= 2.0:
                         patch_status(
                             args.job_dir,
@@ -160,7 +168,7 @@ def main() -> int:
                 "state": args.state,
                 "stage": args.stage,
                 "message": args.success_message or args.message,
-                "progress": 100.0,
+                "progress": args.progress_end,
                 "process": None,
             },
         )

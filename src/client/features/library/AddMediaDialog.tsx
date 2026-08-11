@@ -17,7 +17,12 @@ import { AppDialog } from "@/components/shared/AppDialog"
 import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
 import { PromptActionCard } from "@/components/shared/prompt-cards/PromptActionCard"
 import { TutorialCard } from "@/components/shared/prompt-cards/TutorialCard"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -29,7 +34,11 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
-import { Progress } from "@/components/ui/progress"
+import {
+  Progress,
+  ProgressLabel,
+  ProgressValue,
+} from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
@@ -99,7 +108,7 @@ function BatchItemActions({
     },
   })
   const action = (() => {
-    if (["queued", "downloading"].includes(item.state)) {
+    if (["checking", "queued", "downloading", "verifying"].includes(item.state)) {
       return (
         <Button
           variant="outline"
@@ -204,7 +213,9 @@ function DownloadQueueTable({ batch }: { batch: DownloadBatch }) {
               <TableRow key={item.id}>
                 <TableCell>
                   <div className="download-queue-source">
-                    <strong>{item.videoId ?? `項目 ${item.ordinal + 1}`}</strong>
+                    <strong>
+                      {item.title ?? item.videoId ?? `項目 ${item.ordinal + 1}`}
+                    </strong>
                     <small>{item.sourceUrl}</small>
                   </div>
                 </TableCell>
@@ -223,10 +234,13 @@ function DownloadQueueTable({ batch }: { batch: DownloadBatch }) {
                 </TableCell>
                 <TableCell>
                   {ACTIVE_STATES.has(item.state) && item.state !== "needs_confirmation" ? (
-                    <div className="download-queue-progress">
-                      <Progress value={item.progress} />
-                      <small>{item.message}</small>
-                    </div>
+                    <Progress
+                      className="download-queue-progress"
+                      value={item.progress}
+                    >
+                      <ProgressLabel>{item.message}</ProgressLabel>
+                      <ProgressValue />
+                    </Progress>
                   ) : (
                     <span>{item.message}</span>
                   )}
@@ -248,13 +262,15 @@ function DownloadQueueTable({ batch }: { batch: DownloadBatch }) {
 export function AddMediaDialog() {
   const overlay = useOverlay()
   const active = overlay.state?.type === "add-media" ? overlay.state : null
-  const selectTab = (tab: "sources" | "downloads" | "handoff") => {
-    overlay.actions.open({ type: "add-media", tab })
+  const selectTab = (
+    tab: "sources" | "downloads" | "handoff",
+    batchId = active?.batchId,
+  ) => {
+    overlay.actions.open({ type: "add-media", tab, batchId })
   }
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const [rightsConfirmed, setRightsConfirmed] = useState(false)
-  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null)
   const jobs = useJobsQuery()
   const urls = useMemo(() => parseUrls(input), [input])
   const batches = useQuery({
@@ -273,17 +289,16 @@ export function AddMediaDialog() {
         true,
       ),
     onSuccess: (response) => {
-      setSelectedBatchId(response.batch.id)
       setInput("")
       setRightsConfirmed(false)
       void queryClient.invalidateQueries({ queryKey: ["download-batches"] })
       void queryClient.invalidateQueries({ queryKey: ["jobs"] })
-      selectTab("downloads")
+      selectTab("downloads", response.batch.id)
       return response
     },
   })
   const displayedBatch =
-    batches.data?.batches.find((batch) => batch.id === selectedBatchId) ??
+    batches.data?.batches.find((batch) => batch.id === active?.batchId) ??
     batches.data?.batches.find((batch) => batch.state === "active") ??
     batches.data?.batches[0]
   const waitingVideoIds = new Set(
@@ -293,14 +308,12 @@ export function AddMediaDialog() {
   )
   const downloadedVideoIds = [
     ...new Set(
-      batches.data?.batches.flatMap((batch) =>
-        batch.items.flatMap((item) =>
-          item.state === "downloaded" &&
-          item.videoId &&
-          waitingVideoIds.has(item.videoId)
-            ? [item.videoId]
-            : [],
-        ),
+      displayedBatch?.items.flatMap((item) =>
+        item.state === "downloaded" &&
+        item.videoId &&
+        waitingVideoIds.has(item.videoId)
+          ? [item.videoId]
+          : [],
       ) ?? [],
     ),
   ]
@@ -438,8 +451,26 @@ export function AddMediaDialog() {
                 {batches.isPending ? (
                   <LoadingState label="正在讀取下載佇列" />
                 ) : null}
-                {batches.isError ? (
+                {batches.isError && !batches.data ? (
                   <ErrorState message={batches.error.message} />
+                ) : null}
+                {batches.isError && batches.data ? (
+                  <Alert variant="destructive">
+                    <TriangleAlertIcon />
+                    <AlertTitle>下載狀態暫時無法更新</AlertTitle>
+                    <AlertDescription>
+                      已保留上一次成功讀取的佇列，首頁服務仍可繼續使用。
+                    </AlertDescription>
+                    <AlertAction>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void batches.refetch()}
+                      >
+                        重新讀取
+                      </Button>
+                    </AlertAction>
+                  </Alert>
                 ) : null}
                 {displayedBatch ? (
                   <DownloadQueueTable batch={displayedBatch} />

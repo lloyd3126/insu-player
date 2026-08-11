@@ -51,7 +51,7 @@ export type OverlayDestination =
       query?: string
       status?: "all" | "active" | "attention" | "watchable" | "ready"
     }
-  | { type: "add-media"; tab: AddMediaTab }
+  | { type: "add-media"; tab: AddMediaTab; batchId?: string }
   | { type: "player"; videoId: string; caption?: string; time?: number }
   | JobDetailDestination
   | { type: "policy"; required: boolean }

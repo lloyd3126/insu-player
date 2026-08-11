@@ -36,7 +36,9 @@ export interface DownloadBatchItem {
   sourceUrl: string
   operationId: string
   videoId: string | null
+  title: string | null
   state: DownloadBatchItemState
+  stage: string
   progress: number
   message: string
   errorCode: string | null

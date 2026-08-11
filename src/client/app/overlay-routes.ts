@@ -32,6 +32,7 @@ const SUBTITLE_MANAGEMENT_VIEWS = new Set([
 ])
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,159}$/
+const DOWNLOAD_BATCH_ID_PATTERN = /^batch-\d{13}-[0-9a-f]{8}$/
 
 function decodeSegment(segment: string) {
   try {
@@ -103,7 +104,13 @@ function overlayDestinationFromLocation(
   }
   if (segments[0] === "library" && segments[1] === "add" && segments.length === 3) {
     const tab = setValue<AddMediaTab>(ADD_MEDIA_TABS, segments[2])
-    return tab ? { type: "add-media", tab } : null
+    if (!tab) return null
+    const batchId = new URLSearchParams(search).get("batch")?.trim()
+    return {
+      type: "add-media",
+      tab,
+      ...(batchId && DOWNLOAD_BATCH_ID_PATTERN.test(batchId) ? { batchId } : {}),
+    }
   }
   if (segments[0] === "library" && segments[1] === "add") return null
   if (segments[0] === "library" && segments.length <= 2) {
@@ -229,6 +236,7 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
       break
     case "add-media":
       path = `/library/add/${overlay.tab}`
+      if (overlay.batchId) search.set("batch", overlay.batchId)
       break
     case "detail":
       path =

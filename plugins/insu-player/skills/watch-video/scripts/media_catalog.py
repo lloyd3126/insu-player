@@ -77,6 +77,15 @@ def catalog_path(job_dir: Path) -> Path:
     return job_dir / "media-work" / "catalog.json"
 
 
+def validate_job_output_path(job_dir: Path, value: Path, label: str) -> Path:
+    if value.is_symlink():
+        raise ValueError(f"{label} must not be a symbolic link")
+    resolved = value.resolve()
+    if job_dir not in resolved.parents:
+        raise ValueError(f"{label} must stay inside the selected job")
+    return resolved
+
+
 def empty_catalog(video_id: str) -> dict[str, Any]:
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -295,17 +304,45 @@ def source_formats(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return [selected[height] for height in sorted(selected, reverse=True)]
 
 
+def discovery_snapshot(video_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "videoId": video_id,
+        "availability": {
+            "discoveredAt": utc_now(),
+            "formats": source_formats(metadata),
+        },
+    }
+
+
+def validate_discovery_snapshot(payload: Any, video_id: str) -> dict[str, Any]:
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schemaVersion", "videoId", "availability"}
+        or payload.get("schemaVersion") != SCHEMA_VERSION
+        or payload.get("videoId") != video_id
+    ):
+        raise ValueError("media discovery snapshot does not match the selected job")
+    probe = empty_catalog(video_id)
+    probe["availability"] = payload["availability"]
+    validate_catalog(probe, video_id)
+    return payload
+
+
 def command_discover(args: argparse.Namespace) -> int:
     video_id = validate_video_id(args.video_id)
     job_dir = validate_job_dir(args.job_dir, video_id)
     metadata = json.load(sys.stdin)
     if not isinstance(metadata, dict) or metadata.get("id") != video_id:
         raise ValueError("source metadata does not match the selected video")
+    snapshot = discovery_snapshot(video_id, metadata)
+    if args.output is not None:
+        output = validate_job_output_path(job_dir, args.output, "discovery output")
+        atomic_write_json(output, snapshot)
+        print(json.dumps(snapshot, ensure_ascii=False, sort_keys=True))
+        return 0
     catalog = load_catalog(job_dir, video_id)
-    catalog["availability"] = {
-        "discoveredAt": utc_now(),
-        "formats": source_formats(metadata),
-    }
+    catalog["availability"] = snapshot["availability"]
     write_catalog(job_dir, catalog)
     print(json.dumps(catalog, ensure_ascii=False, sort_keys=True))
     return 0
@@ -373,6 +410,16 @@ def command_publish(args: argparse.Namespace) -> int:
     destination_directory.mkdir(parents=True, exist_ok=True)
     destination = destination_directory / f"{rendition_id}.mp4"
     catalog = load_catalog(job_dir, video_id)
+    if args.discovery is not None:
+        discovery_path = validate_job_output_path(
+            job_dir, args.discovery, "discovery snapshot"
+        )
+        if not discovery_path.is_file():
+            raise ValueError("media discovery snapshot is unavailable")
+        snapshot = validate_discovery_snapshot(
+            json.loads(discovery_path.read_text(encoding="utf-8")), video_id
+        )
+        catalog["availability"] = snapshot["availability"]
     existing_height = next(
         (item for item in catalog["renditions"] if item.get("height") == height), None
     )
@@ -468,6 +515,7 @@ def build_parser() -> argparse.ArgumentParser:
     discover = subparsers.add_parser("discover")
     discover.add_argument("--job-dir", required=True, type=Path)
     discover.add_argument("--video-id", required=True)
+    discover.add_argument("--output", type=Path)
     discover.set_defaults(handler=command_discover)
 
     run_update = subparsers.add_parser("run-update")
@@ -488,6 +536,7 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--video-id", required=True)
     publish.add_argument("--source-file", required=True, type=Path)
     publish.add_argument("--selection", required=True, type=Path)
+    publish.add_argument("--discovery", type=Path)
     publish.add_argument("--requested-height", required=True, type=int)
     publish.add_argument("--run-id")
     publish.add_argument("--activate", action="store_true")

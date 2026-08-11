@@ -1,1 +1,0 @@
-import{n as e,t}from"./client-OTXucGdi.js";var n=new Set([`discovering`,`probing`,`downloading`,`merging`,`validating`]);function r(r){return e({queryKey:[`job-media`,r],queryFn:()=>t.media(r),enabled:!!r,refetchInterval:e=>e.state.data?.operation&&n.has(e.state.data.operation.state)?1e3:!1})}export{r as t};

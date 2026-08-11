@@ -268,7 +268,11 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         status = self.read_status()
         self.assertEqual(status["sourceUrl"], page_url)
         self.assertEqual(status["sourceKind"], "network-media")
+        self.assertEqual(status["state"], "downloaded")
         job_dir = self.workspace / "jobs" / "test-video"
+        self.assertFalse((job_dir / "source" / "audio.m4a").exists())
+        self.assertTrue((job_dir / "media-work" / "runs" / "initial" / "discovery.json").is_file())
+        self.assertTrue(self.active_media_path().is_file())
         for persisted in [job_dir / "manifest.txt", job_dir / "logs" / "workflow.log"]:
             self.assertNotIn(signed_url, persisted.read_text(encoding="utf-8"))
 
@@ -349,7 +353,9 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requires user confirmation", result.stdout)
         self.assertIn("--allow-low-quality", result.stdout)
-        self.assertEqual(self.read_media_catalog()["renditions"], [])
+        job_dir = self.workspace / "jobs" / "test-video"
+        self.assertFalse((job_dir / "media-work" / "catalog.json").exists())
+        self.assertTrue((job_dir / "media-work" / "runs" / "initial" / "discovery.json").is_file())
 
     def test_explicit_low_quality_approval_is_recorded(self) -> None:
         self.environment["FAKE_LOW_ONLY"] = "1"

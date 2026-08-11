@@ -1109,8 +1109,9 @@
 .download-queue-source strong,
 .download-queue-source small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .download-queue-source small { color: var(--quiet); }
-.download-queue-progress { display: grid; gap: 0.35rem; }
-.download-queue-progress small { color: var(--quiet); }
+.download-queue-progress { display: flex; gap: 0.35rem 0.75rem; }
+.download-queue-progress [data-slot="progress-label"],
+.download-queue-progress [data-slot="progress-value"] { color: var(--quiet); font-size: 0.68rem; font-weight: 400; }
 .download-queue-actions { display: flex; justify-content: flex-end; }
 .download-queue-action-stack { display: grid; justify-items: end; gap: 0.35rem; }
 .download-queue-action-stack small { max-width: 10rem; color: var(--destructive); font-size: 0.62rem; text-align: right; }

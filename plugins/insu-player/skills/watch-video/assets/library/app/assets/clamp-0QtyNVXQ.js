@@ -1,1 +1,0 @@
-import{r as e}from"./rolldown-runtime-hePW80VL.js";import{Dn as t,En as n,rr as r}from"./dialog-D9neUDSA.js";var i=e(r(),1);function a(e,r){let a=i.useRef(e),o=t(r);n(()=>{a.current!==e&&o(a.current),a.current=e},[e,o])}function o(e,t=-(2**53-1),n=2**53-1){return Math.max(t,Math.min(e,n))}export{a as n,o as t};
