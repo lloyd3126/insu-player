@@ -933,6 +933,255 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         zh_artifact = next(item for item in status["subtitleArtifacts"] if item["sourceLanguage"] == "zh-TW")
         self.assertTrue((job_dir / zh_artifact["tracks"][0]["path"]).is_file())
         self.assertFalse((job_dir / "whisper").exists())
+        cleaned = self.read_status()
+        self.assertEqual(cleaned["state"], "needs_transcription")
+        self.assertEqual(cleaned["stage"], "model_transcription")
+
+    def test_import_caption_accepts_only_current_timing_processor_contracts(self) -> None:
+        self.run_script(
+            "download-video.sh",
+            str(self.workspace),
+            "https://example.test/watch?v=test-video",
+            "--language",
+            "en",
+            "--proofread",
+        )
+        source = Path(self.temporary.name) / "model.vtt"
+        source.write_text(SAMPLE_VTT, encoding="utf-8")
+        contracts = (
+            ("openai", "audio/transcriptions", "whisper-1", "ja"),
+            ("groq", "audio/transcriptions", "whisper-large-v3", "de"),
+            (
+                "openrouter",
+                "audio/transcriptions",
+                "openai/whisper-large-v3",
+                "fr",
+            ),
+            ("xai", "v1/stt", None, "es"),
+        )
+        for provider, service, model, language in contracts:
+            arguments = [
+                str(self.workspace),
+                "test-video",
+                language,
+                str(source),
+                "--source-type",
+                "model-transcript",
+                "--processor-provider",
+                provider,
+                "--processor-service",
+                service,
+                "--timing-unit-kind",
+                "word",
+            ]
+            if model is not None:
+                arguments.extend(["--processor-model", model])
+            with self.subTest(provider=provider):
+                self.run_script("import-caption.sh", *arguments)
+
+        status = self.read_status()
+        imported = {
+            artifact["sourceLanguage"]: artifact
+            for artifact in status["subtitleArtifacts"]
+            if artifact["sourceType"] == "model-transcript"
+        }
+        self.assertEqual(set(imported), {"ja", "de", "fr", "es"})
+        self.assertEqual(
+            imported["ja"]["processor"],
+            {
+                "provider": "openai",
+                "service": "audio/transcriptions",
+                "model": "whisper-1",
+            },
+        )
+
+        rejected_contracts = (
+            ("openai", "unknown/service", "whisper-1"),
+            ("openai", "audio/transcriptions", "whisper-large-v3"),
+            ("groq", "audio/transcriptions", "whisper-1"),
+        )
+        for provider, service, model in rejected_contracts:
+            with self.subTest(rejected=(provider, service, model)):
+                result = subprocess.run(
+                    [
+                        str(SCRIPTS / "import-caption.sh"),
+                        str(self.workspace),
+                        "test-video",
+                        "it",
+                        str(source),
+                        "--source-type",
+                        "model-transcript",
+                        "--processor-provider",
+                        provider,
+                        "--processor-service",
+                        service,
+                        "--processor-model",
+                        model,
+                    ],
+                    cwd=REPO_ROOT,
+                    env=self.environment,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+
+        manual_with_service = subprocess.run(
+            [
+                str(SCRIPTS / "import-caption.sh"),
+                str(self.workspace),
+                "test-video",
+                "pt",
+                str(source),
+                "--source-type",
+                "manual-cc",
+                "--processor-provider",
+                "yt-dlp",
+                "--processor-service",
+                "unexpected",
+            ],
+            cwd=REPO_ROOT,
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(manual_with_service.returncode, 0)
+        self.assertIn("manual CC cannot record a service", manual_with_service.stdout)
+
+    def test_failed_transcription_cleanup_resets_and_can_run_again(self) -> None:
+        self.run_script(
+            "download-video.sh",
+            str(self.workspace),
+            "https://example.test/watch?v=test-video",
+            "--language",
+            "en",
+            "--proofread",
+        )
+        job_dir = self.workspace / "jobs" / "test-video"
+        self.run_script(
+            "job_state.py",
+            "update",
+            "--job-dir",
+            str(job_dir),
+            "--state",
+            "failed",
+            "--stage",
+            "model_transcription",
+            "--progress",
+            "100",
+            "--error",
+            "caption import failed",
+            "--message",
+            "轉錄匯入失敗",
+            "--record-history",
+        )
+        (job_dir / "whisper").mkdir(exist_ok=True)
+        (job_dir / "whisper" / "partial.json").write_text("{}", encoding="utf-8")
+        self.run_script("clean-job.sh", str(self.workspace), "test-video", "--yes")
+        reset = self.read_status()
+        self.assertEqual(reset["state"], "needs_transcription")
+        self.assertEqual(reset["stage"], "model_transcription")
+        self.assertEqual(reset["progress"], 0)
+        self.assertIsNone(reset["lastError"])
+        self.assertIsNone(reset["transcription"])
+
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            connection.execute(
+                "INSERT INTO transcription_settings (id, model_id, updated_at) VALUES (?, ?, ?)",
+                ("active", "local.openai-whisper.medium", "2026-08-12T00:00:00Z"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        whisper = self.workspace / ".agent-tools" / "insu-player" / ".venv" / "bin" / "whisper"
+        make_executable(
+            whisper,
+            """#!/bin/sh
+set -eu
+output=''
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = '--output_dir' ]; then output="$argument"; fi
+  previous="$argument"
+done
+mkdir -p "$output"
+printf '%s\n' '{"language":"ja","segments":[{"start":0.0,"end":2.0,"text":"テストです","words":[{"start":0.0,"end":1.0,"word":"テスト"},{"start":1.0,"end":2.0,"word":"です"}]}]}' > "$output/result.json"
+""",
+        )
+        self.run_script(
+            "transcribe.sh",
+            str(self.workspace),
+            "test-video",
+            "--mode",
+            "proofread",
+            "--language",
+            "und",
+            "--output-language",
+            "und",
+        )
+        completed = self.read_status()
+        self.assertEqual(completed["state"], "needs_proofreading")
+        self.assertEqual(completed["transcription"]["languageTag"], "ja")
+        model_sources = [
+            artifact
+            for artifact in completed["subtitleArtifacts"]
+            if artifact["sourceType"] == "model-transcript"
+        ]
+        self.assertEqual(len(model_sources), 1)
+        self.assertEqual(model_sources[0]["sourceLanguage"], "ja")
+
+    def test_repair_script_resets_only_the_known_failed_cleanup_shape(self) -> None:
+        self.run_script(
+            "download-video.sh",
+            str(self.workspace),
+            "https://example.test/watch?v=test-video",
+            "--language",
+            "en",
+            "--proofread",
+        )
+        job_dir = self.workspace / "jobs" / "test-video"
+        self.run_script(
+            "job_state.py",
+            "update",
+            "--job-dir",
+            str(job_dir),
+            "--state",
+            "failed",
+            "--stage",
+            "model_transcription",
+            "--error",
+            "legacy 0.3.0 import failure",
+            "--message",
+            "轉錄匯入失敗",
+            "--record-history",
+        )
+        self.run_script(
+            "job_state.py",
+            "update",
+            "--job-dir",
+            str(job_dir),
+            "--state",
+            "failed",
+            "--stage",
+            "cleanup",
+            "--message",
+            "已移除可重建的中間檔",
+            "--record-history",
+        )
+        self.run_script(
+            "repair-transcription-cleanup.sh",
+            str(self.workspace),
+            "test-video",
+        )
+        repaired = self.read_status()
+        self.assertEqual(repaired["state"], "needs_transcription")
+        self.assertEqual(repaired["stage"], "model_transcription")
+        self.assertEqual(repaired["progress"], 0)
+        self.assertIsNone(repaired["lastError"])
 
     def test_bilingual_import_registers_an_immutable_revisioned_artifact(self) -> None:
         self.run_script(

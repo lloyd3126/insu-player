@@ -1547,6 +1547,58 @@ def clear_transcription(job_dir: Path) -> dict[str, Any]:
     return save_status(job_dir, status)
 
 
+def reset_transcription_for_retry(job_dir: Path) -> dict[str, Any]:
+    status = load_status(job_dir)
+    state = status.get("state")
+    stage = status.get("stage")
+    if stage == "cleanup" and state == "failed":
+        previous = next(
+            (
+                entry
+                for entry in reversed(status["history"])
+                if entry.get("stage") != "cleanup"
+            ),
+            None,
+        )
+        if not previous or (
+            previous.get("state") not in {"failed", "interrupted"}
+            or previous.get("stage") != "model_transcription"
+        ):
+            raise ValueError(
+                "failed / cleanup does not have a preceding model_transcription failure"
+            )
+    elif state not in {"failed", "interrupted"} or stage != "model_transcription":
+        raise ValueError(
+            "transcription retry requires failed or interrupted / model_transcription"
+        )
+    for artifact in status["subtitleArtifacts"]:
+        if (
+            artifact.get("kind") == "source"
+            and artifact.get("sourceType") == "model-transcript"
+            and artifact.get("lifecycleState") == "ready"
+            and artifact.get("validationState") == "valid"
+            and artifact.get("freshnessState") == "current"
+        ):
+            raise ValueError("a current valid model transcript already exists")
+    status["state"] = "needs_transcription"
+    status["stage"] = "model_transcription"
+    status["progress"] = 0.0
+    status["message"] = "已清理未完成的轉錄，可重新開始語音辨識"
+    status["lastError"] = None
+    status["transcription"] = None
+    status["process"] = None
+    status["completedAt"] = None
+    status["history"].append(
+        {
+            "at": utc_now(),
+            "state": status["state"],
+            "stage": status["stage"],
+            "message": status["message"],
+        }
+    )
+    return save_status(job_dir, status)
+
+
 def set_subtitle_pipeline(
     job_dir: Path,
     *,
@@ -1709,6 +1761,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     transcription_clear_parser.add_argument("--job-dir", required=True, type=Path)
 
+    transcription_retry_parser = subparsers.add_parser(
+        "transcription-retry",
+        help="reset an exact failed or interrupted transcription for retry",
+    )
+    transcription_retry_parser.add_argument("--job-dir", required=True, type=Path)
+
     processor_contract_parser = subparsers.add_parser(
         "processor-contract",
         help="validate one timing processor identity without mutating a job",
@@ -1816,6 +1874,8 @@ def main() -> int:
         )
     elif args.command == "transcription-clear":
         status = clear_transcription(args.job_dir)
+    elif args.command == "transcription-retry":
+        status = reset_transcription_for_retry(args.job_dir)
     elif args.command == "processor-contract":
         identity = processor_identity(
             args.provider,

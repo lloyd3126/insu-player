@@ -219,6 +219,31 @@ class TranscriptionTests(unittest.TestCase):
             self.assertEqual(first[2:4], ("en", "en"))
             self.assertEqual(second[2:4], ("en", "en"))
             self.assertEqual(calls, 1)
+            segments, words, language, engine_language, chunks = first
+            transcribe_media.write_artifacts(
+                args.output_dir,
+                segments,
+                words,
+                provider="openai",
+                model="whisper-1",
+                language=language,
+                engine_language=engine_language,
+                chunks=chunks,
+            )
+            transcript = json.loads(
+                (args.output_dir / "transcript.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(transcript["schemaVersion"], 3)
+            self.assertEqual(
+                transcript["processor"],
+                {
+                    "provider": "openai",
+                    "service": "audio/transcriptions",
+                    "model": "whisper-1",
+                },
+            )
+            self.assertEqual(transcript["language"], "en")
+            self.assertEqual(transcript["engineLanguage"], "en")
 
     def test_every_cloud_contract_requires_word_timing(self) -> None:
         contracts = {

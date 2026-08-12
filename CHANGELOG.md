@@ -1,5 +1,12 @@
 # 版本紀錄
 
+## v0.3.1 — 2026-08-12
+
+- 統一轉錄與字幕匯入的 timing processor 精確契約，讓 OpenAI、Groq、OpenRouter 與 xAI 含 `/` 的合法 service 能完成匯入，未知或錯配身分仍會失敗
+- 人工 CC 匯入改為強制 `yt-dlp` 且 service、model 都必須為空
+- 清理失敗或中斷的轉錄後，明確回到 `needs_transcription / model_transcription`，清除舊錯誤與轉錄 metadata，其他工作則保留原本 stage
+- 新增只修復 current-schema `failed / cleanup` 轉錄狀態的一次性工具，不加入 runtime migration 或相容讀取
+
 ## v0.3.0 — 2026-08-12
 
 - 新增不需封裝或上架商店的 Chrome Extension，可與目前 workspace 的實際 localhost 配對，將目前頁面、嵌入影音、直接媒體與已結束 HLS 加入既有下載佇列

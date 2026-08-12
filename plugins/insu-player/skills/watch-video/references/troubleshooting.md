@@ -140,3 +140,13 @@ Hono/Bun 服務會先獨占探測 `8000`。若已被占用，就由作業系統�
 ## 翻譯檔匯入失敗
 
 校正或翻譯 revision 先用 `reflow_subtitles.py validate-pair` 驗證完整句 input/output 軌。切分 revision 還要先用 `segment_subtitles.py validate` 檢查 frozen output、width、source spans、anchors 與 risky/blocked boundaries。最後統一用 `import-subtitle-revision.sh` 匯入，不要用來源單軌 `import-caption.sh`。成對軌必須有相同 cue ID、數量與時間。空文字、時間重疊、換行或內部 marker 都會拒絕。每個 revision 都寫入新的 immutable artifact 目錄，既有 revision 不允許覆寫。
+
+## 0.3.0 清理後無法重新轉錄
+
+只有當 current-schema 工作目前是 `failed / cleanup`，且最近一筆非 cleanup 歷程是 `failed` 或 `interrupted / model_transcription`時，才執行：
+
+```bash
+plugins/insu-player/skills/watch-video/scripts/repair-transcription-cleanup.sh WORKSPACE VIDEO_ID
+```
+
+工具會拒絕已有 current valid model transcript 的工作，也不會修改影片、字幕 artifact 或其他 stage。修復後狀態是 `needs_transcription / model_transcription`。

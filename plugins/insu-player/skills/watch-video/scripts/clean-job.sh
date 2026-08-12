@@ -42,13 +42,15 @@ fi
 
 if [ -f "$CAPTION_WORKSPACE/app.db" ] && [ -x "$CAPTION_PYTHON" ]; then
   current_state=$(caption_job_state show --job-dir "$job_dir" --field state)
+  current_stage=$(caption_job_state show --job-dir "$job_dir" --field stage)
   case "$current_state" in
     checking|downloading|transcribing|translating|preparing_player)
       process_pid=$(caption_job_state show --job-dir "$job_dir" --field process.pid 2>/dev/null || true)
       if [ -n "$process_pid" ] && kill -0 "$process_pid" 2>/dev/null; then
         caption_die "job is active ($current_state, pid $process_pid); stop it before cleaning"
       fi
-      caption_job_state update --job-dir "$job_dir" --state interrupted --stage "$current_state" --message "工作程序已停止。清理前標記為中斷" --record-history >/dev/null
+      caption_job_state update --job-dir "$job_dir" --state interrupted --stage "$current_stage" --message "工作程序已停止。清理前標記為中斷" --record-history >/dev/null
+      current_state=interrupted
       ;;
   esac
 fi
@@ -65,6 +67,11 @@ rm -rf -- "$job_dir/youtube-captions" "$job_dir/whisper"
 if [ -x "$CAPTION_PYTHON" ] && [ -f "$CAPTION_WORKSPACE/app.db" ]; then
   caption_job_state asset --job-dir "$job_dir" --name audio --remove >/dev/null
   current_state=$(caption_job_state show --job-dir "$job_dir" --field state)
-  caption_job_state update --job-dir "$job_dir" --state "$current_state" --stage cleanup --message "已移除可重建的中間檔" --record-history >/dev/null
+  current_stage=$(caption_job_state show --job-dir "$job_dir" --field stage)
+  if { [ "$current_state" = "failed" ] || [ "$current_state" = "interrupted" ]; } && [ "$current_stage" = "model_transcription" ]; then
+    caption_job_state transcription-retry --job-dir "$job_dir" >/dev/null
+  else
+    caption_job_state update --job-dir "$job_dir" --state "$current_state" --stage "$current_stage" --message "已移除可重建的中間檔" --record-history >/dev/null
+  fi
 fi
 caption_note "Intermediate files removed; playable library assets were preserved."

@@ -42,25 +42,18 @@ else
 fi
 case "$artifact_revision" in ''|*[!0-9]*) caption_die "--revision must be a positive integer" ;; esac
 [ "$artifact_revision" -ge 1 ] || caption_die "--revision must be a positive integer"
-case "$processor_service" in *[!A-Za-z0-9._-]*) caption_die "invalid processor service" ;; esac
-if [ "$processor_provider" = "openrouter" ]; then
-  [ "$processor_model" = "openai/whisper-large-v3" ] || caption_die "OpenRouter word timing is locked to openai/whisper-large-v3"
-  case "$processor_model" in */*) ;; *) caption_die "OpenRouter model must include its provider namespace" ;; esac
-  case "$processor_model" in *[!A-Za-z0-9._/-]*) caption_die "invalid processor model" ;; esac
-else
-  case "$processor_model" in *[!A-Za-z0-9._-]*) caption_die "invalid processor model" ;; esac
-fi
-if [ "$source_type" = "model-transcript" ]; then
-  case "$processor_provider:$processor_service:$processor_model" in
-    local:openai-whisper:*|openai:audio/transcriptions:whisper-1|groq:audio/transcriptions:whisper-large-v3|groq:audio/transcriptions:whisper-large-v3-turbo|elevenlabs:speech-to-text:scribe_v2|openrouter:audio/transcriptions:openai/whisper-large-v3) ;;
-    xai:v1/stt:) ;;
-    *) caption_die "processor identity does not match the current timing provider contract" ;;
-  esac
-fi
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
 caption_require_python
+if [ "$source_type" = "manual-cc" ]; then
+  [ -z "$processor_service" ] || caption_die "manual CC cannot record a service"
+  [ -z "$processor_model" ] || caption_die "manual CC cannot record a model"
+else
+  processor_contract_args=(--provider "$processor_provider" --service "$processor_service")
+  if [ -n "$processor_model" ]; then processor_contract_args+=(--model "$processor_model"); fi
+  caption_job_state processor-contract "${processor_contract_args[@]}" >/dev/null
+fi
 caption_validate_vtt "$source_file"
 
 job_dir="$CAPTION_JOBS/$video_id"

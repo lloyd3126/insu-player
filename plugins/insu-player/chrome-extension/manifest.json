@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "INSU Player",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "把目前 Chrome 分頁中的影音送到本機 INSU Player。",
   "action": {
     "default_title": "加入 INSU Player",
