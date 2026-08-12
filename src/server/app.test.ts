@@ -790,7 +790,7 @@ describe("Hono application", () => {
     expect(packageResponse.status).toBe(200)
     expect(packageResponse.headers.get("content-type")).toBe("application/zip")
     expect(packageResponse.headers.get("content-disposition")).toContain(
-      "insu-player-extension-v0.3.1.zip",
+      "insu-player-extension-v0.3.2.zip",
     )
     const packageBytes = new Uint8Array(await packageResponse.arrayBuffer())
     const packageChecksum = packageResponse.headers.get("x-insu-package-sha256")

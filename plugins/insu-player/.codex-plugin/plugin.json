@@ -1,6 +1,6 @@
 {
   "name": "insu-player",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "由 Agent 準備影片與字幕的本機影片庫。",
   "author": {
     "name": "lloyd3126"

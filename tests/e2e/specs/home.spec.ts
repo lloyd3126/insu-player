@@ -739,7 +739,7 @@ test.describe("INSU Player home @smoke", () => {
         body: "zip",
         headers: {
           "Content-Type": "application/zip",
-          "Content-Disposition": 'attachment; filename="insu-player-extension-v0.3.1.zip"',
+          "Content-Disposition": 'attachment; filename="insu-player-extension-v0.3.2.zip"',
         },
       })
     })
@@ -763,7 +763,7 @@ test.describe("INSU Player home @smoke", () => {
     const packageDownload = page.waitForEvent("download")
     await extension.getByRole("button", { name: "下載 Chrome 擴充功能" }).click()
     expect((await packageDownload).suggestedFilename()).toBe(
-      "insu-player-extension-v0.3.1.zip",
+      "insu-player-extension-v0.3.2.zip",
     )
     await expect(extension.getByRole("button", { name: /配對檔/ })).toHaveCount(0)
 
