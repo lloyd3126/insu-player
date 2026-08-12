@@ -16,6 +16,7 @@ Produce the same three artifacts regardless of provider: "transcript.json", "tra
 - Use a selected cloud provider only after stating which service receives audio chunks, that charges may apply, and what the local alternative is, then obtaining explicit authorization for that run.
 - Do not infer upload authorization from the presence of any API key.
 - Cloud provider selection is strict and has no fallback. A missing key, unsupported model, endpoint failure, or response without word timing must fail the run.
+- Before extracting or uploading audio, the INSU Player wrapper must validate the current job transition and the exact provider, service, and model identity against the current schema. A contract that cannot be recorded must fail before any API request.
 
 Current timing contracts:
 
@@ -68,6 +69,8 @@ export OPENAI_API_KEY='set-this-in-the-terminal'
 The local path enables Whisper word timestamps. Cloud paths convert media to mono 16 kHz, 48 kbps MP3 chunks of ten minutes, request provider-native word timestamps, and offset every chunk back onto one continuous timeline. Every chunk stays below the strict 25 MB cross-provider upload ceiling. Provider-returned segments are only transport cues and never become complete-sentence boundaries.
 
 Detect the source language from audio by default. Do not ask the user to guess it before transcription. Ask for an ordinary language name only when detection is unreliable, speech is multilingual, or script and regional variation materially affect the desired text. The calling Agent resolves any answer to a canonical BCP 47 tag. For a regional tag such as `en-US` or `zh-Hant-TW`, the provider adapter passes only the parameter that the selected endpoint accepts while preserving the full stored tag. `und` means automatic detection and is never sent as a model parameter. The schema-version 3 transcript must replace it with the detected canonical `language`, record `engineLanguage`, and embed the exact timing processor identity. Unsupported model languages fail explicitly instead of being substituted.
+
+Some Whisper-compatible endpoints return a human-readable detected language such as `english` instead of a language tag. Normalize only explicitly supported names to the stored BCP 47 tag, derive the provider engine parameter separately, and reject unknown names before importing the transcript. Never write a provider display name into `language` or `engineLanguage`.
 
 When INSU Player starts a transcription that outlives the current turn, return orchestration to `$monitor-player-job`. This skill remains responsible only for transcription artifacts and must not create its own scheduler, polling loop, or duplicate transcription process.
 

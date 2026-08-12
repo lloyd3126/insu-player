@@ -55,6 +55,7 @@ import {
   subtitleStylePreferencesSchema,
   type SubtitleStyleService,
 } from "@server/services/subtitle-style-service"
+import { SubtitleCatalogContractError } from "@server/services/subtitle-catalog-service"
 import type { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 import { EXTENSION_CONNECTION_PROTOCOL_VERSION } from "@shared/contracts/browser-extension"
 import { webVttToSrt, webVttToText } from "@shared/domain/subtitle"
@@ -411,6 +412,17 @@ function subtitleStyleErrorResponse(context: Context, error: unknown) {
     { error: errorMessage(error), code: "subtitle-style-failed" },
     500,
   )
+}
+
+function subtitleCatalogErrorResponse(context: Context, error: unknown) {
+  if (error instanceof SubtitleCatalogContractError) {
+    return context.json({ error: error.message, code: error.code }, 422)
+  }
+  const message = errorMessage(error)
+  if (message === "job not found" || message === "invalid video ID") {
+    return context.json({ error: message, code: "subtitle-not-found" }, 404)
+  }
+  return context.json({ error: message, code: "subtitle-failed" }, 500)
 }
 
 function serveFile(
@@ -1081,7 +1093,7 @@ export function createApplication(options: ApplicationOptions) {
     try {
       return context.json(captions.comparison(context.req.param("videoId")))
     } catch (error) {
-      return context.json({ error: errorMessage(error) }, 404)
+      return subtitleCatalogErrorResponse(context, error)
     }
   })
   app.get("/api/jobs/:videoId/subtitles", (context) => {
@@ -1090,7 +1102,7 @@ export function createApplication(options: ApplicationOptions) {
         options.jobs.subtitleCatalog(context.req.param("videoId")),
       )
     } catch (error) {
-      return context.json({ error: errorMessage(error) }, 404)
+      return subtitleCatalogErrorResponse(context, error)
     }
   })
   app.put(
@@ -1233,7 +1245,7 @@ export function createApplication(options: ApplicationOptions) {
           ),
         )
       } catch (error) {
-        return context.json({ error: errorMessage(error) }, 404)
+        return subtitleCatalogErrorResponse(context, error)
       }
     },
   )
@@ -1269,7 +1281,7 @@ export function createApplication(options: ApplicationOptions) {
           },
         })
       } catch (error) {
-        return context.json({ error: errorMessage(error) }, 404)
+        return subtitleCatalogErrorResponse(context, error)
       }
     },
   )
@@ -1303,6 +1315,9 @@ export function createApplication(options: ApplicationOptions) {
     try {
       return context.json(options.jobs.summarize(context.req.param("videoId"), true))
     } catch (error) {
+      if (error instanceof SubtitleCatalogContractError) {
+        return context.json({ error: error.message, code: error.code }, 422)
+      }
       const message = errorMessage(error)
       return context.json(
         { error: message },

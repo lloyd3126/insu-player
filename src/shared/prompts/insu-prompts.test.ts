@@ -111,7 +111,9 @@ describe("INSU prompt contract", () => {
       contentProcessor: { provider: "agent", service: "codex" },
     })
 
-    expect(prompt).toContain("已知選擇直接沿用")
+    expect(prompt).toContain("只有上方快照已記錄的選擇才能直接沿用")
+    expect(prompt).toContain("狀態快照，不是執行時的事實來源")
+    expect(prompt).toContain("inspector 回傳的 nextAction")
     expect(prompt).toContain("已解析來源語言：en-US")
     expect(prompt).toContain("已解析輸出語言：zh-TW")
     expect(prompt).toContain("已知 timing processor：local / medium")
@@ -119,6 +121,20 @@ describe("INSU prompt contract", () => {
     expect(prompt).toContain("不要要求我選 skill、模型名稱、provider、processor")
     expect(prompt).toContain("不要再次詢問要校正或翻譯")
     expect(prompt).toContain("不要再次要求我選模型或處理方式")
+  })
+
+  test("downloaded subtitle prompt asks only for missing work and never restarts download", () => {
+    const prompt = buildSubtitleManagementPrompt({
+      videoId: "safe-id",
+      state: "downloaded",
+      stage: "awaiting_subtitle_choice",
+      progress: 100,
+    })
+
+    expect(prompt).toContain("目前快照沒有已確認的字幕路徑")
+    expect(prompt).toContain("不得重新進入影音下載")
+    expect(prompt).toContain("已下載或已通過驗證的階段不得列入待執行工作")
+    expect(prompt).not.toContain("將完成下載")
   })
 
   test("translation creation preserves proofread content and original timing", () => {

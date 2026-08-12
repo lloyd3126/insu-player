@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { readFileSync, statSync } from "node:fs"
 import path from "node:path"
 
+import subtitleManifestContract from "../../../plugins/insu-player/contracts/subtitle-manifest-contract.json"
 import { safeContainedFile } from "@server/lib/files"
 import {
   SUBTITLE_ARTIFACT_KINDS,
@@ -81,52 +82,22 @@ const TRACK_FIELDS = new Set([
   "bytes",
 ])
 const REQUIRED_TRACK_FIELDS = [...TRACK_FIELDS].filter((field) => field !== "bytes")
-const CONTENT_MANIFEST_FIELDS = new Set([
-  "schemaVersion",
-  "mode",
-  "sourceFormat",
-  "sourceLanguage",
-  "outputLanguage",
-  "sourceTranscript",
-  "timingSourceArtifactId",
-  "sourceContentArtifactId",
-  "sourceContentKind",
-  "sourceContentManifest",
-  "sourceContentChecksum",
-  "referenceArtifactIds",
-  "timingProcessor",
-  "contentProcessor",
-  "sentenceReview",
-  "outputProfile",
-  "rules",
-  "segments",
-])
-const SEGMENTATION_MANIFEST_FIELDS = new Set([
-  "schemaVersion",
-  "contentMode",
-  "sourceLanguage",
-  "outputLanguage",
-  "sourceTranscript",
-  "contentManifest",
-  "sourceContentArtifactId",
-  "sourceContentKind",
-  "timingProcessor",
-  "contentProcessor",
-  "sentenceReview",
-  "segmentationProcessor",
-  "alignmentMethod",
-  "alignmentReview",
-  "alignmentFingerprint",
-  "targetRevision",
-  "targetFrozen",
-  "targetFingerprint",
-  "widthProfile",
-  "timingProfile",
-  "outputProfile",
-  "timedUnits",
-  "boundaryHints",
-  "contentUnits",
-])
+const CONTENT_MANIFEST_FIELDS = new Set(subtitleManifestContract.content.fields)
+const SEGMENTATION_MANIFEST_FIELDS = new Set(
+  subtitleManifestContract.segmentation.fields,
+)
+const AGENT_PROCESSOR_FIELDS = new Set(
+  subtitleManifestContract.agentProcessor.fields,
+)
+
+export class SubtitleCatalogContractError extends Error {
+  readonly code = "subtitle-schema-incompatible"
+
+  constructor(message: string) {
+    super(message)
+    this.name = "SubtitleCatalogContractError"
+  }
+}
 
 interface ResolvedSubtitleArtifactTrack extends SubtitleArtifactTrack {
   relativePath: string
@@ -282,6 +253,19 @@ function checksum(contents: string) {
   return createHash("sha256").update(contents).digest("hex")
 }
 
+function isCompletedAgentProcessor(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  return (
+    Object.keys(candidate).length === AGENT_PROCESSOR_FIELDS.size &&
+    Object.keys(candidate).every((key) => AGENT_PROCESSOR_FIELDS.has(key)) &&
+    candidate.provider === subtitleManifestContract.agentProcessor.provider &&
+    candidate.service === subtitleManifestContract.agentProcessor.service &&
+    typeof candidate.updatedAt === "string" &&
+    Number.isFinite(Date.parse(candidate.updatedAt))
+  )
+}
+
 function validateManifestSchema(
   manifestPath: string,
   kind: SubtitleArtifactKind,
@@ -291,9 +275,14 @@ function validateManifestSchema(
   try {
     manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
   } catch {
-    throw new Error(`${artifactId}.manifestPath is not valid JSON`)
+    throw new SubtitleCatalogContractError(
+      `${artifactId}.manifestPath is not valid JSON`,
+    )
   }
-  const expectedVersion = kind === "segmentation" ? 4 : 5
+  const expectedVersion =
+    kind === "segmentation"
+      ? subtitleManifestContract.segmentation.schemaVersion
+      : subtitleManifestContract.content.schemaVersion
   const record = manifest as Record<string, unknown>
   if (
     !manifest ||
@@ -301,7 +290,7 @@ function validateManifestSchema(
     Array.isArray(manifest) ||
     record.schemaVersion !== expectedVersion
   ) {
-    throw new Error(
+    throw new SubtitleCatalogContractError(
       `${artifactId}.manifestPath must use schemaVersion ${expectedVersion}`,
     )
   }
@@ -313,27 +302,30 @@ function validateManifestSchema(
     Object.keys(record).length !== expectedFields.size ||
     Object.keys(record).some((key) => !expectedFields.has(key))
   ) {
-    throw new Error(`${artifactId}.manifestPath fields do not match the current schema`)
+    throw new SubtitleCatalogContractError(
+      `${artifactId}.manifestPath fields do not match the current schema`,
+    )
   }
   if (kind === "segmentation") {
     if (
       record.targetFrozen !== true ||
+      typeof record.targetFrozenAt !== "string" ||
+      !Number.isFinite(Date.parse(record.targetFrozenAt)) ||
       record.alignmentMethod !== "agent-semantic" ||
-      !record.segmentationProcessor ||
-      typeof record.segmentationProcessor !== "object" ||
-      (record.segmentationProcessor as Record<string, unknown>).provider !== "agent" ||
-      (record.segmentationProcessor as Record<string, unknown>).service !== "codex"
+      !isCompletedAgentProcessor(record.contentProcessor) ||
+      !isCompletedAgentProcessor(record.segmentationProcessor)
     ) {
-      throw new Error(`${artifactId}.manifestPath is not a completed Agent segmentation`)
+      throw new SubtitleCatalogContractError(
+        `${artifactId}.manifestPath is not a completed Agent segmentation`,
+      )
     }
   } else if (
     record.mode !== (kind === "translation" ? "translate" : "proofread") ||
-    !record.contentProcessor ||
-    typeof record.contentProcessor !== "object" ||
-    (record.contentProcessor as Record<string, unknown>).provider !== "agent" ||
-    (record.contentProcessor as Record<string, unknown>).service !== "codex"
+    !isCompletedAgentProcessor(record.contentProcessor)
   ) {
-    throw new Error(`${artifactId}.manifestPath is not completed Agent content`)
+    throw new SubtitleCatalogContractError(
+      `${artifactId}.manifestPath is not completed Agent content`,
+    )
   }
 }
 
@@ -507,6 +499,16 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       ["draft", "processing", "ready", "failed", "archived"],
       `${id}.lifecycleState`,
     )
+    let validationState = requiredEnum<SubtitleValidationState>(
+      candidate.validationState,
+      ["pending", "valid", "warning", "invalid"],
+      `${id}.validationState`,
+    )
+    const freshnessState = requiredEnum<SubtitleFreshnessState>(
+      candidate.freshnessState,
+      ["current", "stale", "superseded"],
+      `${id}.freshnessState`,
+    )
     const sourceLanguage = requiredLanguage(
       candidate.sourceLanguage,
       `${id}.sourceLanguage`,
@@ -616,7 +618,21 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
     if (kind !== "source" && !manifestPath) {
       throw new Error(`${id}.manifestPath is required`)
     }
-    if (manifestPath) validateManifestSchema(manifestPath, kind, id)
+    let schemaError: string | null = null
+    if (manifestPath) {
+      try {
+        validateManifestSchema(manifestPath, kind, id)
+      } catch (error) {
+        if (
+          freshnessState !== "superseded" ||
+          !(error instanceof SubtitleCatalogContractError)
+        ) {
+          throw error
+        }
+        schemaError = error.message
+        validationState = "invalid"
+      }
+    }
     const targetFrozen = requiredBoolean(candidate.targetFrozen, `${id}.targetFrozen`)
     if ((kind === "segmentation") !== targetFrozen) {
       throw new Error(`${id}.targetFrozen does not match the artifact kind`)
@@ -646,16 +662,8 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       kind,
       revision: requiredPositiveInteger(candidate.revision, `${id}.revision`),
       lifecycleState,
-      validationState: requiredEnum<SubtitleValidationState>(
-        candidate.validationState,
-        ["pending", "valid", "warning", "invalid"],
-        `${id}.validationState`,
-      ),
-      freshnessState: requiredEnum<SubtitleFreshnessState>(
-        candidate.freshnessState,
-        ["current", "stale", "superseded"],
-        `${id}.freshnessState`,
-      ),
+      validationState,
+      freshnessState,
       sourceLanguage,
       outputLanguage,
       sourceType,
@@ -664,6 +672,7 @@ function registeredArtifacts(input: SubtitleCatalogInput) {
       targetFrozen,
       manifestPath,
       manifestAvailable: Boolean(manifestPath),
+      schemaError,
       checksum: registeredArtifactChecksum,
       warningCount: requiredCount(candidate.warningCount, `${id}.warningCount`),
       hardDefectCount: requiredCount(
@@ -960,6 +969,7 @@ export function publicSubtitleCatalog(
       timingUnitKind: artifact.timingUnitKind,
       targetFrozen: artifact.targetFrozen,
       manifestAvailable: artifact.manifestAvailable,
+      schemaError: artifact.schemaError,
       checksum: artifact.checksum,
       warningCount: artifact.warningCount,
       hardDefectCount: artifact.hardDefectCount,

@@ -15,6 +15,25 @@ from pathlib import Path
 from typing import Any
 
 
+PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+SUBTITLE_MANIFEST_CONTRACT_PATH = (
+    PLUGIN_ROOT / "contracts" / "subtitle-manifest-contract.json"
+)
+try:
+    SUBTITLE_MANIFEST_CONTRACT = json.loads(
+        SUBTITLE_MANIFEST_CONTRACT_PATH.read_text(encoding="utf-8")
+    )
+except (OSError, json.JSONDecodeError) as error:
+    raise RuntimeError(
+        f"current subtitle manifest contract is unavailable: {SUBTITLE_MANIFEST_CONTRACT_PATH}"
+    ) from error
+if (
+    not isinstance(SUBTITLE_MANIFEST_CONTRACT, dict)
+    or SUBTITLE_MANIFEST_CONTRACT.get("schemaVersion") != 1
+):
+    raise RuntimeError("subtitle manifest contract must use schemaVersion 1")
+
+
 SCHEMA_VERSION = 4
 CONTENT_SCHEMA_VERSION = 5
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
@@ -114,6 +133,32 @@ def require_text(value: object, label: str) -> str:
     if re.fullmatch(r"S\d{4}(?:-P\d{2})?", value.strip()):
         raise PlanError(f"{label} uses an internal segmentation ID as visible subtitle text")
     return value.strip()
+
+
+def manifest_fields(kind: str) -> set[str]:
+    contract = SUBTITLE_MANIFEST_CONTRACT.get(kind)
+    if not isinstance(contract, dict):
+        raise PlanError(f"subtitle manifest contract is invalid: {kind}")
+    fields = contract.get("fields")
+    if not isinstance(fields, list) or not all(isinstance(field, str) for field in fields):
+        raise PlanError(f"subtitle manifest contract fields are invalid: {kind}")
+    return set(fields)
+
+
+def completed_agent_processor(value: object, label: str) -> None:
+    contract = SUBTITLE_MANIFEST_CONTRACT.get("agentProcessor")
+    if (
+        not isinstance(contract, dict)
+        or not isinstance(contract.get("fields"), list)
+        or not all(isinstance(field, str) for field in contract["fields"])
+        or not isinstance(value, dict)
+        or set(value) != set(contract["fields"])
+        or value.get("provider") != contract.get("provider")
+        or value.get("service") != contract.get("service")
+        or not isinstance(value.get("updatedAt"), str)
+        or not value["updatedAt"].endswith("Z")
+    ):
+        raise PlanError(f"{label} does not match the current Agent processor contract")
 
 
 TIMING_PROCESSOR_CONTRACTS: dict[str, tuple[str, set[str] | None]] = {
@@ -327,6 +372,8 @@ def normalize_required_terms(raw_terms: object, label: str) -> list[str]:
 
 def prepare(args: argparse.Namespace) -> int:
     content = load_json(args.content_manifest, "content manifest")
+    if set(content) != manifest_fields("content"):
+        raise PlanError("content manifest fields do not match the current contract")
     if content.get("schemaVersion") != CONTENT_SCHEMA_VERSION:
         raise PlanError("segment-subtitles requires a schemaVersion 5 content manifest")
     mode = content.get("mode")
@@ -513,6 +560,11 @@ def prepare(args: argparse.Namespace) -> int:
 def validate_target_structure(plan: dict[str, Any]) -> None:
     if plan.get("schemaVersion") != SCHEMA_VERSION:
         raise PlanError("unsupported segmentation plan")
+    expected_fields = manifest_fields("segmentation")
+    if plan.get("targetFrozen") is not True:
+        expected_fields.remove("targetFrozenAt")
+    if set(plan) != expected_fields:
+        raise PlanError("segmentation plan fields do not match the current contract")
     if "languageModel" in plan:
         raise PlanError("segmentation plan contains removed languageModel")
     processor_identity(
@@ -523,6 +575,11 @@ def validate_target_structure(plan: dict[str, Any]) -> None:
     processor_identity(plan.get("contentProcessor"), "contentProcessor")
     agent_review(plan.get("sentenceReview"), "sentenceReview")
     processor_identity(
+        plan.get("segmentationProcessor"),
+        "segmentationProcessor",
+    )
+    completed_agent_processor(plan.get("contentProcessor"), "contentProcessor")
+    completed_agent_processor(
         plan.get("segmentationProcessor"),
         "segmentationProcessor",
     )
@@ -572,6 +629,7 @@ def freeze_target(args: argparse.Namespace) -> int:
     plan["targetFrozen"] = True
     plan["targetFingerprint"] = fingerprint
     plan["targetFrozenAt"] = utc_now()
+    validate_target_structure(plan)
     atomic_write_json(args.plan, plan)
     print(f"Frozen target revision {plan.get('targetRevision')} with fingerprint {fingerprint}.")
     return 0

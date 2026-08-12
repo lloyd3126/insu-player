@@ -44,7 +44,7 @@ http://127.0.0.1:8000/
 - 不把影片、字幕、cookie、模型、venv 或快取 commit 到 repository。
 - 不保證來源平台一定提供字幕或自動翻譯。
 - 找不到 extractor 時，Agent 應使用 INSU Player 研究來源、公開介面與媒體格式，研究不等於繞過存取控制。
-- 不把 Whisper 的英語 translation task 當成任意目標語言翻譯。完整目標語翻譯由明確選定並記錄的本機或 API 語言模型完成。
+- 不把 Whisper 的英語 translation task 當成任意目標語言翻譯。完整目標語翻譯固定由目前 Agent 完成並記錄為 `agent / codex`，不得把字幕文字送往另一個 API 模型。
 - 不讀取登入 cookie，除非使用者明確要求並理解授權範圍。cookie 不得貼入聊天或寫進 repository。
 - 不把本機服務公開到 LAN 或 Internet。
 

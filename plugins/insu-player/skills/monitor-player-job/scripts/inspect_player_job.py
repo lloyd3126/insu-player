@@ -30,6 +30,13 @@ CONTINUABLE_JOB_STATES = {
     "needs_translation",
     "needs_segmentation",
 }
+CONTINUABLE_NEXT_ACTIONS = {
+    "downloaded": "ask-subtitle-mode",
+    "needs_transcription": "transcribe",
+    "needs_proofreading": "proofread",
+    "needs_translation": "translate",
+    "needs_segmentation": "segment",
+}
 ACTIVE_RENDITION_STATES = {
     "discovering",
     "probing",
@@ -130,7 +137,8 @@ def job_snapshot(
             classification = "diagnose"
             next_action = "inspect-stale-process" if alive else "inspect-missing-process"
     elif state in CONTINUABLE_JOB_STATES:
-        classification, next_action = "continue-workflow", state
+        classification = "continue-workflow"
+        next_action = CONTINUABLE_NEXT_ACTIONS[state]
     elif state == "ready":
         classification, next_action = "complete", "verify-and-stop"
     elif state == "queued":

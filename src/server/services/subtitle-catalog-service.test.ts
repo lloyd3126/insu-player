@@ -24,7 +24,7 @@ function currentManifest(kind: Exclude<SubtitleArtifactKind, "source">) {
       sourceContentArtifactId: "source-r1",
       sourceContentKind: "model-transcript",
       timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
-      contentProcessor: { provider: "agent", service: "codex" },
+      contentProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-09T00:00:00Z" },
       sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-09T00:00:00Z" },
       segmentationProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-09T00:00:00Z" },
       alignmentMethod: "agent-semantic",
@@ -33,6 +33,7 @@ function currentManifest(kind: Exclude<SubtitleArtifactKind, "source">) {
       targetRevision: 1,
       targetFrozen: true,
       targetFingerprint: "0".repeat(64),
+      targetFrozenAt: "2026-08-09T00:00:00Z",
       widthProfile: {},
       timingProfile: {},
       outputProfile: {},
@@ -55,7 +56,7 @@ function currentManifest(kind: Exclude<SubtitleArtifactKind, "source">) {
     sourceContentChecksum: null,
     referenceArtifactIds: [],
     timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
-    contentProcessor: { provider: "agent", service: "codex" },
+    contentProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-09T00:00:00Z" },
     sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-09T00:00:00Z" },
     outputProfile: {},
     rules: {},
@@ -149,6 +150,30 @@ function artifact(
     completedAt: "2026-08-09T00:00:01Z",
     ...overrides,
   }
+}
+
+function rewriteArtifactManifest(
+  directory: string,
+  rawArtifact: Record<string, unknown>,
+  mutate: (manifest: Record<string, unknown>) => void,
+) {
+  const manifestPath = String(rawArtifact.manifestPath)
+  const absolutePath = path.join(directory, manifestPath)
+  const manifest = JSON.parse(readFileSync(absolutePath, "utf8")) as Record<
+    string,
+    unknown
+  >
+  mutate(manifest)
+  writeFileSync(absolutePath, `${JSON.stringify(manifest)}\n`)
+  const artifactHasher = createHash("sha256")
+  for (const rawTrack of rawArtifact.tracks as Array<Record<string, unknown>>) {
+    artifactHasher.update(String(rawTrack.languageCode), "utf8")
+    artifactHasher.update(String(rawTrack.checksum), "ascii")
+  }
+  artifactHasher.update(
+    createHash("sha256").update(readFileSync(absolutePath)).digest(),
+  )
+  rawArtifact.checksum = artifactHasher.digest("hex")
 }
 
 afterEach(() => {
@@ -368,6 +393,88 @@ describe("subtitle catalog resolver", () => {
       artifactKind: "translation",
       revision: 1,
     })
+  })
+
+  test("isolates an invalid superseded manifest without blocking the current revision", () => {
+    const directory = workspace()
+    const sourceId = "source-r1"
+    const translationId = "translation-r1"
+    const oldId = "segmentation-r1"
+    const currentId = "segmentation-r2"
+    const source = artifact(directory, "source", sourceId, 1, [
+      track(directory, sourceId, "en", "source_raw", "source"),
+    ])
+    const translation = artifact(directory, "translation", translationId, 1, [
+      track(directory, translationId, "en", "input_sentence", "source"),
+      track(directory, translationId, "fr", "output_sentence", "cible"),
+    ], {
+      sourceLanguage: "en",
+      outputLanguage: "fr",
+      dependencies: [
+        { artifactId: sourceId, relation: "timing-source" },
+        { artifactId: sourceId, relation: "content-source" },
+      ],
+    })
+    const segmentationDependencies = [
+      { artifactId: sourceId, relation: "timing-source" },
+      { artifactId: translationId, relation: "content-parent" },
+    ]
+    const oldRevision = artifact(directory, "segmentation", oldId, 1, [
+      track(directory, oldId, "en", "input_segmented", "source"),
+      track(directory, oldId, "fr", "output_segmented", "ancien"),
+    ], {
+      sourceLanguage: "en",
+      outputLanguage: "fr",
+      freshnessState: "superseded",
+      dependencies: segmentationDependencies,
+    })
+    rewriteArtifactManifest(directory, oldRevision, (manifest) => {
+      manifest.unknownField = true
+    })
+    const currentRevision = artifact(directory, "segmentation", currentId, 2, [
+      track(directory, currentId, "en", "input_segmented", "source"),
+      track(directory, currentId, "fr", "output_segmented", "actuel"),
+    ], {
+      sourceLanguage: "en",
+      outputLanguage: "fr",
+      dependencies: segmentationDependencies,
+    })
+
+    const catalog = resolveSubtitleCatalog({
+      videoId: "demo",
+      jobDirectory: directory,
+      rawArtifacts: [source, translation, oldRevision, currentRevision],
+      explicitActiveTracks: {},
+    })
+
+    expect(catalog.artifacts.find(({ id }) => id === oldId)).toMatchObject({
+      validationState: "invalid",
+      freshnessState: "superseded",
+      schemaError: expect.stringContaining("fields do not match"),
+    })
+    expect(catalog.activeTracks.find(({ languageCode }) => languageCode === "fr"))
+      .toMatchObject({ artifactId: currentId, revision: 2 })
+  })
+
+  test("rejects a current segmentation manifest missing a required field", () => {
+    const directory = workspace()
+    const artifactId = "segmentation-r1"
+    const current = artifact(directory, "segmentation", artifactId, 1, [
+      track(directory, artifactId, "en", "input_segmented", "source"),
+      track(directory, artifactId, "fr", "output_segmented", "cible"),
+    ])
+    rewriteArtifactManifest(directory, current, (manifest) => {
+      delete manifest.targetFrozenAt
+    })
+
+    expect(() =>
+      resolveSubtitleCatalog({
+        videoId: "demo",
+        jobDirectory: directory,
+        rawArtifacts: [current],
+        explicitActiveTracks: {},
+      }),
+    ).toThrow("fields do not match the current schema")
   })
 
   test("rejects checksum mismatches instead of adapting the track", () => {

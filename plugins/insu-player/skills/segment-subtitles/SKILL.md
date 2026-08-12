@@ -7,6 +7,8 @@ description: Split a completed proofread or translated subtitle revision into ou
 
 Consume a completed schema-version 5 content manifest from `$proofread-subtitles` or `$translate-subtitles` and produce a schema-version 4 segmentation plan. This skill is independent from content correction and translation.
 
+The frozen plan is an exact current-schema artifact. Producer, import, and server validation share `plugins/insu-player/contracts/subtitle-manifest-contract.json`. A frozen schema-version 4 plan requires `targetFrozenAt`; missing or unknown fields fail instead of being migrated or inferred.
+
 ## Read the Applicable Contract
 
 1. Always read [references/segmentation-policy.md](references/segmentation-policy.md).

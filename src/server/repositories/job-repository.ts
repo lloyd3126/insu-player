@@ -37,6 +37,7 @@ import {
   isSelectableSubtitleTrack,
   publicSubtitleCatalog,
   resolveSubtitleCatalog,
+  SubtitleCatalogContractError,
   type ResolvedSubtitleCatalog,
 } from "@server/services/subtitle-catalog-service"
 import {
@@ -888,11 +889,74 @@ export class JobRepository {
       .orderBy(desc(jobs.updatedAt))
       .all()
     for (const row of rows) {
-      summaries.push(this.summarize(row.videoId, false, false) as JobSummary)
+      try {
+        summaries.push(this.summarize(row.videoId, false, false) as JobSummary)
+      } catch (error) {
+        if (!(error instanceof SubtitleCatalogContractError)) throw error
+        summaries.push(this.projectedContractFailure(row.videoId, error))
+      }
     }
     return summaries.sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),
     )
+  }
+
+  private projectedContractFailure(
+    videoId: string,
+    error: SubtitleCatalogContractError,
+  ): JobSummary {
+    const row = this.db
+      .select()
+      .from(jobs)
+      .where(eq(jobs.videoId, videoId))
+      .get()
+    if (!row || !isRecord(row.recordJson)) throw error
+    const sourceKind = row.recordJson.sourceKind
+    if (
+      sourceKind !== "page" &&
+      sourceKind !== "embed" &&
+      sourceKind !== "network-media" &&
+      sourceKind !== "local-file"
+    ) {
+      throw error
+    }
+    if (
+      !JOB_STATE_SET.has(row.state) ||
+      !row.createdAt ||
+      !row.updatedAt
+    ) {
+      throw error
+    }
+    return {
+      videoId: row.videoId,
+      title: row.title,
+      sourceUrl: row.sourceUrl,
+      sourceKind,
+      state: row.state as JobState,
+      effectiveState: "failed",
+      stage: row.stage,
+      progress: row.progress,
+      message: "字幕資料格式不符，其他影音仍可繼續使用",
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      completedAt: row.completedAt,
+      lastError: error.message,
+      watchable: row.watchable,
+      captionCodes: [],
+      activeSubtitleKinds: {},
+      activeSubtitleVersions: {},
+      subtitlePipeline: null,
+      transcription: null,
+      sizeBytes: row.sizeBytes,
+      thumbnailUrl: row.thumbnailUrl,
+      watchUrl: row.watchUrl,
+      hasLog: row.hasLog,
+      durationSeconds: row.durationSeconds,
+      activeMedia: null,
+      renditionCount: 0,
+      mediaRevision: 0,
+      playback: this.playbackState(videoId),
+    }
   }
 
   listDownloadProjections() {

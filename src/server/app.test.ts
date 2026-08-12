@@ -177,7 +177,7 @@ function seedJob(videoId = "demo-video") {
     sourceContentChecksum: null,
     referenceArtifactIds: [],
     timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
-    contentProcessor: { provider: "agent", service: "codex" },
+    contentProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-08T01:00:00.000Z" },
     sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-08T01:00:00.000Z" },
     outputProfile: {},
     rules: {},
@@ -626,6 +626,73 @@ describe("Hono application", () => {
           id: `artifact-${videoId}-source-model-transcript-en-r1`,
         }),
       ]),
+    })
+  })
+
+  test("isolates a current subtitle schema failure from collection endpoints", async () => {
+    mutateStatus((status) => {
+      const artifacts = status.subtitleArtifacts as Array<Record<string, unknown>>
+      const artifact = artifacts.find((candidate) => candidate.kind === "translation")
+      expect(artifact).toBeDefined()
+      const manifestPath = path.join(
+        workspace,
+        "jobs",
+        "demo-video",
+        String(artifact?.manifestPath),
+      )
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<
+        string,
+        unknown
+      >
+      manifest.unknownField = true
+      const manifestContents = `${JSON.stringify(manifest)}\n`
+      writeFileSync(manifestPath, manifestContents)
+      const artifactHasher = createHash("sha256")
+      for (const track of artifact?.tracks as Array<Record<string, unknown>>) {
+        artifactHasher.update(String(track.languageCode), "utf8")
+        artifactHasher.update(String(track.checksum), "ascii")
+      }
+      artifactHasher.update(createHash("sha256").update(manifestContents).digest())
+      if (artifact) artifact.checksum = artifactHasher.digest("hex")
+    })
+
+    const detail = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video",
+    )
+    expect(detail.status).toBe(422)
+    expect(await detail.json()).toMatchObject({
+      code: "subtitle-schema-incompatible",
+    })
+
+    const subtitles = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video/subtitles",
+    )
+    expect(subtitles.status).toBe(422)
+    expect(await subtitles.json()).toMatchObject({
+      code: "subtitle-schema-incompatible",
+    })
+
+    const jobs = await app.request("http://127.0.0.1:4178/api/jobs")
+    expect(jobs.status).toBe(200)
+    expect(await jobs.json()).toMatchObject({
+      jobs: [
+        expect.objectContaining({
+          videoId: "demo-video",
+          effectiveState: "failed",
+          lastError: expect.stringContaining("fields do not match"),
+        }),
+      ],
+    })
+
+    const library = await app.request("http://127.0.0.1:4178/api/library")
+    expect(library.status).toBe(200)
+    expect(await library.json()).toMatchObject({
+      items: [
+        expect.objectContaining({
+          kind: "media",
+          job: expect.objectContaining({ effectiveState: "failed" }),
+        }),
+      ],
     })
   })
 

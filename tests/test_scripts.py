@@ -681,6 +681,63 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid language code", result.stdout)
 
+    def test_job_state_accepts_every_exact_timing_processor_contract(self) -> None:
+        contracts = (
+            ("local", "openai-whisper", "medium"),
+            ("openai", "audio/transcriptions", "whisper-1"),
+            ("groq", "audio/transcriptions", "whisper-large-v3"),
+            ("groq", "audio/transcriptions", "whisper-large-v3-turbo"),
+            ("elevenlabs", "speech-to-text", "scribe_v2"),
+            ("xai", "v1/stt", None),
+            ("openrouter", "audio/transcriptions", "openai/whisper-large-v3"),
+        )
+        for provider, service, model in contracts:
+            with self.subTest(provider=provider, model=model):
+                command = [
+                    sys.executable,
+                    str(SCRIPTS / "job_state.py"),
+                    "processor-contract",
+                    "--provider",
+                    provider,
+                    "--service",
+                    service,
+                ]
+                if model is not None:
+                    command.extend(("--model", model))
+                result = subprocess.run(
+                    command,
+                    cwd=REPO_ROOT,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=True,
+                )
+                identity = json.loads(result.stdout)
+                self.assertEqual(identity["provider"], provider)
+                self.assertEqual(identity["service"], service)
+                self.assertEqual(identity["model"], model)
+
+        rejected = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "job_state.py"),
+                "processor-contract",
+                "--provider",
+                "openai",
+                "--service",
+                "speech-to-text",
+                "--model",
+                "whisper-1",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("must use openai / audio/transcriptions", rejected.stdout)
+
     def test_job_state_rejects_flat_subtitle_artifact_processor_fields(self) -> None:
         job_dir = self.workspace / "jobs" / "test-video"
         subprocess.run(
@@ -961,6 +1018,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                 {
                     "schemaVersion": 5,
                     "mode": "translate",
+                    "sourceFormat": "model-timed-units",
                     "sourceLanguage": "en",
                     "outputLanguage": "fr",
                     "sourceTranscript": str(transcript),
@@ -975,13 +1033,21 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                         "service": "openai-whisper",
                         "model": "medium",
                     },
-                    "contentProcessor": {"provider": "agent", "service": "codex"},
+                    "contentProcessor": {
+                        "provider": "agent",
+                        "service": "codex",
+                        "updatedAt": "2026-08-10T00:00:00Z",
+                    },
                     "sentenceReview": {
                         "provider": "agent",
                         "service": "codex",
                         "reviewedAt": "2026-08-10T00:00:00Z",
                     },
                     "outputProfile": {"punctuationPolicy": "preserve"},
+                    "rules": {
+                        "contentUnit": "complete source sentence",
+                        "outputSegmentation": "owned by segment-subtitles",
+                    },
                     "segments": [
                         {
                             "id": "S0001",
@@ -1053,6 +1119,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                 {
                     "schemaVersion": 5,
                     "mode": "translate",
+                    "sourceFormat": "model-timed-units",
                     "sourceLanguage": "en",
                     "outputLanguage": "fr",
                     "sourceTranscript": str(transcript),
@@ -1067,13 +1134,21 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                         "service": "openai-whisper",
                         "model": "medium",
                     },
-                    "contentProcessor": {"provider": "agent", "service": "codex"},
+                    "contentProcessor": {
+                        "provider": "agent",
+                        "service": "codex",
+                        "updatedAt": "2026-08-10T00:00:00Z",
+                    },
                     "sentenceReview": {
                         "provider": "agent",
                         "service": "codex",
                         "reviewedAt": "2026-08-10T00:00:00Z",
                     },
                     "outputProfile": {"punctuationPolicy": "preserve"},
+                    "rules": {
+                        "contentUnit": "complete source sentence",
+                        "outputSegmentation": "owned by segment-subtitles",
+                    },
                     "segments": [
                         {
                             "id": "S0001",

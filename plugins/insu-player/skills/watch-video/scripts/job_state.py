@@ -16,6 +16,25 @@ from pathlib import Path
 from typing import Any
 
 
+PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+SUBTITLE_MANIFEST_CONTRACT_PATH = (
+    PLUGIN_ROOT / "contracts" / "subtitle-manifest-contract.json"
+)
+try:
+    SUBTITLE_MANIFEST_CONTRACT = json.loads(
+        SUBTITLE_MANIFEST_CONTRACT_PATH.read_text(encoding="utf-8")
+    )
+except (OSError, json.JSONDecodeError) as error:
+    raise RuntimeError(
+        f"current subtitle manifest contract is unavailable: {SUBTITLE_MANIFEST_CONTRACT_PATH}"
+    ) from error
+if (
+    not isinstance(SUBTITLE_MANIFEST_CONTRACT, dict)
+    or SUBTITLE_MANIFEST_CONTRACT.get("schemaVersion") != 1
+):
+    raise RuntimeError("subtitle manifest contract must use schemaVersion 1")
+
+
 SCHEMA_VERSION = 3
 REMOTE_SOURCE_KINDS = {"page", "embed", "network-media"}
 SOURCE_KINDS = REMOTE_SOURCE_KINDS | {"local-file"}
@@ -94,7 +113,6 @@ TIMING_PROCESSOR_PROVIDERS = {
 PROCESSOR_PROVIDERS = TIMING_PROCESSOR_PROVIDERS | {"agent"}
 ARTIFACT_PROCESSOR_PROVIDERS = PROCESSOR_PROVIDERS | {"yt-dlp"}
 PROCESSOR_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
-OPENROUTER_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$")
 JOB_STAGE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 TIMING_PROCESSOR_CONTRACTS: dict[str, tuple[str, set[str] | None]] = {
     "local": ("openai-whisper", None),
@@ -154,22 +172,30 @@ def processor_identity(
         allowed = ARTIFACT_PROCESSOR_PROVIDERS
     if provider not in allowed:
         raise ValueError(f"unsupported {label} provider: {provider}")
-    if service is not None and not PROCESSOR_NAME_PATTERN.fullmatch(service):
-        raise ValueError(f"invalid {label} service: {service}")
-    if model is not None:
-        model_pattern = OPENROUTER_MODEL_PATTERN if provider == "openrouter" else PROCESSOR_NAME_PATTERN
-        if not model_pattern.fullmatch(model):
-            raise ValueError(f"invalid {label} model: {model}")
     if provider in TIMING_PROCESSOR_PROVIDERS:
         expected_service, allowed_models = TIMING_PROCESSOR_CONTRACTS[provider]
         if service != expected_service:
             raise ValueError(f"{label} must use {provider} / {expected_service}")
-        if allowed_models is not None and model not in allowed_models:
-            if allowed_models:
+        if allowed_models == set():
+            if model is not None:
+                raise ValueError(f"{label} cannot record a model for {provider}")
+        elif allowed_models is not None:
+            if not isinstance(model, str) or model not in allowed_models:
                 raise ValueError(f"unsupported {label} model for {provider}: {model}")
-            raise ValueError(f"{label} cannot record a model for {provider}")
-        if allowed_models is None and not model:
-            raise ValueError(f"{label} requires a model for {provider}")
+        else:
+            if not isinstance(model, str) or not model:
+                raise ValueError(f"{label} requires a model for {provider}")
+            if not PROCESSOR_NAME_PATTERN.fullmatch(model):
+                raise ValueError(f"invalid {label} model: {model}")
+    else:
+        if service is not None and (
+            not isinstance(service, str) or not PROCESSOR_NAME_PATTERN.fullmatch(service)
+        ):
+            raise ValueError(f"invalid {label} service: {service}")
+        if model is not None and (
+            not isinstance(model, str) or not PROCESSOR_NAME_PATTERN.fullmatch(model)
+        ):
+            raise ValueError(f"invalid {label} model: {model}")
     if agent_only and (service != "codex" or model is not None):
         raise ValueError(f"{label} must use agent / codex")
     if provider == "yt-dlp" and model:
@@ -208,6 +234,81 @@ def validate_processor_payload(
     )
     assert resolved is not None
     return resolved
+
+
+def validate_subtitle_manifest_payload(
+    manifest_payload: object,
+    kind: str,
+    artifact_id: str,
+) -> None:
+    def manifest_agent_processor(value: object, label: str) -> None:
+        contract = SUBTITLE_MANIFEST_CONTRACT.get("agentProcessor")
+        if (
+            not isinstance(contract, dict)
+            or not isinstance(contract.get("fields"), list)
+            or not all(isinstance(field, str) for field in contract["fields"])
+            or not isinstance(value, dict)
+            or set(value) != set(contract["fields"])
+            or value.get("provider") != contract.get("provider")
+            or value.get("service") != contract.get("service")
+        ):
+            raise ValueError(f"{label} must use the current agent / codex contract")
+        validate_timestamp(value.get("updatedAt"), f"{label}.updatedAt")
+
+    contract_name = "segmentation" if kind == "segmentation" else "content"
+    manifest_contract = SUBTITLE_MANIFEST_CONTRACT.get(contract_name)
+    if not isinstance(manifest_contract, dict):
+        raise ValueError(f"subtitle manifest contract is invalid: {contract_name}")
+    expected_schema = manifest_contract.get("schemaVersion")
+    expected_fields = manifest_contract.get("fields")
+    if (
+        not isinstance(expected_schema, int)
+        or not isinstance(expected_fields, list)
+        or not all(isinstance(field, str) for field in expected_fields)
+    ):
+        raise ValueError(f"subtitle manifest contract is invalid: {contract_name}")
+    if (
+        not isinstance(manifest_payload, dict)
+        or manifest_payload.get("schemaVersion") != expected_schema
+    ):
+        raise ValueError(
+            f"subtitle artifact manifest must use schemaVersion {expected_schema}: {artifact_id}"
+        )
+    if set(manifest_payload) != set(expected_fields):
+        raise ValueError(
+            f"subtitle artifact manifest fields do not match the current schema: {artifact_id}"
+        )
+    if kind == "segmentation":
+        validate_timestamp(
+            manifest_payload.get("targetFrozenAt"),
+            f"{artifact_id}.targetFrozenAt",
+        )
+        manifest_agent_processor(
+            manifest_payload.get("contentProcessor"),
+            f"{artifact_id}.contentProcessor",
+        )
+        manifest_agent_processor(
+            manifest_payload.get("segmentationProcessor"),
+            f"{artifact_id}.segmentationProcessor",
+        )
+        if (
+            manifest_payload.get("targetFrozen") is not True
+            or manifest_payload.get("alignmentMethod") != "agent-semantic"
+        ):
+            raise ValueError(
+                f"segmentation manifest is not a completed Agent revision: {artifact_id}"
+            )
+    else:
+        manifest_agent_processor(
+            manifest_payload.get("contentProcessor"),
+            f"{artifact_id}.contentProcessor",
+        )
+        if manifest_payload.get("mode") != (
+            "translate" if kind == "translation" else "proofread"
+        ):
+            raise ValueError(
+                f"content manifest is not a completed Agent revision: {artifact_id}"
+            )
 
 
 def validate_subtitle_artifacts(job_dir: Path, value: object) -> list[dict[str, Any]]:
@@ -403,11 +504,7 @@ def validate_subtitle_artifacts(job_dir: Path, value: object) -> list[dict[str, 
             if not manifest.is_file() or manifest.is_symlink():
                 raise ValueError(f"subtitle artifact manifest is unavailable: {artifact_id}")
             manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
-            expected_schema = 4 if kind == "segmentation" else 5
-            if not isinstance(manifest_payload, dict) or manifest_payload.get("schemaVersion") != expected_schema:
-                raise ValueError(
-                    f"subtitle artifact manifest must use schemaVersion {expected_schema}: {artifact_id}"
-                )
+            validate_subtitle_manifest_payload(manifest_payload, str(kind), artifact_id)
             artifact_checksum.update(hashlib.sha256(manifest.read_bytes()).digest())
         if artifact.get("checksum") != artifact_checksum.hexdigest():
             raise ValueError(f"subtitle artifact checksum mismatch: {artifact_id}")
@@ -1612,6 +1709,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     transcription_clear_parser.add_argument("--job-dir", required=True, type=Path)
 
+    processor_contract_parser = subparsers.add_parser(
+        "processor-contract",
+        help="validate one timing processor identity without mutating a job",
+    )
+    processor_contract_parser.add_argument(
+        "--provider", required=True, choices=sorted(TIMING_PROCESSOR_PROVIDERS)
+    )
+    processor_contract_parser.add_argument("--service", required=True)
+    processor_contract_parser.add_argument("--model")
+
     pipeline_parser = subparsers.add_parser(
         "subtitle-pipeline", help="record the visible subtitle pipeline stage"
     )
@@ -1709,6 +1816,16 @@ def main() -> int:
         )
     elif args.command == "transcription-clear":
         status = clear_transcription(args.job_dir)
+    elif args.command == "processor-contract":
+        identity = processor_identity(
+            args.provider,
+            args.service,
+            args.model,
+            label="timing processor",
+            timing_only=True,
+        )
+        print(json.dumps(identity, ensure_ascii=False, sort_keys=True))
+        return 0
     elif args.command == "subtitle-pipeline":
         status = set_subtitle_pipeline(
             args.job_dir,

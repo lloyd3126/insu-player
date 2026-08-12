@@ -59,15 +59,26 @@ IFS=$'\t' read -r provider_name provider_service model_name < <(
 [ -n "$provider_service" ] || caption_die "transcription settings did not provide a service"
 caption_require_provider "$provider_name"
 [ -f "$CAPTION_OPENAI_TRANSCRIBER" ] || caption_die "transcribe-media skill script is missing: $CAPTION_OPENAI_TRANSCRIBER"
-if [ "$provider_name" != "local" ] && [ "$consent_to_audio_upload" -ne 1 ]; then
-  caption_die "$provider_name transcription uploads audio externally; rerun with --consent-to-audio-upload only after the user authorizes audio transcription"
-fi
 
 job_dir="$CAPTION_JOBS/$video_id"
 source_dir="$job_dir/source"
 whisper_dir="$job_dir/whisper"
 audio_file="$source_dir/audio.m4a"
 [ -d "$job_dir" ] || caption_die "job not found: $job_dir"
+current_state=$(caption_job_state show --job-dir "$job_dir" --field state)
+current_stage=$(caption_job_state show --job-dir "$job_dir" --field stage)
+case "$current_state:$current_stage" in
+  downloaded:awaiting_subtitle_choice|needs_transcription:*|failed:model_transcription|interrupted:model_transcription) ;;
+  *) caption_die "transcription cannot start from current state $current_state / $current_stage" ;;
+esac
+
+processor_contract_args=(--provider "$provider_name" --service "$provider_service")
+if [ -n "$model_name" ]; then processor_contract_args+=(--model "$model_name"); fi
+caption_job_state processor-contract "${processor_contract_args[@]}" >/dev/null
+if [ "$provider_name" != "local" ] && [ "$consent_to_audio_upload" -ne 1 ]; then
+  caption_die "$provider_name transcription uploads audio externally; rerun with --consent-to-audio-upload only after the user authorizes audio transcription"
+fi
+
 media_catalog_script="$SCRIPT_DIR/media_catalog.py"
 [ -f "$media_catalog_script" ] || caption_die "media catalog helper is missing: $media_catalog_script"
 video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \

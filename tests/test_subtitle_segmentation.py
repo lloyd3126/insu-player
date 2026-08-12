@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -9,6 +10,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REFLOW = ROOT / "plugins/insu-player/skills/translate-subtitles/scripts/reflow_subtitles.py"
 SEGMENT = ROOT / "plugins/insu-player/skills/segment-subtitles/scripts/segment_subtitles.py"
+JOB_STATE = ROOT / "plugins/insu-player/skills/watch-video/scripts/job_state.py"
+CONTRACT = ROOT / "plugins/insu-player/contracts/subtitle-manifest-contract.json"
+JOB_STATE_SPEC = importlib.util.spec_from_file_location("job_state_contract_test", JOB_STATE)
+assert JOB_STATE_SPEC and JOB_STATE_SPEC.loader
+job_state = importlib.util.module_from_spec(JOB_STATE_SPEC)
+JOB_STATE_SPEC.loader.exec_module(job_state)
 
 
 def transcript_payload(words):
@@ -167,6 +174,23 @@ class SubtitleSegmentationTests(unittest.TestCase):
         self.align_single_piece(plan)
         self.run_script(SEGMENT, "freeze-target", "--plan", plan)
         self.run_script(SEGMENT, "record-alignment-review", "--plan", plan)
+        frozen = json.loads(plan.read_text(encoding="utf-8"))
+        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        self.assertEqual(set(frozen), set(contract["segmentation"]["fields"]))
+        self.assertIsInstance(frozen["targetFrozenAt"], str)
+        job_state.validate_subtitle_manifest_payload(
+            frozen,
+            "segmentation",
+            "artifact-segmentation-r1",
+        )
+        broken = dict(frozen)
+        broken.pop("targetFrozenAt")
+        with self.assertRaisesRegex(ValueError, "fields do not match"):
+            job_state.validate_subtitle_manifest_payload(
+                broken,
+                "segmentation",
+                "artifact-segmentation-r1",
+            )
         validated = self.run_script(SEGMENT, "validate", "--plan", plan)
         self.assertIn('"valid": true', validated.stdout)
         input_vtt = self.root / "input.vtt"

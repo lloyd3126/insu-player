@@ -32,7 +32,11 @@ Do not use job-directory JSON as a fallback workflow state. A missing or invalid
 | --- | --- | --- |
 | `checking`, `downloading`, `transcribing`, `proofreading`, `translating`, `segmenting`, `preparing_player` with live PID | `monitor` | Keep one heartbeat; do not duplicate the process. |
 | Active state with missing PID | `diagnose` | Inspect the log, then perform at most one idempotent resume. |
-| `downloaded`, `needs_transcription`, `needs_proofreading`, `needs_translation`, `needs_segmentation` | `continue-workflow` | Continue only with choices and consent already captured in this task. |
+| `downloaded` | `continue-workflow` | Return `ask-subtitle-mode`. Ask only for the missing ordinary-language subtitle choice. |
+| `needs_transcription` | `continue-workflow` | Return `transcribe`. Continue only with choices and consent already captured in this task. |
+| `needs_proofreading` | `continue-workflow` | Return `proofread` and use `$proofread-subtitles`. |
+| `needs_translation` | `continue-workflow` | Return `translate` and use `$translate-subtitles`. |
+| `needs_segmentation` | `continue-workflow` | Return `segment` and use `$segment-subtitles`. |
 | `ready` | `complete` | Verify assets and library projection, report, and delete the heartbeat. |
 | `queued` | `needs-user` | The monitor does not start an unconfirmed job. |
 | `interrupted`, `failed` | `diagnose` | Diagnose; resume once only when explicitly safe, otherwise report and stop. |

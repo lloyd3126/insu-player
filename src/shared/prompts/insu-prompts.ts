@@ -158,7 +158,10 @@ function knownSubtitleContext(context: SubtitlePromptContext) {
       ? `已知切分 processor：${processorLabel(context.segmentationProcessor)}`
       : undefined,
   ]
-  return rows.filter((row): row is string => Boolean(row)).join("\n")
+  return [
+    "以下是複製提示當下的狀態快照，不是執行時的事實來源。必須重新以目前 workspace 的 app.db 驗證。",
+    ...rows.filter((row): row is string => Boolean(row)),
+  ].join("\n")
 }
 
 function sharedSubtitleWorkflow() {
@@ -186,13 +189,13 @@ function subtitleContinuationWorkflow(context: SubtitlePromptContext) {
     NOVICE_CONVERSATION,
     context.mode
       ? "沿用上方已記錄的字幕路徑，不要再次詢問要校正或翻譯。"
-      : SUBTITLE_GOAL,
+      : "目前快照沒有已確認的字幕路徑。只詢問我要整理影片原本語言的字幕，還是翻譯成另一種語言。翻譯時再只問一般語言名稱。",
     LANGUAGE_RESOLUTION,
     hasKnownProcessors
       ? "沿用上方已記錄的 timing processor。內容與切分固定使用目前 Agent，不要再次要求我選模型或處理方式。只有 timing 能力不可用時，才用白話說明原因與一個安全替代方案。"
       : PROCESSING_RECOMMENDATION,
     API_CONSENT,
-    PLAN_CONFIRMATION,
+    "開始前只列出尚未完成的階段與資料處理邊界。已下載或已通過驗證的階段不得列入待執行工作，最後只問我是否可以開始尚未完成的工作。",
     CAPTION_SOURCE_POLICY,
     CONTENT_IMPORT_ORDER,
     HEARTBEAT_MONITORING,
@@ -313,9 +316,9 @@ export function buildRecoveryPrompt(context: SubtitlePromptContext) {
 
 export function buildSubtitleManagementPrompt(context: SubtitlePromptContext) {
   return [
-    "使用 $watch-video 管理目前專案 INSU Player 中以下影音的字幕。先唯讀檢查 current-schema 字幕產物、依賴與狀態。已知選擇直接沿用，不要重複詢問，也不要讀取其他專案的 workspace。",
+    "使用 $watch-video 管理目前專案 INSU Player 中以下影音的字幕。先以 $monitor-player-job 的唯讀 inspector 檢查 current-schema app.db、字幕產物、依賴與狀態，並只執行 inspector 回傳的 nextAction。不要讀取其他專案的 workspace。",
     knownSubtitleContext(context),
-    "先判斷目前缺少的是原始轉錄、完整句校正或翻譯、字幕切分、時間同步或驗證。只接續缺少的精確階段，不得重做已通過驗證的階段。",
+    "只有上方快照已記錄的選擇才能直接沿用。先判斷目前缺少的是原始轉錄、完整句校正或翻譯、字幕切分、時間同步或驗證。只接續缺少的精確階段，不得重做已通過驗證的階段。若狀態是 downloaded / awaiting_subtitle_choice，取得字幕選擇與必要同意後直接執行轉錄階段，不得重新進入影音下載。",
     ...subtitleContinuationWorkflow(context),
     "不要替我刪除字幕，也不要替我切換播放器字幕。字幕刪除由我在字幕管理操作，播放字幕由我在播放器選擇。",
   ].join("\n\n")

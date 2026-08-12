@@ -43,6 +43,30 @@ class TranscriptionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid BCP 47"):
             transcribe_media.canonical_language_tag("en_US")
 
+    def test_cloud_language_detection_normalizes_names_and_engine_aliases(self) -> None:
+        self.assertEqual(
+            transcribe_media.detected_language_from_payload(
+                "openai", {"language": "english"}
+            ),
+            "en",
+        )
+        self.assertEqual(
+            transcribe_media.detected_language_from_payload(
+                "groq", {"language": "Tagalog"}
+            ),
+            "fil",
+        )
+        self.assertEqual(
+            transcribe_media.detected_language_from_payload(
+                "openrouter", {"language": "jw"}
+            ),
+            "jv",
+        )
+        with self.assertRaisesRegex(ValueError, "does not accept language"):
+            transcribe_media.detected_language_from_payload(
+                "openai", {"language": "klingon"}
+            )
+
     def test_timestamp_and_vtt_preserve_segment_timeline(self) -> None:
         segments = transcribe_media.normalize_segments(
             [
@@ -136,6 +160,65 @@ class TranscriptionTests(unittest.TestCase):
             self.assertEqual(language, "en-US")
             self.assertEqual(engine_language, "en")
             self.assertEqual(len(chunks), 1)
+
+    def test_openai_auto_detection_reuses_valid_chunk_results_without_reupload(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            input_path = root / "audio.m4a"
+            ffmpeg = root / "ffmpeg"
+            input_path.write_bytes(b"audio")
+            ffmpeg.write_bytes(b"ffmpeg")
+            calls = 0
+
+            def prepare_chunks(
+                input_file: Path,
+                ffmpeg_file: Path,
+                chunk_dir: Path,
+                chunk_seconds: int,
+            ) -> list[Path]:
+                del input_file, ffmpeg_file, chunk_seconds
+                chunk_dir.mkdir(parents=True, exist_ok=True)
+                chunk = chunk_dir / "chunk-0000.mp3"
+                chunk.write_bytes(b"chunk")
+                return [chunk]
+
+            def transcribe_chunk(*args: object, **kwargs: object) -> dict[str, object]:
+                nonlocal calls
+                del args, kwargs
+                calls += 1
+                return {
+                    "language": "english",
+                    "duration": 2.0,
+                    "segments": [
+                        {"start": 0.0, "end": 2.0, "text": "Hello world."}
+                    ],
+                    "words": [
+                        {"start": 0.0, "end": 0.7, "word": "Hello"},
+                        {"start": 0.8, "end": 2.0, "word": "world."},
+                    ],
+                }
+
+            args = Namespace(
+                provider="openai",
+                consent_to_audio_upload=True,
+                model="whisper-1",
+                language="und",
+                output_dir=root / "output",
+                input=input_path,
+                ffmpeg=ffmpeg,
+                chunk_seconds=600,
+            )
+            with (
+                patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True),
+                patch.object(transcribe_media, "prepare_api_chunks", side_effect=prepare_chunks),
+                patch.object(transcribe_media, "transcribe_chunk", side_effect=transcribe_chunk),
+            ):
+                first = transcribe_media.transcribe_cloud(args)
+                second = transcribe_media.transcribe_cloud(args)
+
+            self.assertEqual(first[2:4], ("en", "en"))
+            self.assertEqual(second[2:4], ("en", "en"))
+            self.assertEqual(calls, 1)
 
     def test_every_cloud_contract_requires_word_timing(self) -> None:
         contracts = {

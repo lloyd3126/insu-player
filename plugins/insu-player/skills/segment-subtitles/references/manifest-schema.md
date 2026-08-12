@@ -13,7 +13,7 @@
   "sourceContentArtifactId": "artifact-video-proofread-en-en-r1",
   "sourceContentKind": "proofread",
   "timingProcessor": {"provider": "local", "service": "openai-whisper", "model": "medium"},
-  "contentProcessor": {"provider": "agent", "service": "codex"},
+  "contentProcessor": {"provider": "agent", "service": "codex", "updatedAt": "2026-08-10T00:00:00Z"},
   "sentenceReview": {"provider": "agent", "service": "codex", "reviewedAt": "2026-08-10T00:00:00Z"},
   "segmentationProcessor": {"provider": "agent", "service": "codex"},
   "alignmentMethod": "agent-semantic",
@@ -22,6 +22,7 @@
   "targetRevision": 1,
   "targetFrozen": true,
   "targetFingerprint": "sha256",
+  "targetFrozenAt": "2026-08-10T00:05:00Z",
   "widthProfile": {
     "name": "cjk",
     "fitUnits": 40,
@@ -68,9 +69,11 @@ Use BCP 47 language codes. `contentMode` is `proofread` or `translate`. `timedUn
 
 `sourceContentKind` is `model-transcript` or `proofread`. Proofreading always uses its model transcript as both content and timing source. Translation may use either the model transcript directly or a validated proofread artifact as its content source. `timingProcessor` and timed units always remain tied to the original model transcript.
 
-`timingProcessor` must exactly match one current word-timing contract: local Whisper, OpenAI `whisper-1`, Groq `whisper-large-v3` or `whisper-large-v3-turbo`, ElevenLabs `scribe_v2`, xAI `/v1/stt`, or OpenRouter `openai/whisper-large-v3`. Every identity records `provider`, `service`, and nullable `model`. `contentProcessor` and `segmentationProcessor` must both be exactly `{"provider":"agent","service":"codex"}`. `sentenceReview` records the Agent review of complete-sentence boundaries. `alignmentMethod` must be `agent-semantic`, and `alignmentReview` plus `alignmentFingerprint` prove the finalized source spans and anchors were reviewed after editing. Never infer or copy one processor to fill another role.
+`timingProcessor` must exactly match one current word-timing contract: local Whisper, OpenAI `whisper-1`, Groq `whisper-large-v3` or `whisper-large-v3-turbo`, ElevenLabs `scribe_v2`, xAI `/v1/stt`, or OpenRouter `openai/whisper-large-v3`. Every identity records `provider`, `service`, and nullable `model`. `contentProcessor` and `segmentationProcessor` must both record exactly `provider: agent`, `service: codex`, and their own `updatedAt` timestamp. `sentenceReview` records the Agent review of complete-sentence boundaries. `alignmentMethod` must be `agent-semantic`, and `alignmentReview` plus `alignmentFingerprint` prove the finalized source spans and anchors were reviewed after editing. Never infer or copy one processor to fill another role.
 
 Before `targetFrozen`, edit output pieces and linguistic evidence only. After freezing, preserve `outputFullText`, piece IDs, text, count, and order. Populate only `sourceSpan`, anchors, and boundary evidence.
+
+`targetFrozenAt` is required on every frozen schema-version 4 manifest and records when the immutable target revision was created. Draft plans omit it. Producer, import, and server validation all read the exact field set from `plugins/insu-player/contracts/subtitle-manifest-contract.json`; unknown or missing fields fail the current contract.
 
 Piece spans must partition each parent content unit exactly. Cue start comes from the first timed unit and cue end from the last. Never store model-invented cue timestamps.
 

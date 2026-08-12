@@ -51,6 +51,40 @@ WHISPER_LANGUAGE_PARAMETERS = {
     "nb": "no",
 }
 
+# Whisper APIs may return a human-readable language name instead of the model
+# parameter. Keep this mapping local to the current Whisper timing contract so
+# an arbitrary alphabetic string cannot be mistaken for a BCP 47 language tag.
+WHISPER_LANGUAGE_NAMES = {
+    "afrikaans": "af", "albanian": "sq", "amharic": "am", "arabic": "ar",
+    "armenian": "hy", "assamese": "as", "azerbaijani": "az", "bashkir": "ba",
+    "basque": "eu", "belarusian": "be", "bengali": "bn", "bosnian": "bs",
+    "breton": "br", "bulgarian": "bg", "burmese": "my",
+    "catalan": "ca", "chinese": "zh", "croatian": "hr", "czech": "cs",
+    "danish": "da", "dutch": "nl", "english": "en", "estonian": "et",
+    "faroese": "fo", "finnish": "fi", "flemish": "nl", "french": "fr",
+    "galician": "gl", "georgian": "ka", "german": "de", "greek": "el",
+    "gujarati": "gu", "haitian": "ht", "haitian creole": "ht", "hausa": "ha",
+    "hawaiian": "haw", "hebrew": "he", "hindi": "hi", "hungarian": "hu",
+    "icelandic": "is", "indonesian": "id", "italian": "it", "japanese": "ja",
+    "javanese": "jv", "kannada": "kn", "kazakh": "kk", "khmer": "km",
+    "korean": "ko", "lao": "lo", "latin": "la", "latvian": "lv",
+    "lingala": "ln", "lithuanian": "lt", "luxembourgish": "lb",
+    "macedonian": "mk", "malagasy": "mg", "malay": "ms", "malayalam": "ml",
+    "maltese": "mt", "mandarin": "zh", "maori": "mi", "marathi": "mr",
+    "moldavian": "ro", "moldovan": "ro", "mongolian": "mn", "myanmar": "my",
+    "nepali": "ne", "norwegian": "no", "nynorsk": "nn", "occitan": "oc",
+    "pashto": "ps", "persian": "fa", "polish": "pl", "portuguese": "pt",
+    "punjabi": "pa", "pushto": "ps", "romanian": "ro", "russian": "ru",
+    "sanskrit": "sa", "serbian": "sr", "shona": "sn", "sindhi": "sd",
+    "sinhala": "si", "sinhalese": "si", "slovak": "sk", "slovenian": "sl",
+    "somali": "so", "spanish": "es", "sundanese": "su", "swahili": "sw",
+    "swedish": "sv", "tagalog": "fil", "filipino": "fil", "tajik": "tg", "tamil": "ta",
+    "tatar": "tt", "telugu": "te", "thai": "th", "tibetan": "bo",
+    "turkish": "tr", "turkmen": "tk", "ukrainian": "uk", "urdu": "ur",
+    "uzbek": "uz", "valencian": "ca", "vietnamese": "vi", "welsh": "cy",
+    "yiddish": "yi", "yoruba": "yo",
+}
+
 XAI_LANGUAGE_NAMES = {
     "arabic": "ar",
     "czech": "cs",
@@ -148,6 +182,17 @@ def detected_language_from_payload(provider: str, payload: dict[str, Any]) -> st
         if not mapped:
             raise ValueError(f"xAI returned an unmapped detected language: {value!r}")
         return mapped
+    if provider in {"openai", "groq", "openrouter"}:
+        mapped = WHISPER_LANGUAGE_NAMES.get(" ".join(value.lower().split()))
+        if mapped:
+            return mapped
+        canonical = canonical_language_tag(value)
+        engine_language_code(canonical)
+        if canonical == "tl" or canonical.startswith("tl-"):
+            return "fil" + canonical[2:]
+        if canonical == "jw" or canonical.startswith("jw-"):
+            return "jv" + canonical[2:]
+        return canonical
     return canonical_language_tag(value)
 
 
@@ -508,7 +553,9 @@ def transcribe_cloud(
         )
         timeline_offset += float(chunk_duration)
     detected_engine_language = (
-        detected_language.split("-", 1)[0] if detected_language else None
+        provider_language_parameter(provider, detected_language)
+        if detected_language
+        else None
     )
     return (
         all_segments,

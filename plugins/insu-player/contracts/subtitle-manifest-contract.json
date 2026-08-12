@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "agentProcessor": {
+    "fields": ["provider", "service", "updatedAt"],
+    "provider": "agent",
+    "service": "codex"
+  },
+  "content": {
+    "schemaVersion": 5,
+    "fields": [
+      "schemaVersion",
+      "mode",
+      "sourceFormat",
+      "sourceLanguage",
+      "outputLanguage",
+      "sourceTranscript",
+      "timingSourceArtifactId",
+      "sourceContentArtifactId",
+      "sourceContentKind",
+      "sourceContentManifest",
+      "sourceContentChecksum",
+      "referenceArtifactIds",
+      "timingProcessor",
+      "contentProcessor",
+      "sentenceReview",
+      "outputProfile",
+      "rules",
+      "segments"
+    ]
+  },
+  "segmentation": {
+    "schemaVersion": 4,
+    "fields": [
+      "schemaVersion",
+      "contentMode",
+      "sourceLanguage",
+      "outputLanguage",
+      "sourceTranscript",
+      "contentManifest",
+      "sourceContentArtifactId",
+      "sourceContentKind",
+      "timingProcessor",
+      "contentProcessor",
+      "sentenceReview",
+      "segmentationProcessor",
+      "alignmentMethod",
+      "alignmentReview",
+      "alignmentFingerprint",
+      "targetRevision",
+      "targetFrozen",
+      "targetFingerprint",
+      "targetFrozenAt",
+      "widthProfile",
+      "timingProfile",
+      "outputProfile",
+      "timedUnits",
+      "boundaryHints",
+      "contentUnits"
+    ]
+  }
+}

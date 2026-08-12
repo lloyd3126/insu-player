@@ -38,5 +38,6 @@
 - 字幕管理介面只允許使用者直接刪除字幕。播放器提供第一字幕與第二字幕兩個獨立語言選單，兩者不得選擇相同語言。影片中心的字幕樣式分頁以第一字幕、第二字幕與雙語字幕三個 tabs 分別管理單軌文字與背景樣式、雙軌間距，並可在兩個單軌設定間單向同步。製作、校正、翻譯、切分及重試都由固定提示交給 Agent 與對應 skill 執行。
 - 所有網頁文案、網頁可複製提示、plugin 試用提示、skill Agent 提示與文件中的示範提示都不得使用全形的 semicolon 字元。
 - 程式修改後執行全部測試、所有 skill validator、plugin validator 與 release 建置測試。
+- `~/.codex/plugins/cache/` 是已安裝 plugin 的不可變快取。不得直接修改其中的 skill 或 scripts。產品缺陷只修正 repository canonical source，完成驗證與 release 後再更新已安裝 plugin。
 
 完整 skill 的唯一來源位於 `plugins/insu-player/skills/`。`.agents/skills/` 只做 repository discovery bridge，不要複製業務邏輯。

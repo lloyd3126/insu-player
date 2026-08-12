@@ -113,6 +113,7 @@ export interface SubtitleArtifact {
   timingUnitKind: SubtitleTimingUnitKind | null
   targetFrozen: boolean
   manifestAvailable: boolean
+  schemaError: string | null
   checksum: string
   warningCount: number
   hardDefectCount: number

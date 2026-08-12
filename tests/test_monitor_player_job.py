@@ -130,16 +130,19 @@ class MonitorPlayerJobTests(unittest.TestCase):
         self.assertEqual(missing["nextAction"], "inspect-missing-process")
 
     def test_handoff_ready_and_queued_states_are_classified(self) -> None:
-        for state in (
-            "downloaded",
-            "needs_transcription",
-            "needs_proofreading",
-            "needs_translation",
-            "needs_segmentation",
-        ):
+        expected_actions = {
+            "downloaded": "ask-subtitle-mode",
+            "needs_transcription": "transcribe",
+            "needs_proofreading": "proofread",
+            "needs_translation": "translate",
+            "needs_segmentation": "segment",
+        }
+        for state, expected_action in expected_actions.items():
             with self.subTest(state=state):
                 self.write_status(state=state, stage=state, updatedAt=self.now_text())
-                self.assertEqual(self.snapshot()["classification"], "continue-workflow")
+                snapshot = self.snapshot()
+                self.assertEqual(snapshot["classification"], "continue-workflow")
+                self.assertEqual(snapshot["nextAction"], expected_action)
 
         self.write_status(state="ready", stage="complete", progress=100, updatedAt=self.now_text())
         self.assertEqual(self.snapshot()["classification"], "complete")

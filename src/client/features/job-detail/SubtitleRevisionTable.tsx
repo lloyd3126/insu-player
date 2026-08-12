@@ -69,6 +69,7 @@ function RevisionValidation({ artifact }: { artifact: SubtitleArtifact }) {
           {artifact.hardDefectCount} 個必要修正
         </Badge>
       ) : null}
+      {artifact.schemaError ? <span>資料格式不符</span> : null}
     </div>
   )
 }
