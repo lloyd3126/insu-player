@@ -13,9 +13,9 @@ import { openAppDatabase } from "@server/db/client"
 import { RuntimeService } from "@server/services/runtime-service"
 
 const repositoryRoot = path.resolve(import.meta.dir, "../../..")
-const migrations = path.join(
+const schema = path.join(
   repositoryRoot,
-  "plugins/insu-player/skills/watch-video/assets/server/drizzle",
+  "plugins/insu-player/skills/watch-video/assets/server/current-schema.sql",
 )
 const temporaryRoots: string[] = []
 
@@ -57,7 +57,7 @@ afterEach(() => {
 describe("runtime readiness", () => {
   test("accepts a workspace-local Python symlink", () => {
     const workspace = createWorkspace()
-    const opened = openAppDatabase(path.join(workspace, "app.db"), migrations)
+    const opened = openAppDatabase(path.join(workspace, "app.db"), schema)
     try {
       const status = new RuntimeService(workspace, opened.db).status()
       expect(status.initialized).toBe(true)
@@ -74,7 +74,7 @@ describe("runtime readiness", () => {
 
   test("rejects a Python symlink that leaves the workspace runtime", () => {
     const workspace = createWorkspace(true)
-    const opened = openAppDatabase(path.join(workspace, "app.db"), migrations)
+    const opened = openAppDatabase(path.join(workspace, "app.db"), schema)
     try {
       const status = new RuntimeService(workspace, opened.db).status()
       expect(status.initialized).toBe(false)

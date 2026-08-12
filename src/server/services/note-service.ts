@@ -103,7 +103,14 @@ export class NoteService {
     ) {
       throw new NoteOperationError("invalid-anchor", "筆記時間位置無效")
     }
-    const normalizedTags = [...new Set((request.tags ?? []).map((tag) => tag.trim()).filter(Boolean))]
+    const normalizedTags = [
+      ...new Set(
+        (request.tags ?? []).flatMap((tag) => {
+          const normalized = tag.trim()
+          return normalized ? [normalized] : []
+        }),
+      ),
+    ]
     if (normalizedTags.length > 20 || normalizedTags.some((tag) => tag.length > 40)) {
       throw new NoteOperationError("invalid-tags", "筆記標籤無效")
     }

@@ -43,10 +43,11 @@ export function parseWebVtt(value: string): CaptionCue[] {
 
     const start = parseVttTimestamp(timing[1])
     const end = parseVttTimestamp(timing[2].split(/\s+/)[0])
-    const textLines = lines
-      .slice(timingIndex + 1)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("NOTE"))
+    const textLines: string[] = []
+    for (let index = timingIndex + 1; index < lines.length; index += 1) {
+      const line = lines[index]?.trim() ?? ""
+      if (line && !line.startsWith("NOTE")) textLines.push(line)
+    }
     const text = cleanCueText(textLines.join(" "))
     if (text && Number.isFinite(start) && Number.isFinite(end) && end > start) {
       cues.push({ start, end, text })
@@ -54,6 +55,35 @@ export function parseWebVtt(value: string): CaptionCue[] {
   }
 
   return cues
+}
+
+function srtTimestamp(value: number) {
+  const milliseconds = Math.max(0, Math.round(value * 1000))
+  const hours = Math.floor(milliseconds / 3_600_000)
+  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000)
+  const seconds = Math.floor((milliseconds % 60_000) / 1_000)
+  const remainder = milliseconds % 1_000
+  return [hours, minutes, seconds]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":") + `,${String(remainder).padStart(3, "0")}`
+}
+
+export function webVttToSrt(value: string) {
+  return `${parseWebVtt(value)
+    .map(
+      (cue, index) =>
+        `${index + 1}\n${srtTimestamp(cue.start)} --> ${srtTimestamp(cue.end)}\n${cue.text}`,
+    )
+    .join("\n\n")}\n`
+}
+
+export function webVttToText(value: string) {
+  return `${parseWebVtt(value)
+    .flatMap((cue) => {
+      const text = cleanCueText(cue.text)
+      return text ? [text] : []
+    })
+    .join(" ")}\n`
 }
 
 export function alignCaptionTracks(

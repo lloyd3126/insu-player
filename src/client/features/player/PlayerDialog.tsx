@@ -14,9 +14,9 @@ import { AppDialog } from "@/components/shared/AppDialog"
 import { CaptionLanguageSelect } from "@/components/shared/CaptionLanguageSelect"
 import { MediaQualitySelect } from "@/components/shared/MediaQualitySelect"
 import { Button } from "@/components/ui/button"
+import { usePlayerCaptions } from "@/features/player/use-player-captions"
 import { useJobsQuery } from "@/hooks/use-jobs-query"
 import { useMediaCatalog } from "@/hooks/use-media-catalog"
-import { getPreferredCaption } from "@/lib/captions"
 import type { JobsResponse } from "@shared/contracts/job"
 
 type PlayerMessage = {
@@ -58,15 +58,6 @@ export function PlayerDialog() {
   const catalogSignature = `${captionCodes
     .map((code) => `${code}:${job?.activeSubtitleVersions[code] ?? "loading"}`)
     .join("|")}::${mediaSignature}`
-  const preferredCaption =
-    active?.caption && captionCodes.includes(active.caption)
-      ? active.caption
-      : getPreferredCaption(captionCodes, "off", [
-          job?.playback.captionLanguage,
-          job?.subtitlePipeline?.outputLanguage,
-          job?.subtitlePipeline?.sourceLanguage,
-        ])
-  const [caption, setCaption] = useState("off")
   const { mutate: persistPlayback } = useMutation({
     mutationFn: ({
       videoId,
@@ -88,6 +79,23 @@ export function PlayerDialog() {
           ),
         }
       })
+    },
+  })
+  const {
+    handlePlayerReady: syncPlayerCaptions,
+    primaryCaption,
+    resetPlayer: resetPlayerCaptions,
+    secondaryCaption,
+    selectCaption,
+  } = usePlayerCaptions({
+    active,
+    captionCodes,
+    savedCaptionLanguage: job?.playback.captionLanguage,
+    outputLanguage: job?.subtitlePipeline?.outputLanguage,
+    sourceLanguage: job?.subtitlePipeline?.sourceLanguage,
+    iframe,
+    onPersistPrimary: (captionLanguage) => {
+      if (active) persistPlayback({ videoId: active.videoId, captionLanguage })
     },
   })
   const activateMedia = useMutation({
@@ -131,18 +139,9 @@ export function PlayerDialog() {
           location.origin,
         )
       }
-      iframe.current?.contentWindow?.postMessage(
-        { type: "player:set-caption", language: caption },
-        location.origin,
-      )
+      syncPlayerCaptions()
     },
   )
-
-  useEffect(() => {
-    if (!active) return
-    setCaption(preferredCaption)
-    setReady(false)
-  }, [active?.caption, active?.videoId, preferredCaption])
 
   useEffect(() => {
     const videoId = active?.videoId
@@ -154,9 +153,10 @@ export function PlayerDialog() {
     previousCatalogSignature.current = catalogSignature
     if (previous === null || previous === catalogSignature) return
     flushPlayback(videoId)
+    resetPlayerCaptions()
     setReady(false)
     setPlayerRevision((revision) => revision + 1)
-  }, [active?.videoId, catalogSignature, flushPlayback])
+  }, [active?.videoId, catalogSignature, flushPlayback, resetPlayerCaptions])
 
   useEffect(() => {
     const videoId = active?.videoId
@@ -198,38 +198,17 @@ export function PlayerDialog() {
           )
         }
       }
-      if (message.type === "player:error") setReady(true)
+      if (message.type === "player:error") {
+        setReady(true)
+        syncPlayerCaptions()
+      }
     }
     window.addEventListener("message", onMessage)
     return () => {
       window.removeEventListener("message", onMessage)
       flushPlayback(videoId)
     }
-  }, [active?.videoId, flushPlayback])
-
-  const selectCaption = (value: string | null) => {
-    const normalized = value ?? "off"
-    setCaption(normalized)
-    if (active) {
-      persistPlayback({
-        videoId: active.videoId,
-        captionLanguage: normalized === "off" ? null : normalized,
-      })
-      overlay.actions.open(
-        {
-          type: "player",
-          videoId: active.videoId,
-          caption: normalized === "off" ? undefined : normalized,
-          time: active.time,
-        },
-        { replace: true },
-      )
-    }
-    iframe.current?.contentWindow?.postMessage(
-      { type: "player:set-caption", language: normalized },
-      location.origin,
-    )
-  }
+  }, [active?.videoId, flushPlayback, syncPlayerCaptions])
 
   const selectMedia = (renditionId: string) => {
     if (!active || renditionId === activeRendition?.id) return
@@ -273,9 +252,16 @@ export function PlayerDialog() {
           ) : null}
           <CaptionLanguageSelect
             codes={captionCodes}
-            value={caption}
-            onValueChange={selectCaption}
-            label="播放器字幕"
+            value={primaryCaption}
+            onValueChange={(value) => selectCaption("primary", value)}
+            label="第一字幕"
+            includeOff
+          />
+          <CaptionLanguageSelect
+            codes={captionCodes}
+            value={secondaryCaption}
+            onValueChange={(value) => selectCaption("secondary", value)}
+            label="第二字幕"
             includeOff
           />
           <Button

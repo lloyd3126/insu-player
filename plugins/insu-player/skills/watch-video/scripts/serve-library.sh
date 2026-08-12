@@ -27,7 +27,8 @@ case "$port" in ''|*[!0-9]*) caption_die "port must be numeric" ;; esac
 [ -x "$CAPTION_BUN" ] || caption_die "workspace-local Bun is unavailable"
 [ -f "$CAPTION_WEB_SERVER" ] || caption_die "Hono server bundle is missing from this INSU Player package"
 [ -f "$CAPTION_LIBRARY_APP/index.html" ] || caption_die "React library build is missing from this INSU Player package"
-[ -f "$CAPTION_WEB_MIGRATIONS/meta/_journal.json" ] || caption_die "Drizzle migrations are missing from this INSU Player package"
+schema_file="$CAPTION_DATABASE_SCHEMA"
+[ -f "$schema_file" ] || caption_die "Current database schema is missing from this INSU Player package"
 
 mkdir -p "$CAPTION_WORKSPACE/jobs"
 server_arguments=(
@@ -37,7 +38,7 @@ server_arguments=(
   --pid-file "$CAPTION_LIBRARY_PID"
   --library-template "$CAPTION_LIBRARY_APP"
   --player-template "$SKILL_DIR/assets/player"
-  --migrations "$CAPTION_WEB_MIGRATIONS"
+  --schema "$schema_file"
 )
 [ "$auto_port" -eq 0 ] || server_arguments+=(--auto-port)
 exec "$CAPTION_BUN" "$CAPTION_WEB_SERVER" "${server_arguments[@]}"

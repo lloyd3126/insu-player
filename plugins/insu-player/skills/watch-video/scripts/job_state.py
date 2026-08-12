@@ -16,11 +16,15 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 2
-SOURCE_KINDS = {"page", "embed", "network-media"}
+SCHEMA_VERSION = 3
+REMOTE_SOURCE_KINDS = {"page", "embed", "network-media"}
+SOURCE_KINDS = REMOTE_SOURCE_KINDS | {"local-file"}
+DATABASE_APPLICATION_ID = 0x494E5355
+DATABASE_SCHEMA_VERSION = 9
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 LANGUAGE_PATTERN = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
+QUEUE_ITEM_ID_PATTERN = re.compile(r"^library-[0-9a-f-]{36}$")
 STATES = {
     "queued",
     "checking",
@@ -435,6 +439,13 @@ def open_database(job_dir: Path) -> sqlite3.Connection:
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA journal_mode = WAL")
     connection.execute("PRAGMA synchronous = NORMAL")
+    application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
+    schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if application_id != DATABASE_APPLICATION_ID or schema_version != DATABASE_SCHEMA_VERSION:
+        connection.close()
+        raise RuntimeError(
+            "database does not match the current INSU Player contract; rebuild the workspace"
+        )
     required = {"media_items", "operations", "operation_events"}
     tables = {
         str(row[0])
@@ -458,7 +469,7 @@ def default_status(
     resolved_id = validate_video_id(video_id or job_dir.name)
     if not source_url:
         raise ValueError("source URL is required")
-    if source_kind not in SOURCE_KINDS:
+    if source_kind not in REMOTE_SOURCE_KINDS:
         raise ValueError("source kind is invalid")
     now = utc_now()
     return {
@@ -508,6 +519,7 @@ def load_status(job_dir: Path) -> dict[str, Any]:
     if data.get("schemaVersion") != SCHEMA_VERSION:
         raise ValueError(f"media item record must use schemaVersion {SCHEMA_VERSION}")
     required_fields = {
+        "schemaVersion",
         "videoId",
         "title",
         "sourceUrl",
@@ -529,15 +541,17 @@ def load_status(job_dir: Path) -> dict[str, Any]:
         "completedAt",
         "history",
     }
-    missing_fields = sorted(required_fields - set(data))
-    if missing_fields:
-        raise ValueError(f"media item record is missing required fields {missing_fields}")
+    if set(data) != required_fields:
+        raise ValueError("media item record fields do not match the current schema")
     if not isinstance(data.get("title"), str) or not data["title"].strip():
         raise ValueError(f"job state title is invalid: {path}")
-    if not isinstance(data.get("sourceUrl"), str):
-        raise ValueError(f"job state sourceUrl is invalid: {path}")
     if data.get("sourceKind") not in SOURCE_KINDS:
         raise ValueError(f"job state sourceKind is invalid: {path}")
+    if data["sourceKind"] == "local-file":
+        if data.get("sourceUrl") is not None:
+            raise ValueError(f"job state sourceUrl is invalid: {path}")
+    elif not isinstance(data.get("sourceUrl"), str) or not data["sourceUrl"].strip():
+        raise ValueError(f"job state sourceUrl is invalid: {path}")
     if not isinstance(data.get("message"), str) or not data["message"].strip():
         raise ValueError(f"job state message is invalid: {path}")
     validate_timestamp(data.get("createdAt"), "job state createdAt")
@@ -944,6 +958,43 @@ def initialize_job(
             raise ValueError("duration must be a positive finite number")
         status["durationSeconds"] = duration_seconds
     return save_status(job_dir, status)
+
+
+def link_download_item(job_dir: Path, queue_item_id: str) -> dict[str, Any]:
+    if not QUEUE_ITEM_ID_PATTERN.fullmatch(queue_item_id):
+        raise ValueError("download queue item ID is invalid")
+    status = load_status(job_dir)
+    with closing(open_database(job_dir)) as connection:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            item = connection.execute(
+                "SELECT operation_id, page_url, video_id FROM download_queue_items WHERE id = ?",
+                (queue_item_id,),
+            ).fetchone()
+            if item is None:
+                raise ValueError("download queue item does not exist")
+            if str(item["page_url"]) != status["sourceUrl"]:
+                raise ValueError("download queue item source does not match the media record")
+            linked_video_id = item["video_id"]
+            if linked_video_id is not None and str(linked_video_id) != status["videoId"]:
+                raise ValueError("download queue item is already linked to another media record")
+            connection.execute(
+                "UPDATE download_queue_items SET video_id = ? WHERE id = ?",
+                (status["videoId"], queue_item_id),
+            )
+            connection.execute(
+                "UPDATE operations SET video_id = ?, outputs_json = ? WHERE id = ?",
+                (
+                    status["videoId"],
+                    json.dumps({"videoId": status["videoId"]}, separators=(",", ":")),
+                    str(item["operation_id"]),
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+    return status
 
 
 def patch_status(
@@ -1485,7 +1536,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--job-dir", required=True, type=Path)
     init_parser.add_argument("--video-id", required=True)
     init_parser.add_argument("--source-url", required=True)
-    init_parser.add_argument("--source-kind", required=True, choices=sorted(SOURCE_KINDS))
+    init_parser.add_argument("--source-kind", required=True, choices=sorted(REMOTE_SOURCE_KINDS))
     init_parser.add_argument("--title", default="")
     init_parser.add_argument("--duration-seconds", type=float)
 
@@ -1582,13 +1633,16 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--segmentation-processor-model")
     pipeline_parser.add_argument("--manual-reference-artifact", action="append", default=[])
 
+    link_parser = subparsers.add_parser(
+        "link-download", help="link one explicit queue item to its resolved media ID"
+    )
+    link_parser.add_argument("--job-dir", required=True, type=Path)
+    link_parser.add_argument("--queue-item-id", required=True)
+
     show_parser = subparsers.add_parser("show", help="print a job record")
     show_parser.add_argument("--job-dir", required=True, type=Path)
     show_parser.add_argument("--field")
 
-    find_parser = subparsers.add_parser("find", help="find one current media record")
-    find_parser.add_argument("--workspace", required=True, type=Path)
-    find_parser.add_argument("--source-url", required=True)
     return parser
 
 
@@ -1673,6 +1727,8 @@ def main() -> int:
             segmentation_processor_model=args.segmentation_processor_model,
             manual_reference_artifact_ids=args.manual_reference_artifact,
         )
+    elif args.command == "link-download":
+        status = link_download_item(args.job_dir, args.queue_item_id)
     elif args.command == "show":
         status = load_status(args.job_dir)
         if args.field:
@@ -1686,24 +1742,6 @@ def main() -> int:
             elif value is not None:
                 print(value)
             return 0
-    elif args.command == "find":
-        workspace = args.workspace.resolve(strict=True)
-        if workspace == Path(workspace.anchor) or workspace == Path.home():
-            raise ValueError("workspace must be a dedicated directory")
-        database = workspace / "app.db"
-        if not database.is_file() or database.is_symlink():
-            raise FileNotFoundError(database)
-        with closing(
-            sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
-        ) as connection:
-            row = connection.execute(
-                "SELECT video_id FROM media_items WHERE source_url = ? ORDER BY updated_at DESC LIMIT 1",
-                (args.source_url,),
-            ).fetchone()
-        if row is None:
-            raise LookupError("media record not found")
-        print(validate_video_id(str(row[0])))
-        return 0
     else:
         raise AssertionError(args.command)
 

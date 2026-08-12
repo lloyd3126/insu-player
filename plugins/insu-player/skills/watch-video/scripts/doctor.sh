@@ -130,7 +130,7 @@ printf 'install-scope: %s\n' "$CAPTION_RUNTIME"
 printf 'generated-scope: %s\n' "$CAPTION_JOBS"
 printf 'external-package-manager-changes: none\n'
 
-if [ -f "$CAPTION_LIBRARY_APP/index.html" ] && [ -f "$CAPTION_WEB_SERVER" ] && [ -d "$CAPTION_WEB_MIGRATIONS" ]; then
+if [ -f "$CAPTION_LIBRARY_APP/index.html" ] && [ -f "$CAPTION_WEB_SERVER" ] && [ -f "$CAPTION_DATABASE_SCHEMA" ]; then
   printf 'library-template: react-vite\n'
   printf 'library-server: hono-drizzle-bun-sqlite\n'
 else

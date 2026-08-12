@@ -160,7 +160,7 @@ describe("media catalog service", () => {
     delete oldRendition.formatId
     writeCatalog({ renditions: [oldRendition] })
     expect(() => publicMediaCatalog(job, "demo-video")).toThrow(
-      "media rendition fields are invalid",
+      "media rendition fields do not match the current schema",
     )
   })
 

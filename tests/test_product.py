@@ -19,6 +19,7 @@ EXPECTED_SKILLS = {
     "segment-subtitles",
     "summarize-video",
     "map-video-summary",
+    "migrate-player-library",
     "player-manager",
 }
 
@@ -78,7 +79,7 @@ class ProductBoundaryTests(unittest.TestCase):
         for source in files:
             self.assertNotIn("\uff1b", source.read_text(encoding="utf-8"), source)
 
-    def test_unpacked_chrome_extension_has_a_narrow_local_bridge_contract(self) -> None:
+    def test_chrome_extension_has_a_narrow_packaged_bootstrap_contract(self) -> None:
         extension = PLUGIN_ROOT / "chrome-extension"
         manifest = json.loads((extension / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["manifest_version"], 3)
@@ -99,15 +100,39 @@ class ProductBoundaryTests(unittest.TestCase):
             "popup.html",
             "popup.js",
             "popup.css",
+            "connection-protocol.js",
             "README.md",
         ]:
             self.assertTrue((extension / filename).is_file(), filename)
         service_worker = (extension / "service-worker.js").read_text(encoding="utf-8")
         popup = (extension / "popup.js").read_text(encoding="utf-8")
+        popup_html = (extension / "popup.html").read_text(encoding="utf-8")
+        content_bridge = (extension / "content-bridge.js").read_text(encoding="utf-8")
         self.assertIn("chrome.storage.session", service_worker)
         self.assertIn("chrome.webRequest", service_worker)
+        self.assertIn("pairing-bootstrap.json", service_worker)
+        self.assertIn('case "RETRY_CONNECTION"', service_worker)
+        self.assertNotIn('case "IMPORT_PAIRING_FILE"', service_worker)
+        self.assertNotIn("CONNECT_CURRENT_INSU", service_worker)
+        self.assertNotIn("REQUEST_INSU_CONNECTION", content_bridge)
+        self.assertNotIn(".insu-pairing", popup_html)
+        self.assertNotIn('type="file"', popup_html)
+        self.assertNotIn("file.text()", popup)
         self.assertIn("authenticationConsentAt", popup)
-        self.assertIn("cookiePermissionOrigins(candidate)", popup)
+        self.assertIn("cookiePermissionOrigins(candidates)", popup)
+        self.assertIn("candidates,", popup)
+        self.assertNotIn('name="candidate"', popup)
+        self.assertNotIn('id="candidate-list"', popup_html)
+        self.assertNotIn('id="rights"', popup_html)
+        self.assertNotIn("rightsInput", popup)
+        self.assertNotIn("sourceLocation", popup)
+        self.assertIn(
+            "點擊以下按鈕代表有權下載、轉錄與觀看這項內容，且同意把這組來源需要的 Cookie 傳到本機服務，只供這次下載使用。",
+            popup_html,
+        )
+        self.assertNotIn("advanced-scan", popup_html)
+        self.assertNotIn("releaseOptionalPermissions", popup)
+        self.assertIn("performance.getEntriesByType", popup)
         self.assertNotIn("chrome.cookies.getAll(store ?", popup)
         self.assertIn("rightsConfirmed: true", popup)
 
@@ -127,9 +152,12 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("不得假設使用者已安裝全域 Bun", agent_guide)
         self.assertIn("$monitor-player-job", agent_guide)
         self.assertIn("所有 skill validator", agent_guide)
-        self.assertIn("## 十個產品 skills", readme)
+        self.assertIn("## 十一個產品 skills", readme)
+        self.assertIn("使用 $migrate-player-library 更新目前專案既有的 INSU Player 資料", readme)
+        self.assertIn("確認遷移 DIGEST", readme)
         self.assertIn("## v0.2.0", changelog)
-        self.assertIn("api.github.com/repos/lloyd3126/insu-player/releases/latest", manager)
+        self.assertIn("portable releases are immutable", manager)
+        self.assertNotIn("api.github.com/repos/lloyd3126/insu-player/releases/latest", manager)
         legacy_repository = "lloyd3126/" + "xe" + "ruca-player"
         self.assertNotIn(legacy_repository, readme + manager)
 
@@ -315,11 +343,23 @@ class ProductBoundaryTests(unittest.TestCase):
         library_component = (
             REPO_ROOT / "src" / "client" / "features" / "library" / "LibraryDialog.tsx"
         ).read_text(encoding="utf-8")
+        subtitle_style_component = (
+            REPO_ROOT / "src" / "client" / "features" / "library" / "SubtitleStylePanel.tsx"
+        ).read_text(encoding="utf-8")
+        subtitle_style_preferences = (
+            REPO_ROOT / "src" / "client" / "lib" / "subtitle-styles.ts"
+        ).read_text(encoding="utf-8")
+        styles = (
+            REPO_ROOT / "src" / "client" / "styles" / "globals.css"
+        ).read_text(encoding="utf-8")
         media_card_component = (
             REPO_ROOT / "src" / "client" / "features" / "library" / "MediaCard.tsx"
         ).read_text(encoding="utf-8")
         player_component = (
             REPO_ROOT / "src" / "client" / "features" / "player" / "PlayerDialog.tsx"
+        ).read_text(encoding="utf-8")
+        player_caption_hook = (
+            REPO_ROOT / "src" / "client" / "features" / "player" / "use-player-captions.ts"
         ).read_text(encoding="utf-8")
         usage_component = (
             REPO_ROOT / "src" / "client" / "features" / "home" / "UsageGuideDialog.tsx"
@@ -347,9 +387,6 @@ class ProductBoundaryTests(unittest.TestCase):
             / "resources"
             / "ModelDetailsDialog.tsx"
         ).read_text(encoding="utf-8")
-        add_media_component = (
-            REPO_ROOT / "src" / "client" / "features" / "library" / "AddMediaDialog.tsx"
-        ).read_text(encoding="utf-8")
         summary_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "VideoSummaryPanel.tsx"
         ).read_text(encoding="utf-8")
@@ -361,6 +398,9 @@ class ProductBoundaryTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         detail_about_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobAboutPanel.tsx"
+        ).read_text(encoding="utf-8")
+        detail_status_component = (
+            REPO_ROOT / "src" / "client" / "features" / "job-detail" / "JobStatusPanel.tsx"
         ).read_text(encoding="utf-8")
         detail_subtitle_component = (
             REPO_ROOT / "src" / "client" / "features" / "job-detail" / "SubtitleArtifactPanel.tsx"
@@ -465,23 +505,28 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn('value="grid"', library_component)
         self.assertIn('value="list"', library_component)
         self.assertIn("我的影音", library_component)
-        self.assertIn("詳細資訊", library_component)
-        self.assertIn("CaptionLanguageSelect", library_component)
+        self.assertIn("下載佇列", library_component)
+        self.assertNotIn("CaptionLanguageSelect", library_component)
         self.assertIn("video-grid-card__duration", media_card_component)
         self.assertIn("VideoCardRemovalDialog", library_component)
-        self.assertIn("VideoListRemovalDialog", library_component)
+        self.assertNotIn("VideoListRemovalDialog", library_component)
         self.assertIn('className="job-table"', library_component)
         self.assertIn("搜尋影音", library_component)
-        self.assertIn("PlayIcon", library_component)
+        self.assertNotIn("PlayIcon", library_component)
         self.assertNotIn("EllipsisVerticalIcon", library_component)
         self.assertIn("SettingsIcon", library_component)
-        self.assertIn('className="job-title-link"', library_component)
+        self.assertIn("video-grid-card__settings", library_component)
+        self.assertIn("onOpen={openJob}", library_component)
+        self.assertNotIn('className="job-title-link"', library_component)
         self.assertIn('size="icon"', library_component)
         self.assertIn("TooltipContent", library_component)
         self.assertNotIn('data-label="目前狀態"', library_component)
         self.assertNotIn("01 / INSU COLLECTION", library_component)
         self.assertNotIn("影音處理資訊", library_component)
         self.assertIn("<TableHead>操作</TableHead>", library_component)
+        self.assertIn("下載影音", library_component)
+        self.assertIn("點擊下載按鈕代表有權下載、轉錄與觀看這項內容", library_component)
+        self.assertIn("rightsConfirmed", prompt_contract)
         self.assertIn("詳細資訊", player_component)
         self.assertIn('tab: "about"', player_component)
         self.assertNotIn("查看紀錄", player_component)
@@ -521,19 +566,55 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("設定 API Key", model_details_component)
         self.assertNotIn("TranscriptionSettingsContent", models_component)
         self.assertNotIn("buildTranscriptionSettingsPrompt", models_component)
-        self.assertIn("最多 50 個", add_media_component)
-        self.assertIn("rightsConfirmed", prompt_contract)
         self.assertIn("PromptActionCard", summary_component)
         self.assertIn("MarkmapViewer", summary_component)
         self.assertIn("ResourceRemovalDialog", summary_component)
         self.assertIn("Transformer", markmap_component)
         self.assertIn("Markmap", markmap_component)
 
+        self.assertIn('value="subtitle-style"', library_component)
+        self.assertIn("SubtitleStylePanel", library_component)
+        self.assertIn("第一字幕", subtitle_style_component)
+        self.assertIn("第二字幕", subtitle_style_component)
+        self.assertIn("雙語字幕", subtitle_style_component)
+        for label in (
+            "文字縮放",
+            "文字粗細",
+            "文字顏色",
+            "背景顏色",
+            "背景透明度",
+            "文字行距",
+            "水平內距",
+            "垂直內距",
+            "背景圓弧",
+            "文字陰影",
+            "文字間距",
+            "字幕間距",
+        ):
+            self.assertIn(label, subtitle_style_component)
+        self.assertIn("<Table", subtitle_style_component)
+        self.assertIn("<TableHeader>", subtitle_style_component)
+        self.assertIn("overflow-y: auto", styles)
+        self.assertIn("vertical-align: middle", styles)
+        self.assertIn("height: 7rem", styles)
+        self.assertIn("同步到", subtitle_style_component)
+        self.assertNotIn("localStorage", subtitle_style_preferences)
+        self.assertIn("subtitleStyleToCss", subtitle_style_preferences)
+        self.assertIn("letterSpacing", subtitle_style_preferences)
+        self.assertIn('label="第一字幕"', player_component)
+        self.assertIn('label="第二字幕"', player_component)
+        self.assertIn('type: "player:set-captions"', player_caption_hook)
+        self.assertIn('message.type === "player:set-captions"', player)
+        self.assertIn("styles?.bilingual?.gap", player)
+        self.assertIn("style.letterSpacing", player)
+
         self.assertIn('value="about"', detail_component)
+        self.assertIn('value="status"', detail_component)
         self.assertIn('value="quality"', detail_component)
         self.assertIn('value="subtitles"', detail_component)
         self.assertIn('value="summary"', detail_component)
-        self.assertIn('value="notes"', detail_component)
+        self.assertIn('value="outline"', detail_component)
+        self.assertNotIn('value="notes"', detail_component)
         self.assertIn('value="activity"', detail_component)
         self.assertIn("字幕管理", detail_component)
         self.assertNotIn('value="source-subtitle"', detail_component)
@@ -544,6 +625,7 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn('"translation",', subtitle_artifact_ui)
         self.assertIn('"segmentation",', subtitle_artifact_ui)
         self.assertIn("SubtitleManagementProvider", detail_subtitle_component)
+        self.assertNotIn("PLAYBACK VERSION", detail_subtitle_component)
         self.assertIn('aria-label="字幕類型"', detail_subtitle_component)
         self.assertIn("SubtitleRevisionTable", detail_subtitle_component)
         self.assertIn("SubtitleRevisionPreviewDialog", detail_subtitle_component)
@@ -552,13 +634,15 @@ class ProductBoundaryTests(unittest.TestCase):
         self.assertIn("AppDialog", subtitle_revision_preview)
         self.assertNotIn("DialogContent", subtitle_revision_preview)
         self.assertIn("CaptionComparisonTable", subtitle_revision_preview)
-        self.assertIn("JobHistoryCard", detail_about_component)
-        self.assertIn("JobNextActionCard", detail_about_component)
+        self.assertNotIn("JobHistoryCard", detail_about_component)
+        self.assertIn("JobHistoryCard", detail_status_component)
+        self.assertNotIn("JobNextActionCard", detail_about_component)
         self.assertIn("VideoRemovalDialog", detail_about_component)
-        self.assertIn("ScrollArea", detail_history_component)
+        self.assertNotIn("ScrollArea", detail_history_component)
+        self.assertIn('className="history-table__body"', detail_history_component)
         self.assertIn("ResourceRemovalDialog", video_removal_dialog_component)
         self.assertIn("VideoCardRemovalDialog", video_removal_dialog_component)
-        self.assertIn("VideoListRemovalDialog", video_removal_dialog_component)
+        self.assertNotIn("VideoListRemovalDialog", video_removal_dialog_component)
         self.assertIn('kind: "video"', video_removal_dialog_component)
         self.assertIn("AlertDialogTrigger", removal_dialog_component)
         self.assertIn("AlertDialogContent", removal_dialog_component)

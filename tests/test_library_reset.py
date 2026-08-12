@@ -56,11 +56,14 @@ class LibraryResetTests(unittest.TestCase):
         validator.write_text("# test validator\n", encoding="utf-8")
         (runtime / "models").mkdir()
         (runtime / "models" / "medium.pt").write_bytes(b"model")
+        imports = runtime / "tmp" / "imports" / "stale-import"
+        imports.mkdir(parents=True)
+        (imports / "upload.bin").write_bytes(b"partial")
         create_current_database(self.workspace)
         write_media_record(
             self.workspace,
             {
-                "schemaVersion": 2,
+                "schemaVersion": 3,
                 "videoId": "video-one",
                 "title": "Video One",
                 "sourceUrl": "https://example.test/video-one",
@@ -120,10 +123,28 @@ class LibraryResetTests(unittest.TestCase):
         )
 
     def test_preview_execute_and_verify_preserve_runtime_and_models(self):
+        migration_archive = (
+            self.workspace
+            / ".insu-player-migrations"
+            / "old-digest"
+            / "source"
+        )
+        migration_archive.mkdir(parents=True)
+        (migration_archive / "app.db").write_bytes(b"old")
+        (self.workspace / ".insu-player-migration-input.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
         preview = json.loads(self.run_reset("preview").stdout)
         self.assertEqual(preview["operation"], "reset-current-project-library")
         self.assertEqual(preview["database"]["tables"]["media_items"], 1)
         self.assertEqual(preview["database"]["tables"]["subtitle_artifacts"], 1)
+        self.assertEqual(preview["database"]["tables"]["local_media_imports"], 0)
+        self.assertEqual(preview["database"]["tables"]["subtitle_style_presets"], 0)
+        self.assertEqual(preview["database"]["tables"]["subtitle_style_settings"], 0)
+        self.assertEqual(
+            preview["transientSessions"][".agent-tools/insu-player/tmp/imports"]["files"],
+            1,
+        )
         self.assertEqual(preview["apiKeyInspection"]["configuredNames"], [])
         self.assertEqual(
             preview["apiKeys"]["names"],
@@ -136,6 +157,10 @@ class LibraryResetTests(unittest.TestCase):
             ],
         )
         self.assertEqual(preview["blocked"], [])
+        self.assertEqual(
+            preview["migrationArchives"][".insu-player-migrations"]["files"],
+            1,
+        )
         self.assertRegex(preview["digest"], r"^[0-9a-f]{64}$")
 
         self.run_reset(
@@ -146,6 +171,20 @@ class LibraryResetTests(unittest.TestCase):
         )
         self.assertEqual(list(self.jobs.iterdir()), [])
         self.assertFalse((self.workspace / "app.db").exists())
+        self.assertFalse((self.workspace / ".insu-player-migrations").exists())
+        self.assertFalse((self.workspace / ".insu-player-migration-input.json").exists())
+        self.assertEqual(
+            list(
+                (
+                    self.workspace
+                    / ".agent-tools"
+                    / "insu-player"
+                    / "tmp"
+                    / "imports"
+                ).iterdir()
+            ),
+            [],
+        )
         self.assertTrue(
             (self.workspace / ".agent-tools/insu-player/bun-runtime/bun").is_file()
         )

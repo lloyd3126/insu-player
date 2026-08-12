@@ -4,16 +4,16 @@ import {
 } from "./media-discovery.js"
 import {
   CONNECTION_PROTOCOL_VERSION,
-  CONNECT_REQUEST_MESSAGE,
-  isConnectionChallenge,
   isCurrentInsuHealth,
+  normalizeBootstrap,
   normalizeConnection,
   normalizeLoopbackOrigin,
 } from "./connection-protocol.js"
 
 const STORAGE_KEY = "insuConnection"
-const SCAN_KEY = "insuScannedTabs"
 const CANDIDATE_KEY_PREFIX = "insuCandidates:"
+const BOOTSTRAP_URL = chrome.runtime.getURL("pairing-bootstrap.json")
+let bootstrapConnectionAttempt = null
 
 async function connection() {
   const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY]
@@ -66,48 +66,112 @@ async function apiFetch(
   return response.json()
 }
 
-async function inspectInsuOrigin(value) {
-  const serverOrigin = normalizeLoopbackOrigin(value)
-  if (!serverOrigin) throw new Error("目前分頁不是本機 INSU Player")
-  const response = await fetch(`${serverOrigin}/api/health`, {
-    cache: "no-store",
-  })
-  const health = response.ok ? await response.json() : null
-  if (!isCurrentInsuHealth(health)) {
-    throw new Error("目前分頁不是相同版本的 INSU Player")
+async function bootstrapPayload() {
+  const response = await fetch(BOOTSTRAP_URL, { cache: "no-store" })
+  if (!response.ok) throw new Error("這份擴充功能缺少 INSU Player 連接設定")
+  const payload = await response.json()
+  const serverOrigin = normalizeLoopbackOrigin(payload?.serverOrigin)
+  const bootstrap = normalizeBootstrap(payload)
+  if (!bootstrap) {
+    const expired =
+      typeof payload?.expiresAt === "string" &&
+      Number.isFinite(Date.parse(payload.expiresAt)) &&
+      Date.parse(payload.expiresAt) <= Date.now()
+    const error = new Error(
+      expired
+        ? "這份擴充功能 ZIP 已超過連接期限，請從目前 INSU Player 重新下載"
+        : "這份擴充功能不屬於目前版本，請重新下載",
+    )
+    error.code = expired ? "bootstrap-expired" : "bootstrap-invalid"
+    error.serverOrigin = serverOrigin
+    throw error
   }
-  return { serverOrigin, health }
+  return bootstrap
 }
 
-async function requestConnectionFromTab(tabId, message) {
+async function claimPackagedBootstrap() {
+  if (bootstrapConnectionAttempt) return bootstrapConnectionAttempt
+  bootstrapConnectionAttempt = (async () => {
+    const bootstrap = await bootstrapPayload()
+    const result = await apiFetch(
+      "/api/extension/pairing/claim",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          protocolVersion: CONNECTION_PROTOCOL_VERSION,
+          invitationId: bootstrap.invitationId,
+          ticket: bootstrap.ticket,
+        }),
+      },
+      { overrideOrigin: bootstrap.serverOrigin, authenticated: false },
+    )
+    if (
+      typeof result.connectionToken !== "string" ||
+      result.connectionToken.length < 32
+    ) {
+      throw new Error("INSU Player 沒有回傳有效的連線憑證")
+    }
+    await setConnection({
+      protocolVersion: CONNECTION_PROTOCOL_VERSION,
+      serverOrigin: bootstrap.serverOrigin,
+      token: result.connectionToken,
+      connectedAt: new Date().toISOString(),
+    })
+    const health = await apiFetch("/api/extension/health")
+    if (!isCurrentInsuHealth(health)) {
+      await chrome.storage.local.remove(STORAGE_KEY)
+      throw new Error("連接驗證失敗，請重新下載擴充功能")
+    }
+    return {
+      paired: true,
+      ...result,
+      ...health,
+      serverOrigin: bootstrap.serverOrigin,
+    }
+  })()
   try {
-    const response = await chrome.tabs.sendMessage(tabId, message)
-    if (response) return response
-  } catch {
-    // A homepage that was open before installation does not have the content bridge yet.
+    return await bootstrapConnectionAttempt
+  } finally {
+    bootstrapConnectionAttempt = null
   }
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content-bridge.js"],
-  })
-  return chrome.tabs.sendMessage(tabId, message)
 }
 
-async function scannedTabs() {
-  return new Set((await chrome.storage.session.get(SCAN_KEY))[SCAN_KEY] || [])
+async function ensureConnection() {
+  const current = await connection()
+  if (!current) return claimPackagedBootstrap()
+  try {
+    const health = await apiFetch("/api/extension/health")
+    if (!isCurrentInsuHealth(health)) {
+      await chrome.storage.local.remove(STORAGE_KEY)
+      throw new Error("擴充功能版本與目前服務不一致，請重新下載")
+    }
+    return { paired: true, ...current, ...health }
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      (error.status === 401 ||
+        error.code === "incompatible-extension-protocol")
+    ) {
+      await chrome.storage.local.remove(STORAGE_KEY)
+    }
+    throw error
+  }
 }
 
-async function setScanning(tabId, enabled) {
-  const tabs = await scannedTabs()
-  if (enabled) tabs.add(tabId)
-  else tabs.delete(tabId)
-  await chrome.storage.session.set({ [SCAN_KEY]: [...tabs] })
+async function installPageUrl() {
+  try {
+    const response = await fetch(BOOTSTRAP_URL, { cache: "no-store" })
+    if (!response.ok) return null
+    const payload = await response.json()
+    const serverOrigin = normalizeLoopbackOrigin(payload?.serverOrigin)
+    return serverOrigin ? `${serverOrigin}/extension/download` : null
+  } catch {
+    return null
+  }
 }
 
 async function recordNetworkCandidate(details, contentType = "") {
   if (details.tabId < 0 || !isSupportedMediaUrl(details.url, contentType)) return
-  const tabs = await scannedTabs()
-  if (!tabs.has(details.tabId)) return
   const tab = await chrome.tabs.get(details.tabId).catch(() => null)
   if (!tab?.url) return
   const candidate = {
@@ -146,66 +210,28 @@ chrome.webRequest.onHeadersReceived.addListener(
 )
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  void setScanning(tabId, false)
   void chrome.storage.session.remove(`${CANDIDATE_KEY_PREFIX}${tabId}`)
+})
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) {
+    void chrome.storage.session.remove(`${CANDIDATE_KEY_PREFIX}${tabId}`)
+  }
+})
+
+chrome.runtime.onInstalled.addListener(() => {
+  void ensureConnection().catch(() => null)
+})
+
+chrome.runtime.onStartup.addListener(() => {
+  void ensureConnection().catch(() => null)
 })
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const run = async () => {
     switch (message?.type) {
-      case "CONNECT_CURRENT_INSU": {
-        const tab = await chrome.tabs.get(message.tabId).catch(() => null)
-        const { serverOrigin } = await inspectInsuOrigin(message.serverOrigin)
-        if (!tab?.url || new URL(tab.url).origin !== serverOrigin) {
-          throw new Error("目前分頁已變更，請回到 INSU Player 後再試一次")
-        }
-        const requestId = `connect-${crypto.randomUUID()}`
-        const bridgeResult = await requestConnectionFromTab(message.tabId, {
-          type: "REQUEST_INSU_CONNECTION",
-          requestId,
-          pageMessageType: CONNECT_REQUEST_MESSAGE,
-          protocolVersion: CONNECTION_PROTOCOL_VERSION,
-        })
-        if (!bridgeResult?.ok) {
-          throw new Error(bridgeResult?.error || "INSU Player 首頁沒有回應連接要求")
-        }
-        const payload = bridgeResult.payload
-        if (!isConnectionChallenge(payload, serverOrigin)) {
-          throw new Error("INSU Player 回傳了無效或過期的連接資料")
-        }
-        const result = await apiFetch(
-          "/api/extension/pairing/claim",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              protocolVersion: CONNECTION_PROTOCOL_VERSION,
-              challengeId: payload.challengeId,
-              token: payload.token,
-            }),
-          },
-          { overrideOrigin: serverOrigin, authenticated: false },
-        )
-        await setConnection({
-          protocolVersion: CONNECTION_PROTOCOL_VERSION,
-          serverOrigin,
-          token: payload.token,
-          connectedAt: new Date().toISOString(),
-        })
-        const health = await apiFetch("/api/extension/health")
-        if (!isCurrentInsuHealth(health)) {
-          await chrome.storage.local.remove(STORAGE_KEY)
-          throw new Error("連接驗證失敗，請重新載入擴充功能後再試一次")
-        }
-        return { ...result, ...health, serverOrigin }
-      }
-      case "CHECK_CURRENT_INSU": {
-        const tab = await chrome.tabs.get(message.tabId).catch(() => null)
-        const inspected = await inspectInsuOrigin(message.serverOrigin)
-        if (!tab?.url || new URL(tab.url).origin !== inspected.serverOrigin) {
-          throw new Error("目前分頁不是本機 INSU Player")
-        }
-        return { available: true, serverOrigin: inspected.serverOrigin }
-      }
+      case "RETRY_CONNECTION":
+        return ensureConnection()
       case "INSU_SERVER_ORIGIN": {
         const current = await connection()
         const serverOrigin = normalizeLoopbackOrigin(message.serverOrigin)
@@ -224,36 +250,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
       }
       case "GET_CONNECTION": {
-        const current = await connection()
-        if (!current) return { paired: false }
         try {
-          const health = await apiFetch("/api/extension/health")
-          if (!isCurrentInsuHealth(health)) {
-            await chrome.storage.local.remove(STORAGE_KEY)
-            return { paired: false, error: "擴充功能版本與目前服務不一致" }
-          }
-          return { paired: true, ...current, ...health }
+          return await ensureConnection()
         } catch (error) {
-          if (
-            error instanceof ApiError &&
-            (error.status === 401 ||
-              error.code === "incompatible-extension-protocol")
-          ) {
-            await chrome.storage.local.remove(STORAGE_KEY)
+          return {
+            paired: false,
+            error: error.message,
+            errorCode: error.code || null,
+            serverOrigin: error.serverOrigin || null,
           }
-          return { paired: false, error: error.message }
         }
       }
-      case "START_NETWORK_SCAN":
-        await setScanning(message.tabId, true)
-        await chrome.storage.session.remove(`${CANDIDATE_KEY_PREFIX}${message.tabId}`)
-        return { scanning: true }
       case "GET_NETWORK_CANDIDATES": {
         const key = `${CANDIDATE_KEY_PREFIX}${message.tabId}`
         return { candidates: (await chrome.storage.session.get(key))[key] || [] }
       }
-      case "CLEAR_NETWORK_SCAN":
-        await setScanning(message.tabId, false)
+      case "CLEAR_NETWORK_CANDIDATES":
         await chrome.storage.session.remove(`${CANDIDATE_KEY_PREFIX}${message.tabId}`)
         return { cleared: true }
       case "API_REQUEST":
@@ -262,6 +274,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const current = await connection()
         if (!current?.serverOrigin) throw new Error("尚未連接 INSU Player")
         await chrome.tabs.create({ url: `${current.serverOrigin}/extension/library` })
+        return { opened: true }
+      }
+      case "OPEN_INSTALL": {
+        const url = await installPageUrl()
+        if (!url) throw new Error("找不到這份擴充功能對應的 INSU Player")
+        await chrome.tabs.create({ url })
         return { opened: true }
       }
       default:

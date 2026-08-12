@@ -14,14 +14,6 @@ import {
   ErrorState,
   LoadingState,
 } from "@/components/shared/AsyncState"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SubtitleRevisionPreviewDialog } from "@/features/job-detail/SubtitleRevisionPreviewDialog"
 import { SubtitleRevisionTable } from "@/features/job-detail/SubtitleRevisionTable"
@@ -31,7 +23,7 @@ import {
   SUBTITLE_KIND_COPY,
   SUBTITLE_VIEWS,
 } from "@/features/job-detail/subtitle-artifact-ui"
-import { useActivateSubtitle, useSubtitleCatalog } from "@/hooks/use-job-detail"
+import { useSubtitleCatalog } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
 import type {
   SubtitleArtifactKind,
@@ -148,67 +140,6 @@ function SubtitleManagementProvider({
   )
 }
 
-function SubtitlePlaybackSelector() {
-  const { state, meta } = useSubtitleManagement()
-  const activation = useActivateSubtitle(meta.job.videoId)
-
-  if (state.catalog.playbackLanguages.length === 0) {
-    return (
-      <div className="subtitle-playback-selector subtitle-playback-selector--empty">
-        <span className="section-index">PLAYBACK VERSION</span>
-        <p>目前沒有通過驗證且可播放的字幕版本。</p>
-      </div>
-    )
-  }
-  return (
-    <section className="subtitle-playback-selector" aria-label="播放字幕版本">
-      <div className="subtitle-playback-selector__heading">
-        <span className="section-index">PLAYBACK VERSION</span>
-        <strong>目前播放版本</strong>
-      </div>
-      <div className="subtitle-playback-selector__controls">
-        {state.catalog.playbackLanguages.map((language) => (
-          <Select
-            key={language.languageCode}
-            items={language.options.map((option) => ({
-              value: option.id,
-              label: option.label,
-            }))}
-            value={language.activeTrackId}
-            disabled={activation.isPending}
-            onValueChange={(trackId) => {
-              if (trackId && trackId !== language.activeTrackId) {
-                activation.mutate({
-                  languageCode: language.languageCode,
-                  trackId,
-                })
-              }
-            }}
-          >
-            <SelectTrigger aria-label={`${language.languageCode} 播放版本`}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {language.options.map((option) => (
-                  <SelectItem key={option.id} value={option.id}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        ))}
-      </div>
-      {activation.isError ? (
-        <p className="form-error" role="alert">
-          {activation.error.message}
-        </p>
-      ) : null}
-    </section>
-  )
-}
-
 function SubtitleArtifactWorkspace({ kind }: { kind: SubtitleArtifactKind }) {
   const { state, actions, meta } = useSubtitleManagement()
   const artifacts = useMemo(
@@ -294,7 +225,6 @@ function SubtitleManagementContent() {
   return (
     <div className="subtitle-management-layout">
       <JobNextActionCard job={meta.job} />
-      <SubtitlePlaybackSelector />
       <SubtitleManagementTabs />
     </div>
   )

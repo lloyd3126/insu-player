@@ -22,8 +22,8 @@ export class HomePage {
     await expect(this.heroHeading).toBeVisible()
   }
 
-  async openNavigationDialog(buttonName: string | RegExp, dialogName: string) {
-    await this.navigation.getByRole("button", { name: buttonName }).click()
+  async openNavigationDialog(linkName: string | RegExp, dialogName: string) {
+    await this.navigation.getByRole("link", { name: linkName }).click()
     const dialog = this.page.getByRole("dialog", { name: dialogName })
     await expect(dialog).toBeVisible()
     return dialog

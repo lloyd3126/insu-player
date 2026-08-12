@@ -8,10 +8,13 @@ import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { JobAboutPanel } from "@/features/job-detail/JobAboutPanel"
 import { JobActivityPanel } from "@/features/job-detail/JobActivityPanel"
+import { JobStatusPanel } from "@/features/job-detail/JobStatusPanel"
 import { MediaQualityPanel } from "@/features/job-detail/MediaQualityPanel"
 import { SubtitleManagementPanel } from "@/features/job-detail/SubtitleArtifactPanel"
-import { VideoSummaryPanel } from "@/features/job-detail/VideoSummaryPanel"
-import { VideoNotesPanel } from "@/features/job-detail/VideoNotesPanel"
+import {
+  VideoOutlinePanel,
+  VideoSummaryPanel,
+} from "@/features/job-detail/VideoSummaryPanel"
 import { useJobDetail } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
 
@@ -50,14 +53,18 @@ function JobDetailTabs({
     >
       <TabsList variant="line" aria-label="詳情分頁">
         <TabsTrigger value="about">關於影音</TabsTrigger>
+        <TabsTrigger value="status">影音狀態</TabsTrigger>
         <TabsTrigger value="quality">畫質管理</TabsTrigger>
         <TabsTrigger value="subtitles">字幕管理</TabsTrigger>
         <TabsTrigger value="summary">影音摘要</TabsTrigger>
-        <TabsTrigger value="notes">影音筆記</TabsTrigger>
+        <TabsTrigger value="outline">影音大綱</TabsTrigger>
         <TabsTrigger value="activity">執行紀錄</TabsTrigger>
       </TabsList>
       <TabsContent value="about" className="detail-tab-panel job-about-panel">
         {tab === "about" ? <JobAboutPanel job={job} /> : null}
+      </TabsContent>
+      <TabsContent value="status" className="detail-tab-panel job-status-panel">
+        {tab === "status" ? <JobStatusPanel job={job} /> : null}
       </TabsContent>
       <TabsContent
         value="quality"
@@ -94,11 +101,17 @@ function JobDetailTabs({
           />
         ) : null}
       </TabsContent>
-      <TabsContent value="summary" className="detail-tab-panel">
+      <TabsContent
+        value="summary"
+        className="detail-tab-panel video-summary-tab-panel"
+      >
         {tab === "summary" ? <VideoSummaryPanel job={job} /> : null}
       </TabsContent>
-      <TabsContent value="notes" className="detail-tab-panel">
-        {tab === "notes" ? <VideoNotesPanel job={job} /> : null}
+      <TabsContent
+        value="outline"
+        className="detail-tab-panel video-summary-tab-panel"
+      >
+        {tab === "outline" ? <VideoOutlinePanel job={job} /> : null}
       </TabsContent>
       <TabsContent value="activity" className="detail-tab-panel">
         {tab === "activity" ? <JobActivityPanel job={job} /> : null}
@@ -119,7 +132,7 @@ export function JobDetailDialog() {
       onOpenChange={(open) => (open ? undefined : overlay.actions.close("detail"))}
       kicker="JOB RECORD"
       title={job?.title ?? active?.videoId ?? "任務紀錄"}
-      description="影音資訊、執行紀錄、字幕、摘要與筆記"
+      description="影音資訊、狀態、執行紀錄、字幕與摘要"
       size="screen"
       layout="tabbed"
     >

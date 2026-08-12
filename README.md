@@ -70,42 +70,43 @@ Agent 處理一支影音時會：
 | 支援網站 | 依目前 workspace 內 yt-dlp 的 extractor 顯示實際支援來源，並提供詢問 Agent 是否支援的整合提示 |
 | 轉錄設定 | 以單一表格列出本機與雲端語音辨識模型，可查看就緒狀態、選用模型與開啟詳情 |
 | 模型詳情 | 本機模型可下載、取消、驗證與移除。雲端模型可設定或清除該 provider 共用的 API Key。選擇只套用到之後的新工作，停止服務會清除 Key |
-| 影片中心 | 以頂部 tabs 切換「我的影音」與「詳細資訊」 |
+| 影片中心 | 以頂部 tabs 切換「我的影音」、「下載佇列」與「字幕樣式」 |
 | 加入影音 | 從首頁直接逐行加入最多 50 個單支影音網址，確認權利後加入全域下載佇列並取得不超過 1080p 的最高相容 MP4。送出後直接回到影片中心，不另開下載頁 |
-| 我的影音 | 顯示全寬搜尋列與最多三欄的影音卡片。等待下載、下載中、需要確認、失敗與已完成影音都在相同位置，完成時同一張卡片原位轉成可播放狀態 |
-| 詳細資訊 | 顯示摘要統計、狀態篩選與固定欄寬列表，包含每個下載項目的狀態、進度及重試或取消操作。空庫時預設開啟 |
-| 擴充功能 | 首頁 navbar 的獨立 modal，標題為「Chrome 擴充功能」，以「安裝」、「連接」與「使用」三個 tabs 說明未封裝載入、直接連接目前 workspace 及從目前分頁加入影音 |
+| 我的影音 | 顯示全寬搜尋列與最多三欄的影音卡片。等待下載、下載中、需要確認、失敗與已完成影音都在相同位置，完成時同一張卡片原位轉成可播放狀態。媒體容量右側可選擇本機影音匯入 workspace，必要時會轉成瀏覽器可播放的 MP4 |
+| 下載佇列 | 顯示所有等待、下載中、需要確認與失敗的工作，包含進度及重試或取消操作。空庫時預設開啟 |
+| 字幕樣式 | 以第一字幕、第二字幕與雙語字幕三個 tabs 分別輸入文字、背景、行距、字距、陰影及兩軌間距的自訂值，也可同步單軌設定，並把完整設定保存成 workspace 共用的命名樣式 |
+| 擴充功能 | 首頁 navbar 的獨立 modal，依序以「下載」、「安裝與連接」與「使用」三個 tabs 引導下載專屬 ZIP、自動連接及從目前分頁加入影音 |
 
 ### Chrome 擴充功能
 
-未封裝 Extension 位於 `plugins/insu-player/chrome-extension/`，不需建置或上架商店。使用者從首頁 navbar 開啟「擴充功能」，依序使用「安裝」、「連接」與「使用」三個 tabs。保持首頁開啟並點 Chrome 工具列中的 INSU Player，再按「連接目前的 INSU Player」即可。Extension 只認目前分頁的精確 localhost origin，不掃描或猜測其他 port。單次 challenge、Extension origin、protocol、build、data schema 與 token 驗證都在背景完成。
+使用者從首頁 navbar 開啟「擴充功能」，依序使用「下載」、「安裝與連接」與「使用」三個 tabs。下載目前服務即時產生的專屬 ZIP，解壓縮後以 Chrome 開發人員模式載入資料夾，擴充功能就會自動連接產生它的精確 localhost origin，不掃描或猜測其他 port。ZIP 內的一次性啟用資格 30 分鐘後失效且只能使用一次，過期或已使用時重新下載即可。資料庫只保存 ticket hash，一次性 ticket 與實際 connection token 原值都不會寫入資料庫或 log。
 
-一般操作只讀取目前分頁並送入現有下載佇列。使用者可以選擇頁面、embed、直接 MP4 或已結束的 M3U8。iframe 與網路串流偵測需要暫時網站權限，下載需要登入狀態時會再開啟明確同意視窗。只會收集目前頁面、frame 與媒體 host 需要的 Cookie，傳到本機服務的短期工作階段，寫成權限 `0600` 的暫存 cookie jar。Cookie 值不會寫入 `app.db`、operation、log 或 API 回覆，下載程序結束或服務重啟時就會刪除。
+一般操作只讀取目前分頁並送入現有下載佇列。頁面、embed、直接 MP4 與已結束的 M3U8 不再要求使用者判斷，會依序交給 yt-dlp 作為同一支影音的備援來源。Chrome 第一次加入時會要求來源網站與 Cookie 權限，之後由擴充功能自動處理。使用者確認內容權利並加入下載時，擴充功能會自動收集這組來源涉及的頁面、frame 與媒體 host Cookie，傳到本機服務的短期工作階段，寫成權限 `0600` 的暫存 cookie jar。Cookie 值不會寫入 `app.db`、operation、log 或 API 回覆，下載程序結束或服務重啟時就會刪除。
 
-下載工作沒有使用者可見的批次。影片中心只顯示有哪些影音正在等待、目前進度與是否需要處理，並提供一個全域暫停或繼續控制。下載完成後 library item 保留同一個 ID 並轉成可播放影音。需要接續字幕時，從「詳細資訊」點影音標題或設定，再在「關於影音」複製下一步提示交給 Agent。
+下載工作沒有使用者可見的批次。影片中心只顯示有哪些影音正在等待、目前進度與是否需要處理，並提供一個全域暫停或繼續控制。下載完成後 library item 保留同一個 ID 並轉成可播放影音。需要接續字幕時，從影音卡片開啟詳細資訊，再到「字幕管理」複製提示交給 Agent。
 
 擴充功能不繞過 DRM、付費牆、會員、私人存取、地區限制或帳號控制。第一版只接受已結束的 HLS，拒絕直播、SAMPLE-AES、CENC、EME、Widevine、FairPlay、PlayReady 與無法還原實際網路來源的 blob。Chrome 專用 `/extension/library` 頁面只顯示搜尋、影音卡片、觀看與字幕選擇，不顯示 Agent 提示或轉錄設定。
 
-「詳細資訊」的列表會顯示影音、字幕語言碼與操作。每筆影音的詳情依序分為「關於影音」、「畫質管理」、「字幕管理」、「影音摘要」、「影音筆記」與「執行紀錄」六個 tabs：
+「詳細資訊」的列表會顯示影音、字幕語言碼與操作。每筆影音的詳情依序分為「關於影音」、「影音狀態」、「畫質管理」、「字幕管理」、「影音摘要」、「影音大綱」與「執行紀錄」七個 tabs：
 
 - 「關於影音」顯示目前狀態、來源、時長、容量、影音 ID、建立、更新、完成時間與狀態歷程，頁面本身固定，只有狀態歷程表格獨立捲動。
 - 「畫質管理」顯示來源可下載畫質、已下載 rendition、目前播放畫質、可用空間及下載進度。使用者明確點選哪個高度，就只下載並驗證該高度。不會自動降級，也不會在下載完成後擅自切換目前播放畫質。
-- 「字幕管理」最上方固定顯示一張製作提示卡，讓使用者把固定提示交給 Agent。其下是每個語言的目前播放版本選單，再以內層 tabs 管理「原始字幕」、「校正字幕」、「翻譯字幕」與「切分字幕」。只有字幕表格捲動，提示、播放版本、tabs、revision 與工具列保持固定。
+- 「字幕管理」最上方固定顯示一張製作提示卡，讓使用者把固定提示交給 Agent，再以內層 tabs 管理「原始字幕」、「校正字幕」、「翻譯字幕」與「切分字幕」。只有字幕表格捲動，提示、tabs、revision 與工具列保持固定。播放字幕只在播放器選擇。
 - 「原始字幕」只包含創作者人工 CC，或本機與支援的雲端 STT 從音訊產生的原始語言字幕。「校正字幕」顯示同語言完整句校正。「翻譯字幕」顯示跨語言完整翻譯。「切分字幕」顯示 output-first／target-first 切分與 Source Alignment 結果。
-- 製作、校正、翻譯、切分及重試都透過提示交給 Agent。介面中只有切換目前播放版本與刪除 revision 是使用者可直接執行的傳統操作。
-- 「影音摘要」採上下流程。先由 `$summarize-video` 從指定的有效完整句校正或翻譯字幕建立版本化文字摘要，再由 `$map-video-summary` 從指定文字摘要建立版本化 Markmap。介面可切換 revision、刪除未被依賴的版本，並縮放、收合、符合畫面或匯出 SVG。兩個步驟各自使用提示卡，Agent 不會把摘要或心智圖工作塞進字幕 skill。
-- 「影音筆記」可直接新增、編輯、刪除筆記，並可連結播放時間與標籤。點擊時間會回到同支影音的精確位置。
+- 製作、校正、翻譯、切分及重試都透過提示交給 Agent。字幕管理中的 revision 可直接刪除，也可下載成保留時間碼的 SRT，或下載成以半形空格銜接句子的 TXT。
+- 「影音摘要」由 `$summarize-video` 從指定的有效完整句校正或翻譯字幕建立版本化文字摘要。
+- 「影音大綱」由 `$map-video-summary` 從目前文字摘要建立版本化 Markmap，可縮放、收合、符合畫面或匯出 SVG。摘要與大綱各自使用提示卡與獨立路由，並共用同一份版本化摘要資料。
 - 「執行紀錄」提供可交給 Agent 的檢查提示與全寬 log 內容。
 
 「關於影音」底部另有移除按鈕，點擊後會開啟共用的直接刪除確認 Modal。Modal 開啟時由同源 API 執行唯讀預覽，沒有 blocker 才會啟用刪除。確認後後端會以該次預覽的 plan digest 執行並驗證，完成後清除前端快取並返回影片中心。非 active 的本地畫質、字幕 revision、文字摘要與心智圖也共用相同協議。active 畫質必須先切換才可移除，仍被心智圖依賴的文字摘要必須先移除相關心智圖。所有操作都使用穩定 ID，不需要複製提示或請 Agent 協助。
 
 畫質、字幕 catalog、所選字幕版本內容與 log 只在第一次切到對應分頁時載入，開啟「關於影音」不會先抓取這些資料。字幕內層分頁與 revision 會映射到 `/jobs/<video-id>/subtitles/<source|proofread|translation|segmentation>?artifact=<artifact-id>`，因此重新整理後仍保留目前畫面。
 
-播放器以每個語言獨立解析版本，預設順序是「有效切分字幕 > 有效完整句校正或翻譯 > 人工 CC > 模型原始字幕」。使用者在字幕管理中明確選擇的有效版本會持續保留。處理中、invalid 或 stale 的新版不會蓋掉既有可播版本。
+播放器以每個語言獨立解析版本，預設順序是「有效切分字幕 > 有效完整句校正或翻譯 > 人工 CC > 模型原始字幕」。播放器的第一字幕與第二字幕選單只顯示可播放的語言，可同時顯示兩組不同語言。影片中心的「字幕樣式」可分別設定兩個字幕位置與雙語間距，保存於目前 workspace 的 SQLite，並套用到播放器。處理中、invalid 或 stale 的新版不會蓋掉既有可播版本。
 
 影音摘要與關於頁使用簡明的處理狀態，例如「準備辨識語音」、「正在整理字幕內容」、「正在重新切分字幕」、「正在同步字幕時間」與「正在檢查字幕」。每個詳情頁會依目前狀態顯示一張下一步卡片。處理中只提示等待，工作中斷時提供精確續跑提示，完整句完成但尚未切分時只接續切分，全部驗證完成後明確顯示完成。
 
-## 十個產品 skills
+## 十一個產品 skills
 
 | Skill | 用途 |
 | --- | --- |
@@ -118,6 +119,7 @@ Agent 處理一支影音時會：
 | `$segment-subtitles` | 先依目標語自然切分，再將 frozen pieces 對齊連續來源時間並輸出同步字幕 |
 | `$summarize-video` | 從一個已驗證的完整句字幕版本建立不可覆寫、可追溯的文字摘要 revision |
 | `$map-video-summary` | 從一個指定文字摘要 revision 建立安全、可驗證的 Markmap 心智圖 |
+| `$migrate-player-library` | 唯讀比對舊資料與目前契約，經 preview、確認、staging 與驗證完成一次性資料遷移，不替 runtime 加入相容層 |
 | `$player-manager` | 檢查安裝狀態、安全更新或完整移除 INSU Player |
 
 `plugins/insu-player/skills/` 是業務規則的唯一來源。repository 內的 `.agents/skills/` 只負責將 Codex 導向對應的 canonical skill。
@@ -130,7 +132,7 @@ Agent 處理一支影音時會：
 - 首頁服務啟動時會清除從 Codex、terminal profile 或 parent process 繼承的 `OPENAI_API_KEY`、`GROQ_API_KEY`、`ELEVENLABS_API_KEY`、`XAI_API_KEY` 與 `OPENROUTER_API_KEY`。需要雲端轉錄時，使用者必須在「轉錄設定」開啟對應模型詳情，為本次服務重新設定 provider Key。Key 不會寫入 `.env`、`app.db`、log、job metadata 或 API 回應。直接執行轉錄工具時仍可從該命令的 process environment 取得 Key。
 - 服務只綁定 localhost，不對 LAN 或 Internet 開放。
 - INSU Player 不繞過 DRM、付費牆、會員、私人存取、地區限制或帳號控制。
-- Chrome Extension 的必要權限只用於目前分頁與 localhost。iframe、網路串流與 Cookie 使用額外權限，成功加入後會回收。Extension 連接、短期媒體工作階段與 cookie jar 都會在完整重建時清除。
+- Chrome Extension 的必要權限只用於目前分頁與 localhost。第一次加入時，Chrome 會要求來源網站與 Cookie 權限，之後由擴充功能自動偵測頁面、iframe、網路串流並帶入該來源組需要的 Cookie，不要求使用者選擇模式。Extension 連接、短期媒體工作階段與 cookie jar 都會在完整重建時清除。
 - 清理預設只移除可重建中間檔，保留影音、字幕、狀態、log 與播放進度。
 
 ### 需要重新開始時重置影音庫
@@ -155,13 +157,25 @@ Agent 處理一支影音時會：
 只清空目前影音和字幕，保留資料庫結構與設定。請先列出唯讀預覽和 plan digest，等我確認後執行並驗證。
 ```
 
+### 破壞性更新時遷移既有資料
+
+INSU Player 的正式服務只讀取目前版本契約，不在啟動時執行 migration，也不保留 legacy reader。更新後如果希望沿用既有影音庫，請開啟新的 Codex task，貼上以下通用提示。提示不綁定特定 schema 版本，實際差異由新版的 `$migrate-player-library`、目前 schema 與 validator 決定：
+
+```text
+使用 $migrate-player-library 更新目前專案既有的 INSU Player 資料。請先唯讀比較舊 app.db、jobs 產物與目前安裝版本的資料契約。正式服務不得加入相容層、legacy reader、推定值或啟動時 migration。保留能通過目前驗證的影音、字幕、摘要、大綱、筆記、標籤、播放進度、字幕樣式與轉錄模型選擇，丟棄 API Key、Cookie、token、PID、暫存檔、下載佇列與未完成工作。若語意契約不同，由 Agent 建立明確的 current-shape transform bundle，不得猜值。先列出所有保留、轉換、捨棄、重建與阻擋項目，產生唯讀 preview 和 digest，等我回覆「確認遷移 DIGEST」後才停止服務、在 staging 建立新資料庫、驗證並原子切換。失敗時保留或還原舊資料庫，成功後重啟首頁並實際驗證資料。
+```
+
+Agent 會先顯示來源與目標版本、影音數量、容量、每個資料表的處置、無法保留的產物及本次 digest。只有在你回覆 `確認遷移 DIGEST` 後才會停止服務與切換資料庫。舊 `app.db` 會保留在 `.insu-player-migrations/DIGEST/source/` 作為 rollback snapshot，不會在同一次操作中刪除。
+
+這不是相容層。舊資料只會被一次性讀取並轉成目前格式，新的正式服務仍然只接受目前 schema。如果舊字幕、摘要或其他衍生產物缺少目前必填的 processor、checksum、依賴或 manifest，Agent 不會猜值，會保留原始影音並列出需要用新版 skill 重建的內容。如果完全不需要舊資料，使用上一節的完整重建會更快。
+
 ## 應用程式架構
 
 | 層級 | 技術 | 職責 |
 | --- | --- | --- |
 | 前端 | React、React Router、Vite、shadcn/ui、Lucide、Markmap | 固定首頁、可重新整理的 modal/tab 路由、下載佇列、模型管理、摘要心智圖、字幕對照與同源播放器 |
 | API | Hono on Bun | localhost JSON API、Extension 連接與短期媒體工作階段、多支影音最高相容畫質下載、統一模型目錄、provider session credential、模型下載與驗證、摘要 revision、exact-height rendition、媒體 Range request、WebVTT 與播放進度 |
-| 查詢投影 | Drizzle、Bun SQLite | 以目前唯一 schema 保存下載佇列項目、Extension 連接 metadata、模型選擇、摘要依賴並投影工作流程。Cookie 值不入庫，舊 schema 不遷移、不讀取，也沒有相容層 |
+| 查詢投影 | Drizzle、Bun SQLite | 以目前唯一 schema 保存下載佇列項目、Extension 連接 metadata、模型選擇、摘要依賴並投影工作流程。Cookie 值不入庫，runtime 不讀取舊 schema。需要保留舊資料時只透過一次性的 `$migrate-player-library` staging 流程轉成目前契約 |
 | 工作流程 | SQLite `operations`、`operation_events` | 作為中斷復原與進度的唯一事實來源 |
 | 執行環境 | project-local workspace | 保存 runtime、媒體、字幕、模型、cache 與播放進度 |
 
@@ -171,7 +185,7 @@ Agent 處理一支影音時會：
 insu-player/
 ├── .agents/skills/                 # repository discovery bridge
 ├── plugins/insu-player/            # Codex plugin 與 canonical skills
-│   └── chrome-extension/            # 直接由 Chrome 載入的未封裝 Extension
+│   └── chrome-extension/            # 由首頁封裝成 ZIP 供 Chrome 載入的 Extension 原始碼
 ├── src/client/                     # React 元件化首頁
 ├── src/server/                     # Hono API、Drizzle schema 與 Bun server
 ├── src/shared/                     # 前後端共用契約與 domain logic
@@ -207,7 +221,7 @@ python3 -m unittest discover -s tests -v
 
 ## 更新與移除
 
-請交給 `$player-manager` 先檢查安裝模式與資料邊界，再預覽更新或移除範圍。更新必須保留 `.local/`、jobs、影音、字幕與播放進度。移除產生資料前必須另行取得使用者確認。
+請交給 `$player-manager` 先檢查安裝模式與資料邊界，再預覽更新或移除範圍。程式更新本身不會就地修改 `.local/`。如果新版本的資料契約不同，要保留既有影音庫時使用 `$migrate-player-library`，不需要保留時使用完整重建。移除產生資料前必須另行取得使用者確認。
 
 移除 Codex plugin：
 

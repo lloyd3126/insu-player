@@ -79,8 +79,8 @@ export interface JobHistoryEntry {
 export interface JobSummary {
   videoId: string
   title: string
-  sourceUrl: string
-  sourceKind: "page" | "embed" | "network-media"
+  sourceUrl: string | null
+  sourceKind: "page" | "embed" | "network-media" | "local-file"
   state: JobState
   effectiveState: JobState
   stage: string

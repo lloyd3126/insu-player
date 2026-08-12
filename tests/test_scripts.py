@@ -96,10 +96,14 @@ case "$all_arguments" in
 esac
 case "$all_arguments" in
   *' --dump-single-json '*)
+    metadata_id='test-video'
+    if [ "${FAKE_FALLBACK_DIFFERENT_ID:-0}" = 1 ] && printf '%s' "$all_arguments" | grep -q 'embed.example.test'; then
+      metadata_id='direct-stream'
+    fi
     if [ "${FAKE_LOW_ONLY:-0}" = 1 ]; then
-      printf '%s\n' '{"id":"test-video","title":"Test Video","duration":125.9,"formats":[{"format_id":"135","ext":"mp4","height":480,"width":854,"vcodec":"avc1.4d401f","acodec":"none"},{"format_id":"140","ext":"m4a","vcodec":"none","acodec":"mp4a.40.2"}]}'
+      printf '%s\n' "{\\\"id\\\":\\\"$metadata_id\\\",\\\"title\\\":\\\"Test Video\\\",\\\"duration\\\":125.9,\\\"formats\\\":[{\\\"format_id\\\":\\\"135\\\",\\\"ext\\\":\\\"mp4\\\",\\\"height\\\":480,\\\"width\\\":854,\\\"vcodec\\\":\\\"avc1.4d401f\\\",\\\"acodec\\\":\\\"none\\\"},{\\\"format_id\\\":\\\"140\\\",\\\"ext\\\":\\\"m4a\\\",\\\"vcodec\\\":\\\"none\\\",\\\"acodec\\\":\\\"mp4a.40.2\\\"}]}"
     else
-      printf '%s\n' '{"id":"test-video","title":"Test Video","duration":125.9,"formats":[{"format_id":"137","ext":"mp4","height":1080,"width":1920,"vcodec":"avc1.640028","acodec":"none"},{"format_id":"136","ext":"mp4","height":720,"width":1280,"vcodec":"avc1.4d401f","acodec":"none"},{"format_id":"140","ext":"m4a","vcodec":"none","acodec":"mp4a.40.2"}]}'
+      printf '%s\n' "{\\\"id\\\":\\\"$metadata_id\\\",\\\"title\\\":\\\"Test Video\\\",\\\"duration\\\":125.9,\\\"formats\\\":[{\\\"format_id\\\":\\\"137\\\",\\\"ext\\\":\\\"mp4\\\",\\\"height\\\":1080,\\\"width\\\":1920,\\\"vcodec\\\":\\\"avc1.640028\\\",\\\"acodec\\\":\\\"none\\\"},{\\\"format_id\\\":\\\"136\\\",\\\"ext\\\":\\\"mp4\\\",\\\"height\\\":720,\\\"width\\\":1280,\\\"vcodec\\\":\\\"avc1.4d401f\\\",\\\"acodec\\\":\\\"none\\\"},{\\\"format_id\\\":\\\"140\\\",\\\"ext\\\":\\\"m4a\\\",\\\"vcodec\\\":\\\"none\\\",\\\"acodec\\\":\\\"mp4a.40.2\\\"}]}"
     fi
     exit 0
     ;;
@@ -129,6 +133,10 @@ case "$all_arguments" in
     exit 0
     ;;
   *' --recode-video '*)
+    if [ "${FAKE_PRIMARY_DOWNLOAD_FAIL:-0}" = 1 ] && printf '%s' "$all_arguments" | grep -q 'primary.example.test'; then
+      printf 'primary source download failed\n' >&2
+      exit 1
+    fi
     case "$format_selector" in
       *'height=1080'*) height=1080; width=1920; format_id='137+140' ;;
       *'height=720'*) height=720; width=1280; format_id='136+140' ;;
@@ -249,6 +257,74 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "media-work/catalog.json",
         )
 
+    def test_download_links_only_the_explicit_queue_item(self) -> None:
+        source_url = "https://example.test/watch?v=test-video"
+        queue_item_id = "library-00000000-0000-4000-8000-000000000001"
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            timestamp = "2026-08-12T00:00:00Z"
+            connection.execute(
+                """
+                INSERT INTO operations (
+                  id, video_id, parent_operation_id, kind, state, stage,
+                  progress, message, inputs_json, outputs_json, consent_json,
+                  resumable, attempt, pid, error_code, error_message,
+                  created_at, started_at, updated_at, completed_at
+                ) VALUES (?, NULL, NULL, 'media-download', 'queued',
+                  'awaiting-download', 0, '等待下載', '{}', '{}',
+                  '{"rightsConfirmed":true}', 1, 1, NULL, NULL, NULL,
+                  ?, NULL, ?, NULL)
+                """,
+                ("download-operation-test", timestamp, timestamp),
+            )
+            connection.execute(
+                """
+                INSERT INTO download_queue_items (
+                  id, source_kind, page_url, source_url, source_key,
+                  session_id, operation_id, video_id, rights_confirmed,
+                  low_quality_approved, authentication,
+                  authentication_consent_at, created_at, completed_at
+                ) VALUES (?, 'page', ?, ?, ?, NULL, ?, NULL, 1, 0,
+                  'none', NULL, ?, NULL)
+                """,
+                (
+                    queue_item_id,
+                    source_url,
+                    source_url,
+                    f"page:{source_url}",
+                    "download-operation-test",
+                    timestamp,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self.run_script(
+            "download-video.sh",
+            str(self.workspace),
+            source_url,
+            "--download-only",
+            "--queue-item-id",
+            queue_item_id,
+        )
+
+        connection = sqlite3.connect(self.workspace / "app.db")
+        try:
+            queue_link = connection.execute(
+                "SELECT video_id FROM download_queue_items WHERE id = ?",
+                (queue_item_id,),
+            ).fetchone()
+            operation_link = connection.execute(
+                "SELECT video_id, outputs_json FROM operations WHERE id = ?",
+                ("download-operation-test",),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(queue_link, ("test-video",))
+        self.assertEqual(operation_link[0], "test-video")
+        self.assertEqual(json.loads(operation_link[1]), {"videoId": "test-video"})
+
     def test_network_media_keeps_signed_urls_out_of_persistent_files(self) -> None:
         signed_url = "https://cdn.example.test/master.m3u8?token=must-not-persist"
         page_url = "https://media.example.test/watch/one"
@@ -330,6 +406,25 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             [(attempt["height"], attempt["probeResult"]) for attempt in selection["attempts"]],
             [(1080, "http-failed"), (1080, "ok")],
         )
+
+    def test_download_uses_the_next_detected_source_when_primary_download_fails(self) -> None:
+        self.environment["FAKE_PRIMARY_DOWNLOAD_FAIL"] = "1"
+        self.environment["FAKE_FALLBACK_DIFFERENT_ID"] = "1"
+
+        result = self.run_script(
+            "download-video.sh",
+            str(self.workspace),
+            "https://primary.example.test/watch?v=test-video",
+            "--fallback-url",
+            "https://embed.example.test/player/test-video",
+            "--language",
+            "en",
+            "--proofread",
+        )
+
+        self.assertIn("Trying detected fallback source 1", result.stdout)
+        self.assertTrue(self.active_media_path().is_file())
+        self.assertEqual(self.initial_selection()["selected"]["height"], 1080)
 
     def test_download_stops_before_an_unapproved_low_quality_fallback(self) -> None:
         self.environment["FAKE_LOW_ONLY"] = "1"
@@ -455,7 +550,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         job_dir.mkdir(parents=True)
         self.write_status(
             {
-                "schemaVersion": 3,
+                "schemaVersion": 2,
                 "videoId": "test-video",
                 "state": "queued",
                 "stage": "queued",
@@ -479,7 +574,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schemaVersion 2", result.stdout)
+        self.assertIn("schemaVersion 3", result.stdout)
 
     def test_job_state_requires_current_transcription_language_metadata(self) -> None:
         job_dir = self.workspace / "jobs" / "test-video"
@@ -522,7 +617,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             stdout=subprocess.DEVNULL,
         )
         status = self.read_status()
-        self.assertEqual(status["schemaVersion"], 2)
+        self.assertEqual(status["schemaVersion"], 3)
         self.assertEqual(
             status["transcription"],
             {

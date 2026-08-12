@@ -9,9 +9,11 @@ import type { JobsResponse } from "@shared/contracts/job"
 
 function VideoRemovalFlow({
   videoId,
+  closeDetail = false,
   children,
 }: {
   videoId: string
+  closeDetail?: boolean
   children: ReactElement
 }) {
   const overlay = useOverlay()
@@ -28,10 +30,7 @@ function VideoRemovalFlow({
     )
     void queryClient.invalidateQueries({ queryKey: ["jobs"] })
     void queryClient.invalidateQueries({ queryKey: ["library"] })
-    overlay.actions.open(
-      { type: "library", view: null },
-      { replace: true, returnTo: null },
-    )
+    if (closeDetail) overlay.actions.close("detail")
   }
 
   return (
@@ -49,7 +48,7 @@ function VideoRemovalFlow({
 
 export function VideoRemovalDialog({ videoId }: { videoId: string }) {
   return (
-    <VideoRemovalFlow videoId={videoId}>
+    <VideoRemovalFlow videoId={videoId} closeDetail>
       <Button variant="destructive">
         <Trash2Icon data-icon="inline-start" />
         移除影音
@@ -74,26 +73,6 @@ export function VideoCardRemovalDialog({
         aria-label={`移除影音 ${title}`}
       >
         <Trash2Icon aria-hidden="true" />
-      </Button>
-    </VideoRemovalFlow>
-  )
-}
-
-export function VideoListRemovalDialog({
-  videoId,
-  title,
-}: {
-  videoId: string
-  title: string
-}) {
-  return (
-    <VideoRemovalFlow videoId={videoId}>
-      <Button
-        variant="destructive"
-        size="icon"
-        aria-label={`移除影音 ${title}`}
-      >
-        <Trash2Icon data-icon="inline-start" />
       </Button>
     </VideoRemovalFlow>
   )

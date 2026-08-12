@@ -8,8 +8,6 @@ import {
 } from "../../../src/shared/prompts/insu-prompts"
 import {
   EXTENSION_CONNECTION_PROTOCOL_VERSION,
-  EXTENSION_CONNECT_REQUEST_MESSAGE,
-  EXTENSION_CONNECT_RESPONSE_MESSAGE,
 } from "../../../src/shared/contracts/browser-extension"
 
 test.describe("INSU Player home @smoke", () => {
@@ -38,9 +36,9 @@ test.describe("INSU Player home @smoke", () => {
       }),
     ).toBeGreaterThan(1)
 
-    const navigationButtons = home.navigation.getByRole("button")
-    await expect(navigationButtons).toHaveCount(6)
-    await expect(navigationButtons).toHaveText([
+    const navigationLinks = home.navigation.getByRole("link")
+    await expect(navigationLinks).toHaveCount(6)
+    await expect(navigationLinks).toHaveText([
       "開始說明",
       "我的提示",
       "轉錄設定",
@@ -50,19 +48,19 @@ test.describe("INSU Player home @smoke", () => {
     ])
     await expect(home.navigation.locator("svg")).toHaveCount(1)
     await expect(
-      home.navigation.getByRole("button", { name: /影片中心/ }).locator("svg"),
+      home.navigation.getByRole("link", { name: /影片中心/ }).locator("svg"),
     ).toHaveCount(1)
     await expect(
-      home.navigation.getByRole("button", { name: "開始說明" }).locator("svg"),
+      home.navigation.getByRole("link", { name: "開始說明" }).locator("svg"),
     ).toHaveCount(0)
     await expect(
-      home.navigation.getByRole("button", { name: "功能設定" }),
+      home.navigation.getByRole("link", { name: "功能設定" }),
     ).toHaveCount(0)
     await expect(
-      home.navigation.getByRole("button", { name: "開始使用", exact: true }),
+      home.navigation.getByRole("link", { name: "開始使用", exact: true }),
     ).toHaveCount(0)
     await expect(
-      home.navigation.getByRole("button", { name: "介面設定" }),
+      home.navigation.getByRole("link", { name: "介面設定" }),
     ).toHaveCount(0)
     await expect(page).toHaveURL(/\/$/)
   })
@@ -117,30 +115,61 @@ test.describe("INSU Player home @smoke", () => {
     const home = new HomePage(page)
     await home.goto()
 
-    await page.getByRole("button", { name: "加入影音" }).click()
-    const dialog = page.getByRole("dialog", { name: "加入影音" })
+    await page.getByRole("link", { name: "加入影音" }).click()
+    const dialog = page.getByRole("dialog", { name: "影片中心" })
     await expect(dialog).toBeVisible()
-    await expect(page).toHaveURL(/\/library\/add$/)
-    await expect(dialog.getByRole("tab")).toHaveCount(0)
+    await expect(page).toHaveURL(/\/library\/list$/)
+    await expect(dialog.getByRole("tab", { name: "下載佇列" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    )
+    await expect(
+      dialog.getByRole("heading", { name: "下載影音" }),
+    ).toBeVisible()
     await expect(dialog.getByLabel("單支影音網址")).toBeVisible()
     await expect(
-      dialog.getByText("我確認這些是我自己的內容，或我已取得下載、轉錄與觀看的權利"),
+      dialog.getByText(
+        "點擊下載按鈕代表有權下載、轉錄與觀看這項內容，還是無法下載的話請使用擴充程式嘗試。",
+      ),
     ).toBeVisible()
     await dialog.getByLabel("單支影音網址").fill(
       "https://www.youtube.com/watch?v=demo-video",
     )
-    await dialog.getByRole("checkbox", {
-      name: /我確認這些是我自己的內容/,
-    }).click()
-    await dialog.getByRole("button", { name: "加入 1 個影音" }).click()
-    await expect(page).toHaveURL(/\/library\/grid(?:\?|$)/)
+    await expect(dialog.getByRole("checkbox")).toHaveCount(0)
+    await dialog.getByRole("button", { name: "下載", exact: true }).click()
+    await expect(page).toHaveURL(/\/library\/list(?:\?|$)/)
     const library = page.getByRole("dialog", { name: "影片中心" })
-    await expect(library.getByRole("heading", { name: "youtube.com" })).toBeVisible()
-    await expect(library.getByText("等待下載", { exact: true })).toBeVisible()
-    await expect(library.getByText("下一個開始下載")).toBeVisible()
+    await expect(library.getByRole("tab", { name: "下載佇列" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    )
+    await expect(library.getByText("youtube.com", { exact: true })).toBeVisible()
+    await expect(library.getByText("0%", { exact: true })).toBeVisible()
+    await expect(
+      library.getByRole("link", { name: "開啟來源 youtube.com" }),
+    ).toHaveAttribute("href", "https://www.youtube.com/watch?v=demo-video")
+    await expect(library.getByText("等待下載", { exact: true })).toHaveCount(0)
+    await expect(library.getByText("下一個開始下載")).toHaveCount(0)
+    await expect(library.getByText(pendingItem.pageUrl, { exact: true })).toHaveCount(0)
+    await expect(library.getByLabel("下載排程")).toHaveCount(0)
     await page.reload()
-    await expect(page).toHaveURL(/\/library\/grid(?:\?|$)/)
+    await expect(page).toHaveURL(/\/library\/list(?:\?|$)/)
     await expect(page.getByRole("dialog", { name: "影片中心" })).toBeVisible()
+  })
+
+  test("returns to the homepage when the homepage library dialog closes", async ({ page }) => {
+    const home = new HomePage(page)
+    await home.goto()
+
+    await page.getByRole("link", { name: "加入影音" }).click()
+    const dialog = page.getByRole("dialog", { name: "影片中心" })
+    await expect(dialog).toBeVisible()
+    await expect(page).toHaveURL(/\/library\/list$/)
+
+    await dialog.getByRole("button", { name: "關閉" }).click()
+
+    await expect(page).toHaveURL(/\/$/)
+    await expect(dialog).toBeHidden()
   })
 
   test("keeps the last library state visible when one progress refresh fails", async ({ page }) => {
@@ -195,15 +224,90 @@ test.describe("INSU Player home @smoke", () => {
 
     const home = new HomePage(page)
     await home.goto()
-    await home.navigation.getByRole("button", { name: /影片中心/ }).click()
+    await home.navigation.getByRole("link", { name: /影片中心/ }).click()
     const library = page.getByRole("dialog", { name: "影片中心" })
-    await expect(library.getByRole("heading", { name: "Active Video" })).toBeVisible()
-    await expect(library.getByText("45%")).toBeVisible()
+    await library.getByRole("tab", { name: "下載佇列" }).click()
+    const row = library.getByRole("row").filter({ hasText: "Active Video" })
+    await expect(row.getByLabel("下載進度 45%")).toBeVisible()
+    await expect(
+      row.getByRole("link", { name: "開啟來源 Active Video" }),
+    ).toHaveAttribute("href", activeItem.pageUrl)
+    await expect(row.getByText(activeItem.pageUrl, { exact: true })).toHaveCount(0)
+    await expect(row.getByText(activeItem.message, { exact: true })).toHaveCount(0)
+    await expect(row.getByRole("progressbar")).toHaveCount(0)
+    await expect(library.getByLabel("下載排程")).toHaveCount(0)
     await expect(library.getByText("temporary read failure")).toBeVisible({
       timeout: 10_000,
     })
-    await expect(library.getByRole("heading", { name: "Active Video" })).toBeVisible()
-    await expect(page).toHaveURL(/\/library\/grid$/)
+    await expect(row.getByText("Active Video", { exact: true })).toBeVisible()
+    await expect(page).toHaveURL(/\/library\/list$/)
+  })
+
+  test("offers retry and deletion for a failed download", async ({ page }) => {
+    const failedItem = {
+      kind: "download",
+      id: "library-failed",
+      sourceKind: "page",
+      pageUrl: "https://example.test/failed-video",
+      sourceUrl: "https://example.test/failed-video",
+      videoId: null,
+      title: "Failed Video",
+      thumbnailUrl: null,
+      state: "failed",
+      stage: "media-download",
+      progress: 0,
+      message: "影音下載失敗",
+      errorCode: "download-failed",
+      queueAhead: null,
+      lowQualityApproved: false,
+      authentication: "none",
+      authenticationConsentAt: null,
+      createdAt: "2026-08-11T00:00:00Z",
+      updatedAt: "2026-08-11T00:01:00Z",
+      completedAt: "2026-08-11T00:01:00Z",
+    }
+    let removed = false
+    const response = () => ({
+      items: removed ? [] : [failedItem],
+      queue: {
+        paused: false,
+        concurrency: 2,
+        queuedCount: 0,
+        activeCount: 0,
+        attentionCount: removed ? 0 : 1,
+      },
+      serverTime: "2026-08-11T00:02:00Z",
+    })
+    await page.route("**/api/library", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(response()),
+      }),
+    )
+    await page.route("**/api/library/items/library-failed", (route) => {
+      expect(route.request().method()).toBe("DELETE")
+      removed = true
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(response()),
+      })
+    })
+
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    const card = library.locator(".video-grid-card").filter({
+      has: page.getByRole("heading", { name: "Failed Video" }),
+    })
+    await expect(
+      card.getByRole("button", { name: "重新下載 Failed Video" }),
+    ).toBeVisible()
+    await card
+      .getByRole("button", { name: "刪除下載失敗項目 Failed Video" })
+      .click()
+    await expect(library.getByText("目前還沒有影音")).toBeVisible()
   })
 
   test("keeps each getting-started section in its own tab", async ({ page }) => {
@@ -579,11 +683,22 @@ test.describe("INSU Player home @smoke", () => {
           extensionOrigin: paired ? "chrome-extension://insu-player" : null,
           pairedAt: paired ? "2026-08-11T00:00:00Z" : null,
           lastSeenAt: paired ? "2026-08-11T00:00:00Z" : null,
-          extensionDirectory: "/project/plugins/insu-player/chrome-extension",
-          libraryUrl: "http://127.0.0.1:8000/browser-library",
+          serverOrigin: "http://127.0.0.1:8000",
+          libraryUrl: "http://127.0.0.1:8000/extension/library",
         }),
       }),
     )
+    await page.route("**/api/extension/package", (route) => {
+      expect(route.request().method()).toBe("POST")
+      return route.fulfill({
+        status: 200,
+        body: "zip",
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Disposition": 'attachment; filename="insu-player-extension-v0.3.0.zip"',
+        },
+      })
+    })
     const home = new HomePage(page)
     await home.goto()
 
@@ -591,28 +706,31 @@ test.describe("INSU Player home @smoke", () => {
       "擴充功能",
       "Chrome 擴充功能",
     )
-    await expect(page).toHaveURL(/\/extension\/install$/)
+    await expect(page).toHaveURL(/\/extension\/download$/)
     await expect(extension.getByRole("tab")).toHaveCount(3)
     await expect(extension.getByRole("tab")).toHaveText([
-      "1 安裝",
-      "2 連接",
+      "1 下載",
+      "2 安裝與連接",
       "3 使用",
     ])
     await expect(
-      extension.getByRole("heading", { name: "載入未封裝擴充功能" }),
+      extension.getByRole("heading", { name: "下載已設定的 Chrome 擴充功能" }),
     ).toBeVisible()
-    await expect(extension.locator("code")).toContainText(
-      "plugins/insu-player/chrome-extension",
+    const packageDownload = page.waitForEvent("download")
+    await extension.getByRole("button", { name: "下載 Chrome 擴充功能" }).click()
+    expect((await packageDownload).suggestedFilename()).toBe(
+      "insu-player-extension-v0.3.0.zip",
     )
+    await expect(extension.getByRole("button", { name: /配對檔/ })).toHaveCount(0)
 
     await extension.getByRole("button", {
-      name: "我已載入，前往連接",
+      name: "前往安裝與連接",
     }).click()
     await expect(page).toHaveURL(/\/extension\/connect$/)
     await expect(
-      extension.getByRole("heading", { name: "連接目前的本機服務" }),
+      extension.getByRole("heading", { name: "安裝後自動連接" }),
     ).toBeVisible()
-    await expect(extension).toContainText("按下連接目前的 INSU Player")
+    await expect(extension).toContainText("不需要選擇任何檔案")
     paired = true
     await expect(
       extension.getByRole("heading", { name: "Chrome 已連接" }),
@@ -631,59 +749,6 @@ test.describe("INSU Player home @smoke", () => {
     await expect(
       page.getByRole("tab", { name: "3 使用" }),
     ).toHaveAttribute("aria-selected", "true")
-  })
-
-  test("lets the loaded extension request a one-time connection from the current page", async ({ page }) => {
-    await page.route("**/api/extension/pairing/start", (route) =>
-      route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: JSON.stringify({
-          protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
-          challengeId: "pair-00000000-0000-4000-8000-000000000000",
-          token: "connection-token-that-is-long-enough-for-validation",
-          expiresAt: "2099-08-11T01:00:00Z",
-          serverOrigin: "http://127.0.0.1:42871",
-        }),
-      }),
-    )
-    await page.goto("/")
-
-    const response = await page.evaluate(
-      ({ requestType, responseType, protocolVersion }) =>
-        new Promise<Record<string, unknown>>((resolve) => {
-          const requestId = "connect-00000000-0000-4000-8000-000000000000"
-          const listener = (event: MessageEvent) => {
-            if (
-              event.source === window &&
-              event.data?.type === responseType &&
-              event.data?.requestId === requestId
-            ) {
-              window.removeEventListener("message", listener)
-              resolve(event.data)
-            }
-          }
-          window.addEventListener("message", listener)
-          window.postMessage(
-            { type: requestType, protocolVersion, requestId },
-            window.location.origin,
-          )
-        }),
-      {
-        requestType: EXTENSION_CONNECT_REQUEST_MESSAGE,
-        responseType: EXTENSION_CONNECT_RESPONSE_MESSAGE,
-        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
-      },
-    )
-
-    expect(response).toMatchObject({
-      type: EXTENSION_CONNECT_RESPONSE_MESSAGE,
-      protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
-      payload: {
-        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
-        challengeId: "pair-00000000-0000-4000-8000-000000000000",
-      },
-    })
   })
 
   test("manages local and cloud transcription models in one current table", async ({ page }) => {

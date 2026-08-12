@@ -1,0 +1,7 @@
+interface:
+  display_name: "Migrate INSU Player Library"
+  short_description: "唯讀比對新版契約，以 staging 安全遷移並驗證既有影音庫"
+  default_prompt: "Use $migrate-player-library to preview, transform, confirm, stage, and verify a one-shot migration of this project's existing INSU Player library without adding runtime compatibility code."
+
+policy:
+  allow_implicit_invocation: true

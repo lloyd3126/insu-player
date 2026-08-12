@@ -8,7 +8,7 @@
 http://127.0.0.1:8000/
 ```
 
-首頁是全高入口頁，navbar 依序只顯示「開始說明」、「我的提示」、「轉錄設定」、「支援網站」、「擴充功能」與「影片中心」六個入口。「開始說明」與「擴充功能」都採一個主要段落一個 tab 的導引流程。「我的提示」與「支援網站」各自是獨立 modal。「轉錄設定」只有一張統一模型表格，固定顯示選用、類型、模型、狀態與操作。表頭固定，只有表頭下方的資料列區域垂直捲動。使用者從詳情管理本機模型檔案或雲端 provider Key。「影片中心」在頂部以「我的影音」與「詳細資訊」tabs 切換。所有等待下載、下載中、需要確認、失敗與已完成影音都使用同一份 library item 資料出現在這兩種檢視，不另開下載頁，也不顯示第幾批。全域佇列控制只顯示整體暫停或繼續、進行中數量、等待數量與並行數。單一 item 以穩定 ID 從待下載卡片原位轉成可播放影音卡片。有影音時預設開啟「我的影音」，顯示全寬搜尋列與最多三欄的卡片。沒有任何 item 時預設開啟「詳細資訊」。單筆詳情依序提供關於影音、畫質管理、字幕管理、影音摘要、影音筆記與執行紀錄。「畫質管理」列出來源可下載畫質、本地已下載畫質、目前播放畫質與背景下載進度。「字幕管理」再以內層 tabs 切換原始字幕、校正字幕、翻譯字幕與切分字幕，共用來源→校正或翻譯→切分版本譜系、revision 選單、驗證狀態與多語並排表格。校正、翻譯與切分分頁上方各有可複製的 Agent 提示卡。翻譯卡優先沿用最新有效校正稿，只有沒有校正稿時才使用模型轉錄文字。只有表格捲動。字幕內層分頁與 revision 都寫入 localhost URL，重新整理後保留目前畫面。播放器畫質選單只顯示已下載畫質，字幕選單只顯示語言碼。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影片中心，背景任務與狀態輪詢不會中斷。
+首頁是全高入口頁，navbar 依序只顯示「開始說明」、「我的提示」、「轉錄設定」、「支援網站」、「擴充功能」與「影片中心」六個入口。「開始說明」與「擴充功能」都採一個主要段落一個 tab 的導引流程。「我的提示」與「支援網站」各自是獨立 modal。「轉錄設定」只有一張統一模型表格，固定顯示選用、類型、模型、狀態與操作。表頭固定，只有表頭下方的資料列區域垂直捲動。使用者從詳情管理本機模型檔案或雲端 provider Key。「影片中心」在頂部以「我的影音」、「下載佇列」與「字幕樣式」tabs 切換。字幕樣式再以第一字幕、第二字幕與雙語字幕三個 tabs 分別管理單軌文字、背景、行距、字距、陰影與雙軌間距，也可把目前單軌字幕樣式同步到另一字幕。所有等待下載、下載中、需要確認、失敗與已完成影音都使用同一份 library item 資料出現在前兩種檢視，不另開下載頁，也不顯示第幾批。全域佇列控制只顯示整體暫停或繼續、進行中數量、等待數量與並行數。單一 item 以穩定 ID 從待下載卡片原位轉成可播放影音卡片。有影音時預設開啟「我的影音」，顯示全寬搜尋列與最多三欄的卡片。沒有任何 item 時預設開啟「下載佇列」。單筆詳情依序提供關於影音、影音狀態、畫質管理、字幕管理、影音摘要、影音大綱與執行紀錄。「畫質管理」列出來源可下載畫質、本地已下載畫質、目前播放畫質與背景下載進度。「字幕管理」再以內層 tabs 切換原始字幕、校正字幕、翻譯字幕與切分字幕，共用來源→校正或翻譯→切分版本譜系、revision 選單、驗證狀態與多語並排表格。校正、翻譯與切分分頁上方各有可複製的 Agent 提示卡。翻譯卡優先沿用最新有效校正稿，只有沒有校正稿時才使用模型轉錄文字。只有表格捲動。字幕內層分頁與 revision、影音摘要與影音大綱都寫入 localhost URL，重新整理後保留目前畫面。播放器畫質選單只顯示已下載畫質，第一字幕與第二字幕選單只顯示語言碼，兩組字幕可同時顯示並套用各自的字幕樣式與雙軌間距。從卡片或列表按「觀看」會再疊開同頁 iframe modal，關閉後回到影片中心，背景任務與狀態輪詢不會中斷。
 
 未封裝 Chrome Extension 固定放在 `plugins/insu-player/chrome-extension/`，只能由目前開啟的首頁分頁主動連接目前 workspace 的精確 localhost origin，並共用相同下載佇列。不得掃描或猜測 port。使用者只看到一次「連接目前的 INSU Player」，challenge、Extension origin、protocol、build、data schema 與 token 驗證留在背景。頁面、embed、直接 MP4 與已結束的 M3U8 使用同一 clean source contract。Cookie 只有在使用者當下同意後才進入短期記憶體工作階段與權限 `0600` 的 cookie jar，禁止寫入 SQLite、log、metadata 或回覆，下載結束與服務啟動時都要刪除。直播、DRM HLS 與沒有可還原網路來源的 blob 必須直接拒絕。`/extension/library` 只提供卡片、搜尋、播放與字幕選擇，不顯示 Agent 提示或轉錄設定。
 
@@ -88,7 +88,7 @@ http://127.0.0.1:8000/
 
 `app.db` 直接記錄影音、state/stage、0–100 進度、程序 PID、operation events、錯誤、產物依賴、active subtitle track 與播放進度。事務寫入保證介面不會讀到半份更新。Job 目錄只保留已註冊的媒體、不可變產物與診斷 log，不再存在第二套檔案狀態。
 
-資料只接受現行契約：SQLite media record schema 2、model transcript schema 3、proofread／translation manifest schema 5、segmentation manifest schema 4、media catalog schema 1。讀取時缺少必要欄位、時間戳、processor identity、track 更新時間或 manifest 版本就直接失敗。不要用檔案修改時間補欄位，不要合成假的失敗 job，也不要加入 migration、legacy reader 或相容 fallback。沒有外部使用者時，舊資料以精確刪除流程移除後重新建立。
+資料只接受現行契約：SQLite media record schema 3、model transcript schema 3、proofread／translation manifest schema 5、segmentation manifest schema 4、media catalog schema 1。讀取時缺少必要欄位、時間戳、processor identity、track 更新時間或 manifest 版本就直接失敗。不要用檔案修改時間補欄位，不要合成假的失敗 job，也不要加入 migration、legacy reader 或相容 fallback。沒有外部使用者時，舊資料以精確刪除流程移除後重新建立。
 
 「我的提示」分頁先顯示建立提示卡，再顯示內建情境與可直接複製的提示，最後列出 Agent 維護的 workspace 提示。建立卡右上角可複製提示交給 Agent 共同整理。Agent 依 [prompt-library.md](prompt-library.md) 使用專用腳本新增或修改，首頁只提供 `GET /api/prompts`，不允許使用者在瀏覽器直接編輯 workspace。雲端模型詳情依 provider 固定對應 `OPENAI_API_KEY`、`GROQ_API_KEY`、`ELEVENLABS_API_KEY`、`XAI_API_KEY` 或 `OPENROUTER_API_KEY`，不讓使用者自行建立名稱或重複選擇。正常啟動腳本先清除 parent process 繼承的白名單 Key，值只能由使用者在模型詳情設定並存在本機服務程序。公開 API 只回傳是否已設定，停止服務後即消失。
 
@@ -310,7 +310,7 @@ plugins/insu-player/skills/watch-video/scripts/transcribe.sh \
 
 ## 階段 7：完整句內容與獨立字幕切分
 
-`transcribe.sh` 先建立 schema-version 3 model transcript，保存 canonical `language`、實際 `engineLanguage`、精確 provider／service／model identity、chunk checksums 與 word timing，再建立 schema-version 5 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor`、`sourceContentArtifactId`、`sourceContentKind` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言。SQLite media record 固定使用 schema version 2，segmentation plan 固定使用 schema version 4。舊 media record、transcript、content manifest 或 segmentation plan 不遷移、不轉換、不走 legacy reader，直接重建。
+`transcribe.sh` 先建立 schema-version 3 model transcript，保存 canonical `language`、實際 `engineLanguage`、精確 provider／service／model identity、chunk checksums 與 word timing，再建立 schema-version 5 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor`、`sourceContentArtifactId`、`sourceContentKind` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言。SQLite media record 固定使用 schema version 3，segmentation plan 固定使用 schema version 4。一般 runtime 對舊 media record、transcript、content manifest 或 segmentation plan 不遷移、不轉換、不走 legacy reader。
 
 - `mode=proofread`：使用 `$proofread-subtitles`，來源與輸出語言相同，完成同語校正與潤色。
 - `mode=translate`：使用 `$translate-subtitles`，先對完整句初譯，再完成自然目標語潤色。
@@ -443,7 +443,7 @@ plugins/insu-player/skills/watch-video/scripts/update-environment.sh .local/insu
 plugins/insu-player/skills/watch-video/scripts/doctor.sh .local/insu-player
 ```
 
-`update-environment.sh` 只刷新 workflow-local runtime，並同步本機與所有嚴格支援的雲端 STT adapter。Repository、plugin 或 Release ZIP 本身的版本更新交給 `$player-manager`。更新後重新啟動 `serve-library.sh` 即會使用新版首頁模板。舊 schema jobs 不搬移，必須刪除後重建。
+`update-environment.sh` 只刷新 workflow-local runtime，並同步本機與所有嚴格支援的雲端 STT adapter。Repository、plugin 或 Release ZIP 本身的版本更新交給 `$player-manager`。更新後若資料契約相同可重新啟動 `serve-library.sh`。資料契約不同時，runtime 不搬移舊 schema jobs。需要保留資料就使用 `$migrate-player-library`，否則刪除後重建。
 
 ## 完整移除
 

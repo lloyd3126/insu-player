@@ -5,7 +5,7 @@ import { HomePage } from "../pages/home.page"
 test("mobile homepage and library remain usable @responsive", async ({ page }) => {
   const home = new HomePage(page)
   await home.goto()
-  await expect(home.navigation.getByRole("button", { name: /影片中心/ })).toBeVisible()
+  await expect(home.navigation.getByRole("link", { name: /影片中心/ })).toBeVisible()
 
   const library = await home.openLibrary()
   await expect(library.getByRole("heading", { name: "影片中心" })).toBeVisible()
@@ -13,6 +13,6 @@ test("mobile homepage and library remain usable @responsive", async ({ page }) =
     "aria-selected",
     "true",
   )
-  await library.getByRole("tab", { name: "詳細資訊" }).click()
-  await expect(library.getByRole("row").filter({ hasText: "雙語測試影音" })).toBeVisible()
+  await library.getByRole("tab", { name: "下載佇列" }).click()
+  await expect(library.getByText("目前沒有下載工作")).toBeVisible()
 })

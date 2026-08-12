@@ -312,13 +312,16 @@ export class SummaryService {
         )
       }
     }
-    const revision =
-      Math.max(
-        0,
-        ...this.artifactRows(videoId)
-          .filter((artifact) => artifact.kind === request.kind && artifact.languageCode === languageCode)
-          .map((artifact) => artifact.revision),
-      ) + 1
+    let latestRevision = 0
+    for (const artifact of this.artifactRows(videoId)) {
+      if (
+        artifact.kind === request.kind &&
+        artifact.languageCode === languageCode
+      ) {
+        latestRevision = Math.max(latestRevision, artifact.revision)
+      }
+    }
+    const revision = latestRevision + 1
     const artifactId = `${videoId}-${request.kind}-${languageCode}-r${revision}`
     const directory = path.join(jobDirectory, "summaries", artifactId)
     if (existsSync(directory)) {

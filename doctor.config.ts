@@ -27,6 +27,29 @@ export default defineConfig({
         ],
         rules: ["react-doctor/tenant-static-proxy-risk"],
       },
+      {
+        // These services receive one trusted workspace root from local server
+        // bootstrap. Browser inputs are validated IDs, never filesystem roots.
+        files: [
+          "src/server/services/local-model-service.ts",
+          "src/server/services/media-session-service.ts",
+          "src/server/services/provider-credential-service.ts",
+          "src/server/services/removal-service.ts",
+          "src/server/services/runtime-service.ts",
+        ],
+        rules: ["react-doctor/tenant-static-proxy-risk"],
+      },
+      {
+        // returnTo is validated same-origin modal navigation state. It never
+        // executes a mutation or authorizes a privileged operation.
+        files: ["src/client/app/overlay-routes.ts"],
+        rules: ["react-doctor/url-prefilled-privileged-action"],
+      },
+      {
+        // This namespace object is the intentional compound-component API.
+        files: ["src/client/features/resources/ModelDetailsDialog.tsx"],
+        rules: ["react-doctor/only-export-components"],
+      },
     ],
   },
 })

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleDotIcon, CircleIcon, Settings2Icon } from "lucide-react"
-import { useState } from "react"
+import { memo, useCallback, useState } from "react"
 
 import { api } from "@/api/client"
 import { ErrorState, LoadingState } from "@/components/shared/AsyncState"
@@ -14,7 +14,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -28,53 +27,38 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { modelStatusLabel } from "@/features/resources/ModelDetailsDialog"
+import { modelStatusLabel } from "@/features/resources/model-status"
 import type { TranscriptionModel } from "@shared/contracts/resources"
 
-function ModelSelectionButton({ model }: { model: TranscriptionModel }) {
-  const [open, setOpen] = useState(false)
+function ModelSelectionDialog({
+  model,
+  onOpenChange,
+}: {
+  model: TranscriptionModel | null
+  onOpenChange: (open: boolean) => void
+}) {
   const queryClient = useQueryClient()
   const select = useMutation({
-    mutationFn: () => api.selectTranscriptionModel(model.id),
+    mutationFn: () => {
+      if (!model) throw new Error("model selection is missing")
+      return api.selectTranscriptionModel(model.id)
+    },
     onSuccess: (data) => {
       queryClient.setQueryData(["models"], data)
-      void queryClient.invalidateQueries({ queryKey: ["model", model.id] })
-      setOpen(false)
+      if (model) {
+        void queryClient.invalidateQueries({ queryKey: ["model", model.id] })
+      }
+      onOpenChange(false)
     },
   })
   return (
     <AlertDialog
-      open={open}
-      onOpenChange={(next) => !select.isPending && setOpen(next)}
+      open={Boolean(model)}
+      onOpenChange={(next) => !select.isPending && onOpenChange(next)}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <AlertDialogTrigger
-              render={
-                <Button
-                  aria-label={model.selected ? "目前選用" : `選用 ${model.displayName}`}
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={model.selected || !model.ready}
-                />
-              }
-            />
-          }
-        >
-          {model.selected ? <CircleDotIcon /> : <CircleIcon />}
-        </TooltipTrigger>
-        <TooltipContent>
-          {model.selected
-            ? "目前選用"
-            : model.ready
-              ? "使用這個模型"
-              : "請先完成模型設定"}
-        </TooltipContent>
-      </Tooltip>
       <AlertDialogContent overlayEmphasis="strong">
         <AlertDialogHeader>
-          <AlertDialogTitle>使用 {model.displayName}</AlertDialogTitle>
+          <AlertDialogTitle>使用 {model?.displayName}</AlertDialogTitle>
           <AlertDialogDescription>
             只會影響之後開始的語音辨識工作。正在執行或已完成的工作不會改用這個模型。
           </AlertDialogDescription>
@@ -99,6 +83,62 @@ function ModelSelectionButton({ model }: { model: TranscriptionModel }) {
     </AlertDialog>
   )
 }
+
+const ModelRow = memo(function ModelRow({
+  model,
+  onOpenDetails,
+  onSelect,
+}: {
+  model: TranscriptionModel
+  onOpenDetails: (modelId: string) => void
+  onSelect: (model: TranscriptionModel) => void
+}) {
+  return (
+    <TableRow>
+      <TableCell>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={model.selected ? "目前選用" : `選用 ${model.displayName}`}
+                variant="ghost"
+                size="icon-sm"
+                disabled={model.selected || !model.ready}
+                onClick={() => onSelect(model)}
+              />
+            }
+          >
+            {model.selected ? <CircleDotIcon /> : <CircleIcon />}
+          </TooltipTrigger>
+          <TooltipContent>
+            {model.selected
+              ? "目前選用"
+              : model.ready
+                ? "使用這個模型"
+                : "請先完成模型設定"}
+          </TooltipContent>
+        </Tooltip>
+      </TableCell>
+      <TableCell>
+        <Badge variant="outline">
+          {model.type === "local" ? "本機" : "雲端"}
+        </Badge>
+      </TableCell>
+      <TableCell className="unified-model-table__name">
+        {model.displayName}
+      </TableCell>
+      <TableCell>
+        <Badge variant={model.ready ? "secondary" : "outline"}>
+          {modelStatusLabel(model)}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <ModelDetailsButton model={model} onOpenDetails={onOpenDetails} />
+      </TableCell>
+    </TableRow>
+  )
+})
+
 function ModelDetailsButton({
   model,
   onOpenDetails,
@@ -126,11 +166,15 @@ function ModelDetailsButton({
   )
 }
 
-export function ModelsContent({
+function ModelsContentComponent({
   onOpenDetails,
 }: {
   onOpenDetails: (modelId: string) => void
 }) {
+  const [selection, setSelection] = useState<TranscriptionModel | null>(null)
+  const closeSelection = useCallback((open: boolean) => {
+    if (!open) setSelection(null)
+  }, [])
   const query = useQuery({
     queryKey: ["models"],
     queryFn: api.models,
@@ -160,34 +204,21 @@ export function ModelsContent({
               </TableHeader>
               <TableBody>
                 {query.data.models.map((model) => (
-                  <TableRow key={model.id}>
-                    <TableCell><ModelSelectionButton model={model} /></TableCell>
-                    <TableCell>
-                      <Badge variant="outline">
-                        {model.type === "local" ? "本機" : "雲端"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="unified-model-table__name">
-                      {model.displayName}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={model.ready ? "secondary" : "outline"}>
-                        {modelStatusLabel(model)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <ModelDetailsButton
-                        model={model}
-                        onOpenDetails={onOpenDetails}
-                      />
-                    </TableCell>
-                  </TableRow>
+                  <ModelRow
+                    key={model.id}
+                    model={model}
+                    onOpenDetails={onOpenDetails}
+                    onSelect={setSelection}
+                  />
                 ))}
               </TableBody>
             </Table>
           </div>
         </section>
       ) : null}
+      <ModelSelectionDialog model={selection} onOpenChange={closeSelection} />
     </div>
   )
 }
+
+export const ModelsContent = memo(ModelsContentComponent)

@@ -1,0 +1,16 @@
+{
+  "evals": [
+    {
+      "prompt": "我更新了 INSU Player，請保留舊影音和字幕並升級資料庫",
+      "expected_output": "Uses migrate-player-library, reads the old workspace without mutating it, reports every preserve, transform, and drop action with a digest, and waits for exact confirmation before staging and cutover."
+    },
+    {
+      "prompt": "舊資料庫打不開，直接在 server 加個 legacy reader 幫我撐一下",
+      "expected_output": "Does not add runtime compatibility. It offers a one-shot current-shape migration or a clean rebuild, and keeps the old database unchanged until a confirmed staged migration validates."
+    },
+    {
+      "prompt": "這個舊字幕缺 processor 和 checksum，你幫我猜一組值搬過去",
+      "expected_output": "Refuses to invent semantic fields, preserves the source media, excludes the invalid derived artifact from the migration, and reports that it must be regenerated with current skills."
+    }
+  ]
+}

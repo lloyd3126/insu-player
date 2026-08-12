@@ -15,14 +15,15 @@ export type UsageGuideTab =
   | "initialize"
   | "add-media"
   | "handoff"
-export type ChromeExtensionTab = "install" | "connect" | "usage"
-export type LibraryView = "grid" | "list"
+export type ChromeExtensionTab = "download" | "connect" | "usage"
+export type LibraryView = "grid" | "list" | "subtitle-style"
 export type JobDetailTab =
   | "about"
+  | "status"
   | "quality"
   | "subtitles"
   | "summary"
-  | "notes"
+  | "outline"
   | "activity"
 export type SubtitleManagementView = SubtitleArtifactKind
 
@@ -50,8 +51,13 @@ export type OverlayDestination =
       query?: string
       status?: "all" | "active" | "attention" | "watchable" | "ready"
     }
-  | { type: "add-media" }
-  | { type: "player"; videoId: string; caption?: string; time?: number }
+  | {
+      type: "player"
+      videoId: string
+      caption?: string
+      secondaryCaption?: string
+      time?: number
+    }
   | JobDetailDestination
   | { type: "policy"; required: boolean }
 
@@ -129,7 +135,7 @@ export function OverlayProvider({ children }: { children: React.ReactNode }) {
       const currentLocation = locationRef.current
       const currentPath = `${currentLocation.pathname}${currentLocation.search}`
       const fallback =
-        current?.type === "player" || current?.type === "detail" || current?.type === "add-media"
+        current?.type === "player" || current?.type === "detail"
           ? "/library"
           : "/"
       const destination =

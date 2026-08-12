@@ -38,22 +38,9 @@ const PROCESS_ITEM_STATES = new Set<DownloadQueueItemState>([
   "downloading",
   "verifying",
 ])
-const VERIFIED_MEDIA_STATES = new Set([
-  "downloaded",
-  "needs_transcription",
-  "transcribing",
-  "needs_proofreading",
-  "proofreading",
-  "needs_translation",
-  "translating",
-  "needs_segmentation",
-  "segmenting",
-  "preparing_player",
-  "ready",
-])
-
 function libraryItemPriority(item: LibraryItem) {
   if (item.kind === "media") return 4
+  if (item.kind === "import") return 4
   if (PROCESS_ITEM_STATES.has(item.state)) return 0
   if (item.state === "queued") return 1
   if (["needs_confirmation", "failed"].includes(item.state)) return 2
@@ -228,19 +215,6 @@ export class DownloadQueueService {
       )
     }
     const normalized = sources.map((source) => this.normalizeSource(source))
-    if (new Set(normalized.map((source) => source.sourceKey)).size !== normalized.length) {
-      throw new DownloadQueueOperationError(
-        "不能同時加入重複來源",
-        "duplicate-source",
-        400,
-      )
-    }
-    const jobsByUrl = new Map(
-      this.jobs
-        .listDownloadProjections()
-        .filter((job) => VERIFIED_MEDIA_STATES.has(job.state))
-        .map((job) => [job.sourceUrl, job]),
-    )
     const itemIds: string[] = []
     for (const source of normalized) {
       const queued = this.db
@@ -251,11 +225,6 @@ export class DownloadQueueService {
       if (queued) {
         this.requeueExisting(queued, source)
         itemIds.push(queued.id)
-        continue
-      }
-      const job = jobsByUrl.get(source.pageUrl)
-      if (job) {
-        itemIds.push(`media:${job.videoId}`)
         continue
       }
       const itemId = `library-${crypto.randomUUID()}`
@@ -348,12 +317,21 @@ export class DownloadQueueService {
       )
     }
     const operation = this.operation(item.operationId)
+    const job = item.videoId
+      ? this.jobs
+          .listDownloadProjections()
+          .find((candidate) => candidate.videoId === item.videoId)
+      : undefined
     this.updateItem(item.id, {
       sessionId: source.sessionId,
       authentication: source.authentication,
       authenticationConsentAt: source.authenticationConsentAt,
     })
-    if (!["failed", "cancelled"].includes(operation.state)) return
+    if (
+      !["downloaded", "failed", "cancelled", "needs_confirmation"].includes(
+        operation.state,
+      )
+    ) return
     this.updateOperation(item.operationId, {
       state: "queued",
       stage: "awaiting-download",
@@ -364,6 +342,9 @@ export class DownloadQueueService {
         pageUrl: source.pageUrl,
         candidateFingerprint: source.candidateFingerprint,
         sessionRequired: Boolean(source.sessionId),
+        ...(job?.watchable && typeof job.updatedAt === "string"
+          ? { redownloadBaselineUpdatedAt: job.updatedAt }
+          : {}),
       },
       consentJson: {
         rightsConfirmed: true,
@@ -377,31 +358,56 @@ export class DownloadQueueService {
       errorMessage: null,
       completedAt: null,
     })
-    this.updateItem(item.id, { completedAt: null })
+    this.updateItem(item.id, {
+      lowQualityApproved: false,
+      completedAt: null,
+    })
+  }
+
+  private attemptHasPublishedMedia(
+    operation: typeof operations.$inferSelect,
+    job: {
+      watchable: boolean
+      state: string
+      updatedAt: string | null
+    } | undefined,
+  ) {
+    if (!job?.watchable) return false
+    const baseline = operation.inputsJson.redownloadBaselineUpdatedAt
+    if (typeof baseline !== "string") return true
+    return typeof job.updatedAt === "string" &&
+      job.state === "downloaded" &&
+      job.updatedAt > baseline
   }
 
   list(): LibraryResponse {
-    this.synchronize()
+    const summaries = this.jobs.list()
+    this.synchronize(summaries)
     const settings = this.ensureSettings()
     const rows = this.db
       .select()
       .from(downloadQueueItems)
       .orderBy(asc(downloadQueueItems.createdAt))
       .all()
-    const summaries = this.jobs.list()
     const jobsById = new Map(summaries.map((job) => [job.videoId, job]))
-    const jobsByUrl = new Map(summaries.map((job) => [job.sourceUrl, job]))
-    const queuedIds = rows
-      .filter((item) => this.operation(item.operationId).state === "queued")
-      .map((item) => item.id)
+    const queuedIds: string[] = []
+    for (const item of rows) {
+      const operation = this.operation(item.operationId)
+      const job = item.videoId ? jobsById.get(item.videoId) : undefined
+      if (
+        !this.attemptHasPublishedMedia(operation, job) &&
+        operation.state === "queued"
+      ) {
+        queuedIds.push(item.id)
+      }
+    }
     const linkedVideoIds = new Set<string>()
     const items: LibraryItem[] = rows.map((item) => {
       const operation = this.operation(item.operationId)
-      const job =
-        (item.videoId ? jobsById.get(item.videoId) : undefined) ??
-        jobsByUrl.get(item.pageUrl)
-      if (job) linkedVideoIds.add(job.videoId)
-      if (operation.state === "downloaded" && job) {
+      const job = item.videoId ? jobsById.get(item.videoId) : undefined
+      const published = this.attemptHasPublishedMedia(operation, job)
+      if (job && published) linkedVideoIds.add(job.videoId)
+      if (job && published) {
         return { kind: "media", id: item.id, job }
       }
       return this.publicDownloadItem(
@@ -417,7 +423,13 @@ export class DownloadQueueService {
       }
     }
     items.sort(compareLibraryItems)
-    const states = rows.map((item) => this.operation(item.operationId).state)
+    const states = rows.flatMap((item) => {
+      const operation = this.operation(item.operationId)
+      const job = item.videoId ? jobsById.get(item.videoId) : undefined
+      return this.attemptHasPublishedMedia(operation, job)
+        ? []
+        : [operation.state]
+    })
     return {
       items,
       queue: {
@@ -619,6 +631,37 @@ export class DownloadQueueService {
       .run()
   }
 
+  private reconcilePublishedMedia(
+    item: typeof downloadQueueItems.$inferSelect,
+    job: ReturnType<JobRepository["listDownloadProjections"]>[number],
+  ) {
+    if (!job.watchable) return false
+    const operation = this.operation(item.operationId)
+    const completedAt =
+      operation.state === "downloaded"
+        ? (operation.completedAt ?? job.updatedAt)
+        : job.updatedAt
+    this.updateOperation(item.operationId, {
+      videoId: job.videoId,
+      state: "downloaded",
+      stage: "complete",
+      message: "影音已下載，等待處理",
+      progress: 100,
+      outputsJson: { videoId: job.videoId },
+      errorCode: null,
+      errorMessage: null,
+      pid: null,
+      completedAt,
+    })
+    if (item.videoId !== job.videoId || !item.completedAt) {
+      this.updateItem(item.id, {
+        videoId: job.videoId,
+        completedAt,
+      })
+    }
+    return true
+  }
+
   private schedule() {
     const settings = this.ensureSettings()
     if (settings.paused) return
@@ -659,17 +702,15 @@ export class DownloadQueueService {
       this.failItem(
         item,
         "source-resolution",
-        "瀏覽器媒體工作階段已失效，請重新加入",
+        "本次來源資料已失效，請回到原分頁重新加入",
         code,
         "ephemeral media session unavailable",
       )
       return
     }
-    const targetUrl = session?.sourceUrl ?? item.pageUrl
-    const refererUrl =
-      session?.sourceKind === "network-media"
-        ? session.frameUrl ?? session.pageUrl
-        : item.pageUrl
+    const sourceUrls = session?.sourceUrls ?? [item.pageUrl]
+    const targetUrl = sourceUrls[0]
+    const refererUrl = session?.pageUrl ?? item.pageUrl
     if (!targetUrl) {
       session?.dispose()
       this.failItem(
@@ -704,9 +745,14 @@ export class DownloadQueueService {
       item.pageUrl,
       "--source-kind",
       item.sourceKind,
+      "--queue-item-id",
+      item.id,
       "--referer",
       refererUrl,
     ]
+    for (const fallbackUrl of sourceUrls.slice(1)) {
+      args.push("--fallback-url", fallbackUrl)
+    }
     if (session?.cookieFile) args.push("--cookie-file", session.cookieFile)
     if (item.lowQualityApproved) args.push("--allow-low-quality")
     let child: ReturnType<typeof Bun.spawn>
@@ -799,11 +845,21 @@ export class DownloadQueueService {
     active?.dispose()
     this.active.delete(item.id)
     const cancelled = this.cancelled.delete(item.id)
-    const job = this.jobs
-      .listDownloadProjections()
-      .find((candidate) => candidate.sourceUrl === item.pageUrl)
+    const refreshedItem = this.item(item.id)
+    const job = refreshedItem.videoId
+      ? this.jobs
+          .listDownloadProjections()
+          .find((candidate) => candidate.videoId === refreshedItem.videoId)
+      : undefined
     const timestamp = now()
-    if (cancelled) {
+    const operation = this.operation(item.operationId)
+    if (
+      exitCode === 0 &&
+      job &&
+      this.attemptHasPublishedMedia(operation, job)
+    ) {
+      this.reconcilePublishedMedia(refreshedItem, job)
+    } else if (cancelled) {
       this.updateOperation(item.operationId, {
         state: "cancelled",
         stage: "cancelled",
@@ -814,23 +870,9 @@ export class DownloadQueueService {
         completedAt: timestamp,
       })
       this.updateItem(item.id, { completedAt: timestamp })
-    } else if (exitCode === 0 && job && VERIFIED_MEDIA_STATES.has(job.state)) {
-      this.updateOperation(item.operationId, {
-        videoId: job.videoId,
-        state: "downloaded",
-        stage: "complete",
-        message: "影音已下載，等待處理",
-        progress: 100,
-        outputsJson: { videoId: job.videoId },
-        errorCode: null,
-        errorMessage: null,
-        pid: null,
-        completedAt: timestamp,
-      })
-      this.updateItem(item.id, { videoId: job.videoId, completedAt: timestamp })
     } else if (stderr.includes("low-quality fallback requires user confirmation")) {
       this.updateOperation(item.operationId, {
-        videoId: job?.videoId ?? null,
+        videoId: refreshedItem.videoId,
         state: "needs_confirmation",
         stage: "quality-confirmation",
         message: "可用畫質低於 720p，需要你的確認",
@@ -840,7 +882,7 @@ export class DownloadQueueService {
         pid: null,
         completedAt: null,
       })
-      this.updateItem(item.id, { videoId: job?.videoId ?? null })
+      this.updateItem(refreshedItem.id, { videoId: refreshedItem.videoId })
     } else {
       this.failItem(
         item,
@@ -853,51 +895,49 @@ export class DownloadQueueService {
     this.schedule()
   }
 
-  private synchronize() {
-    const jobs = this.jobs.listDownloadProjections()
-    const byUrl = new Map(jobs.map((job) => [job.sourceUrl, job]))
+  private synchronize(
+    jobs: ReturnType<JobRepository["listDownloadProjections"]> =
+      this.jobs.listDownloadProjections(),
+  ) {
+    const byId = new Map(jobs.map((job) => [job.videoId, job]))
     for (const item of this.db.select().from(downloadQueueItems).all()) {
       const operation = this.operation(item.operationId)
+      const job = item.videoId ? byId.get(item.videoId) : undefined
+      if (job && this.attemptHasPublishedMedia(operation, job)) {
+        this.reconcilePublishedMedia(item, job)
+        continue
+      }
       if (!ACTIVE_ITEM_STATES.has(operation.state as DownloadQueueItemState)) continue
-      const job = byUrl.get(item.pageUrl)
       if (PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState) && job) {
-        const isComplete = VERIFIED_MEDIA_STATES.has(job.state)
         const isVerifying = ["media_validation", "media_publish"].includes(job.stage)
-        const state = isComplete
-          ? "downloaded"
-          : isVerifying
-            ? "verifying"
-            : job.state === "checking"
-              ? "checking"
-              : "downloading"
-        const progress = isComplete
-          ? 100
-          : Math.max(
-              operation.progress,
-              Math.min(99, Math.round(job.progress * 10) / 10),
-            )
+        const state = isVerifying
+          ? "verifying"
+          : job.state === "checking"
+            ? "checking"
+            : "downloading"
+        const progress = Math.max(
+          operation.progress,
+          Math.min(99, Math.round(job.progress * 10) / 10),
+        )
         this.updateOperation(item.operationId, {
           videoId: job.videoId,
           state,
-          stage: isComplete ? "complete" : job.stage,
+          stage: job.stage,
           progress,
-          message: isComplete
-            ? "影音已下載，等待處理"
-            : job.message || "正在下載影音",
-          outputsJson: isComplete ? { videoId: job.videoId } : {},
-          completedAt: isComplete ? now() : null,
+          message: job.message || "正在下載影音",
+          outputsJson: {},
+          completedAt: null,
         })
         this.updateItem(item.id, {
           videoId: job.videoId,
-          completedAt: isComplete ? now() : null,
+          completedAt: null,
         })
       }
       if (
         PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState) &&
         !this.active.has(item.id) &&
         !processIsAlive(operation.pid) &&
-        !job?.state.startsWith("downloaded") &&
-        !(job && VERIFIED_MEDIA_STATES.has(job.state))
+        !job?.state.startsWith("downloaded")
       ) {
         this.failItem(
           item,
@@ -914,6 +954,13 @@ export class DownloadQueueService {
   retry(itemId: string, lowQualityApproved = false) {
     const item = this.item(itemId)
     const operation = this.operation(item.operationId)
+    const published = this.jobs
+      .listDownloadProjections()
+      .find((job) => job.watchable && job.videoId === item.videoId)
+    if (published && this.attemptHasPublishedMedia(operation, published)) {
+      this.reconcilePublishedMedia(item, published)
+      return this.list()
+    }
     if (!["failed", "cancelled", "needs_confirmation"].includes(operation.state)) {
       throw new DownloadQueueOperationError(
         "目前狀態不能重新下載",
@@ -921,9 +968,12 @@ export class DownloadQueueService {
         409,
       )
     }
-    if (item.sessionId && !this.mediaSessions.has(item.sessionId)) {
+    if (
+      !operation.resumable &&
+      (!item.sessionId || !this.mediaSessions.has(item.sessionId))
+    ) {
       throw new DownloadQueueOperationError(
-        "瀏覽器媒體工作階段已失效，請重新從擴充功能加入",
+        "本次來源資料已失效，請回到原分頁重新加入",
         "media-session-expired",
         409,
       )
@@ -1025,6 +1075,26 @@ export class DownloadQueueService {
       )
     }
     this.schedule()
+    return this.list()
+  }
+
+  remove(itemId: string) {
+    const item = this.item(itemId)
+    const operation = this.operation(item.operationId)
+    if (!["failed", "cancelled"].includes(operation.state)) {
+      throw new DownloadQueueOperationError(
+        "只有下載失敗或已取消的項目可以刪除",
+        "remove-not-allowed",
+        409,
+      )
+    }
+    this.db.transaction((transaction) => {
+      transaction
+        .delete(downloadQueueItems)
+        .where(eq(downloadQueueItems.id, item.id))
+        .run()
+      transaction.delete(operations).where(eq(operations.id, item.operationId)).run()
+    })
     return this.list()
   }
 }

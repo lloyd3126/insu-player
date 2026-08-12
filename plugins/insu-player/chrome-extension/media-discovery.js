@@ -49,8 +49,7 @@ export async function candidateFingerprint(candidate) {
 }
 
 export async function normalizeCandidates(candidates) {
-  const seen = new Set()
-  const normalized = []
+  const eligible = []
   for (const candidate of candidates) {
     if (!candidate || !isWebUrl(candidate.pageUrl) || isOwnPlayerUrl(candidate.pageUrl)) {
       continue
@@ -62,7 +61,17 @@ export async function normalizeCandidates(candidates) {
     ) {
       continue
     }
-    const fingerprint = await candidateFingerprint(candidate)
+    eligible.push(candidate)
+  }
+  const fingerprinted = await Promise.all(
+    eligible.map(async (candidate) => ({
+      candidate,
+      fingerprint: await candidateFingerprint(candidate),
+    })),
+  )
+  const seen = new Set()
+  const normalized = []
+  for (const { candidate, fingerprint } of fingerprinted) {
     if (seen.has(fingerprint)) continue
     seen.add(fingerprint)
     normalized.push({

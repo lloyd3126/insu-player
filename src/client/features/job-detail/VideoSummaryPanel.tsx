@@ -188,12 +188,7 @@ export function VideoSummaryPanel({ job }: { job: JobDetail }) {
     () => summaries.data?.artifacts.filter((artifact) => artifact.kind === "text") ?? [],
     [summaries.data],
   )
-  const mindmapArtifacts = useMemo(
-    () => summaries.data?.artifacts.filter((artifact) => artifact.kind === "mindmap") ?? [],
-    [summaries.data],
-  )
   const [selectedTextId, setSelectedTextId] = useState<string>()
-  const [selectedMindmapId, setSelectedMindmapId] = useState<string>()
   const eligibleSubtitleArtifacts = useMemo(
     () =>
       subtitles.data?.artifacts
@@ -210,9 +205,6 @@ export function VideoSummaryPanel({ job }: { job: JobDetail }) {
   const textId = textArtifacts.some((item) => item.id === selectedTextId)
     ? selectedTextId
     : summaries.data?.activeArtifactIds.text ?? textArtifacts[0]?.id
-  const mindmapId = mindmapArtifacts.some((item) => item.id === selectedMindmapId)
-    ? selectedMindmapId
-    : summaries.data?.activeArtifactIds.mindmap ?? mindmapArtifacts[0]?.id
   const sourceSubtitleId = eligibleSubtitleArtifacts.some(
     (artifact) => artifact.id === selectedSourceSubtitleId,
   )
@@ -221,7 +213,6 @@ export function VideoSummaryPanel({ job }: { job: JobDetail }) {
   const sourceSubtitle = eligibleSubtitleArtifacts.find(
     (artifact) => artifact.id === sourceSubtitleId,
   )
-  const activeText = textArtifacts.find((artifact) => artifact.id === textId)
   const textPrompt = sourceSubtitle
     ? buildVideoSummaryPrompt(
         job.videoId,
@@ -229,65 +220,96 @@ export function VideoSummaryPanel({ job }: { job: JobDetail }) {
         sourceSubtitle.outputLanguage ?? sourceSubtitle.sourceLanguage,
       )
     : "目前沒有可用的完整句字幕。請先完成原語校正或翻譯字幕。"
+  return (
+    <div className="video-summary-panel">
+      {summaries.isPending || subtitles.isPending ? <LoadingState label="正在讀取摘要資料" /> : null}
+      {summaries.isError ? <ErrorState message={summaries.error.message} /> : null}
+      {subtitles.isError ? <ErrorState message={subtitles.error.message} /> : null}
+      <div className="video-summary-subpanel">
+        <PromptActionCard
+          kicker="CREATE / TEXT SUMMARY"
+          title="請 Agent 建立文字摘要"
+          description="使用已驗證的完整句字幕建立新版摘要，不會覆寫既有版本。"
+          prompt={textPrompt}
+          copyDisabled={!sourceSubtitle}
+        >
+          {eligibleSubtitleArtifacts.length ? (
+            <Select
+              value={sourceSubtitleId}
+              onValueChange={(value) => value && setSelectedSourceSubtitleId(value)}
+            >
+              <SelectTrigger aria-label="選擇摘要來源字幕">
+                <SelectValue placeholder="選擇完整句字幕" />
+              </SelectTrigger>
+              <SelectContent>
+                {eligibleSubtitleArtifacts.map((artifact) => (
+                  <SelectItem key={artifact.id} value={artifact.id}>
+                    {artifact.kind === "proofread" ? "校正字幕" : "翻譯字幕"} · {artifact.outputLanguage ?? artifact.sourceLanguage} · r{artifact.revision}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+        </PromptActionCard>
+        {summaries.data ? (
+          <ArtifactSection
+            job={job}
+            kind="text"
+            artifacts={textArtifacts}
+            selectedId={textId}
+            onSelected={setSelectedTextId}
+          />
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+export function VideoOutlinePanel({ job }: { job: JobDetail }) {
+  const summaries = useQuery({
+    queryKey: ["summaries", job.videoId],
+    queryFn: () => api.summaries(job.videoId),
+  })
+  const textArtifacts = useMemo(
+    () => summaries.data?.artifacts.filter((artifact) => artifact.kind === "text") ?? [],
+    [summaries.data],
+  )
+  const mindmapArtifacts = useMemo(
+    () => summaries.data?.artifacts.filter((artifact) => artifact.kind === "mindmap") ?? [],
+    [summaries.data],
+  )
+  const [selectedMindmapId, setSelectedMindmapId] = useState<string>()
+  const mindmapId = mindmapArtifacts.some((item) => item.id === selectedMindmapId)
+    ? selectedMindmapId
+    : summaries.data?.activeArtifactIds.mindmap ?? mindmapArtifacts[0]?.id
+  const activeTextId = summaries.data?.activeArtifactIds.text ?? textArtifacts[0]?.id
+  const activeText = textArtifacts.find((artifact) => artifact.id === activeTextId)
   const mindmapPrompt = activeText
     ? buildMindMapPrompt(job.videoId, activeText.id, activeText.languageCode)
     : "目前沒有可用的文字摘要。請先建立文字摘要。"
 
   return (
     <div className="video-summary-panel">
-      <PromptActionCard
-        kicker="CREATE / TEXT SUMMARY"
-        title="請 Agent 建立文字摘要"
-        description="使用已驗證的完整句字幕建立新版摘要，不會覆寫既有版本。"
-        prompt={textPrompt}
-        copyDisabled={!sourceSubtitle}
-      >
-        {eligibleSubtitleArtifacts.length ? (
-          <Select
-            value={sourceSubtitleId}
-            onValueChange={(value) => value && setSelectedSourceSubtitleId(value)}
-          >
-            <SelectTrigger aria-label="選擇摘要來源字幕">
-              <SelectValue placeholder="選擇完整句字幕" />
-            </SelectTrigger>
-            <SelectContent>
-              {eligibleSubtitleArtifacts.map((artifact) => (
-                <SelectItem key={artifact.id} value={artifact.id}>
-                  {artifact.kind === "proofread" ? "校正字幕" : "翻譯字幕"} · {artifact.outputLanguage ?? artifact.sourceLanguage} · r{artifact.revision}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : null}
-      </PromptActionCard>
-      {summaries.isPending || subtitles.isPending ? <LoadingState label="正在讀取摘要資料" /> : null}
+      {summaries.isPending ? <LoadingState label="正在讀取大綱資料" /> : null}
       {summaries.isError ? <ErrorState message={summaries.error.message} /> : null}
-      {subtitles.isError ? <ErrorState message={subtitles.error.message} /> : null}
-      {summaries.data ? (
-        <ArtifactSection
-          job={job}
-          kind="text"
-          artifacts={textArtifacts}
-          selectedId={textId}
-          onSelected={setSelectedTextId}
+      <div className="video-summary-subpanel">
+        <PromptActionCard
+          kicker="CREATE / MIND MAP"
+          title="請 Agent 建立心智圖"
+          description="根據目前選取的文字摘要整理成可縮放、收合與匯出的 Markmap。"
+          prompt={mindmapPrompt}
+          copyDisabled={!activeText}
         />
-      ) : null}
-      <PromptActionCard
-        kicker="CREATE / MIND MAP"
-        title="請 Agent 建立心智圖"
-        description="根據目前選取的文字摘要整理成可縮放、收合與匯出的 Markmap。"
-        prompt={mindmapPrompt}
-        copyDisabled={!activeText}
-      />
-      {summaries.data ? (
-        <ArtifactSection
-          job={job}
-          kind="mindmap"
-          artifacts={mindmapArtifacts}
-          selectedId={mindmapId}
-          onSelected={setSelectedMindmapId}
-        />
-      ) : null}
+        {summaries.data ? (
+          <ArtifactSection
+            job={job}
+            kind="mindmap"
+            artifacts={mindmapArtifacts}
+            selectedId={mindmapId}
+            onSelected={setSelectedMindmapId}
+          />
+        ) : null}
+      </div>
     </div>
   )
 }

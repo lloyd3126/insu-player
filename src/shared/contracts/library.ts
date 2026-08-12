@@ -64,7 +64,56 @@ export interface MediaLibraryItem {
   job: JobSummary
 }
 
-export type LibraryItem = DownloadLibraryItem | MediaLibraryItem
+export const LOCAL_MEDIA_IMPORT_STATES = [
+  "awaiting_upload",
+  "uploading",
+  "probing",
+  "transcoding",
+  "finalizing",
+  "ready",
+  "cancelled",
+  "failed",
+] as const
+
+export type LocalMediaImportState =
+  (typeof LOCAL_MEDIA_IMPORT_STATES)[number]
+
+export interface CreateLocalMediaImportRequest {
+  originalName: string
+  title: string
+  sizeBytes: number
+  contentType: string
+  rightsConfirmed: true
+}
+
+export interface CreateLocalMediaImportResponse {
+  importId: string
+  uploadUrl: string
+}
+
+export interface ImportLibraryItem {
+  kind: "import"
+  id: string
+  originalName: string
+  title: string
+  contentType: string
+  sizeBytes: number
+  uploadedBytes: number
+  videoId: string | null
+  state: LocalMediaImportState
+  stage: string
+  progress: number
+  message: string
+  errorCode: string | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export type LibraryItem =
+  | DownloadLibraryItem
+  | ImportLibraryItem
+  | MediaLibraryItem
 
 export interface DownloadQueueSummary {
   paused: boolean

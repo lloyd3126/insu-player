@@ -12,6 +12,57 @@ import type {
 
 const workspaces: string[] = []
 
+function currentManifest(kind: Exclude<SubtitleArtifactKind, "source">) {
+  if (kind === "segmentation") {
+    return `${JSON.stringify({
+      schemaVersion: 4,
+      contentMode: "translate",
+      sourceLanguage: "en",
+      outputLanguage: "fr",
+      sourceTranscript: "transcript.json",
+      contentManifest: "content.json",
+      sourceContentArtifactId: "source-r1",
+      sourceContentKind: "model-transcript",
+      timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
+      contentProcessor: { provider: "agent", service: "codex" },
+      sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-09T00:00:00Z" },
+      segmentationProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-09T00:00:00Z" },
+      alignmentMethod: "agent-semantic",
+      alignmentReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-09T00:00:00Z" },
+      alignmentFingerprint: "0".repeat(64),
+      targetRevision: 1,
+      targetFrozen: true,
+      targetFingerprint: "0".repeat(64),
+      widthProfile: {},
+      timingProfile: {},
+      outputProfile: {},
+      timedUnits: [],
+      boundaryHints: [],
+      contentUnits: [],
+    })}\n`
+  }
+  return `${JSON.stringify({
+    schemaVersion: 5,
+    mode: kind === "translation" ? "translate" : "proofread",
+    sourceFormat: "model-timed-units",
+    sourceLanguage: "en",
+    outputLanguage: kind === "proofread" ? "en" : "fr",
+    sourceTranscript: "transcript.json",
+    timingSourceArtifactId: "source-r1",
+    sourceContentArtifactId: "source-r1",
+    sourceContentKind: "model-transcript",
+    sourceContentManifest: null,
+    sourceContentChecksum: null,
+    referenceArtifactIds: [],
+    timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
+    contentProcessor: { provider: "agent", service: "codex" },
+    sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-09T00:00:00Z" },
+    outputProfile: {},
+    rules: {},
+    segments: [],
+  })}\n`
+}
+
 function workspace() {
   const directory = mkdtempSync(path.join(tmpdir(), "insu-subtitle-catalog-"))
   workspaces.push(directory)
@@ -57,9 +108,7 @@ function artifact(
   if (manifestPath) {
     writeFileSync(
       path.join(directory, manifestPath),
-      kind === "segmentation"
-        ? '{"schemaVersion":4}\n'
-        : '{"schemaVersion":5}\n',
+      currentManifest(kind as Exclude<SubtitleArtifactKind, "source">),
     )
   }
   const artifactHasher = createHash("sha256")

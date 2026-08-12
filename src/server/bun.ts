@@ -22,12 +22,16 @@ import {
 import { MediaService } from "@server/services/media-service"
 import { NoteService } from "@server/services/note-service"
 import { DownloadQueueService } from "@server/services/download-queue-service"
+import { LibraryService } from "@server/services/library-service"
+import { LocalMediaImportService } from "@server/services/local-media-import-service"
 import { ExtensionPairingService } from "@server/services/extension-pairing-service"
+import { ExtensionPackageService } from "@server/services/extension-package-service"
 import { MediaSessionService } from "@server/services/media-session-service"
 import { RemovalService } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
 import { RuntimeService } from "@server/services/runtime-service"
 import { SummaryService } from "@server/services/summary-service"
+import { SubtitleStyleService } from "@server/services/subtitle-style-service"
 import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 
 function processIsAlive(pid: unknown) {
@@ -121,7 +125,7 @@ const { values } = parseArgs({
     "pid-file": { type: "string" },
     "library-template": { type: "string" },
     "player-template": { type: "string" },
-    migrations: { type: "string" },
+    schema: { type: "string" },
   },
   strict: true,
   allowPositionals: false,
@@ -130,7 +134,7 @@ const { values } = parseArgs({
 if (!values.workspace) throw new Error("--workspace is required")
 if (!values["library-template"]) throw new Error("--library-template is required")
 if (!values["player-template"]) throw new Error("--player-template is required")
-if (!values.migrations) throw new Error("--migrations is required")
+if (!values.schema) throw new Error("--schema is required")
 
 const workspace = path.resolve(values.workspace)
 if (workspace === path.parse(workspace).root || workspace === path.resolve(homedir())) {
@@ -164,7 +168,7 @@ if (pidFile && pidFile !== workspace && !pidFile.startsWith(`${workspace}${path.
   throw new Error("pid file must stay inside the workspace")
 }
 
-const { db, sqlite } = openAppDatabase(path.join(workspace, "app.db"), path.resolve(values.migrations))
+const { db, sqlite } = openAppDatabase(path.join(workspace, "app.db"), path.resolve(values.schema))
 const jobs = new JobRepository(workspace, db)
 const resources = new ResourceService(workspace)
 const models = new TranscriptionModelCatalogService(workspace, db)
@@ -194,22 +198,27 @@ const extensionRoot = path.resolve(
 const mediaSessions = new MediaSessionService(workspace)
 const extensionPairing = new ExtensionPairingService(
   db,
-  extensionRoot,
 )
+const downloads = new DownloadQueueService(
+  workspace,
+  db,
+  jobs,
+  downloadScript,
+  mediaSessions,
+)
+const imports = new LocalMediaImportService(workspace, db, jobs)
 const app = createApplication({
   jobs,
   media: new MediaService(workspace, jobs, mediaScript),
-  downloads: new DownloadQueueService(
-    workspace,
-    db,
-    jobs,
-    downloadScript,
-    mediaSessions,
-  ),
+  downloads,
+  imports,
+  library: new LibraryService(downloads, imports),
   extensionPairing,
+  extensionPackage: new ExtensionPackageService(extensionRoot),
   mediaSessions,
   models,
   summaries: new SummaryService(jobs, db),
+  subtitleStyles: new SubtitleStyleService(db),
   notes: new NoteService(db),
   removals: new RemovalService(workspace, removalScript),
   resources,
@@ -223,7 +232,7 @@ const startServer = (port: number) =>
     hostname: values.host,
     port,
     fetch: app.fetch,
-    maxRequestBodySize: 4_194_304,
+    maxRequestBodySize: 16 * 1024 * 1024 * 1024,
     development: false,
   })
 

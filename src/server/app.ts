@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import path from "node:path"
 
 import { zValidator } from "@hono/zod-validator"
@@ -11,10 +12,16 @@ import {
   DownloadQueueOperationError,
   type DownloadQueueService,
 } from "@server/services/download-queue-service"
+import type { LibraryService } from "@server/services/library-service"
+import {
+  LocalMediaImportError,
+  type LocalMediaImportService,
+} from "@server/services/local-media-import-service"
 import {
   ExtensionPairingError,
   type ExtensionPairingService,
 } from "@server/services/extension-pairing-service"
+import type { ExtensionPackageService } from "@server/services/extension-package-service"
 import {
   LocalModelOperationError,
 } from "@server/services/local-model-service"
@@ -43,8 +50,14 @@ import {
   SummaryOperationError,
   type SummaryService,
 } from "@server/services/summary-service"
+import {
+  SubtitleStyleOperationError,
+  subtitleStylePreferencesSchema,
+  type SubtitleStyleService,
+} from "@server/services/subtitle-style-service"
 import type { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 import { EXTENSION_CONNECTION_PROTOCOL_VERSION } from "@shared/contracts/browser-extension"
+import { webVttToSrt, webVttToText } from "@shared/domain/subtitle"
 import {
   SERVER_BUILD_ID,
   DATA_SCHEMA_VERSION,
@@ -54,10 +67,14 @@ export interface ApplicationOptions {
   jobs: JobRepository
   media: MediaOperations
   downloads: DownloadQueueService
+  imports: LocalMediaImportService
+  library: LibraryService
   extensionPairing: ExtensionPairingService
+  extensionPackage: ExtensionPackageService
   mediaSessions: MediaSessionService
   models: TranscriptionModelCatalogService
   summaries: SummaryService
+  subtitleStyles: SubtitleStyleService
   notes: NoteService
   removals: RemovalOperations
   resources: ResourceService
@@ -76,6 +93,7 @@ const playbackSchema = z
       .nullable()
       .optional(),
   })
+  .strict()
   .refine(
     (payload) =>
       payload.time !== undefined || payload.captionLanguage !== undefined,
@@ -110,11 +128,35 @@ const createLibraryItemsSchema = z
   })
   .strict()
 
+const createLocalMediaImportSchema = z
+  .object({
+    originalName: z.string().min(1).max(240),
+    title: z.string().min(1).max(200),
+    sizeBytes: z.number().int().positive().max(16 * 1024 * 1024 * 1024),
+    contentType: z.string().max(200),
+    rightsConfirmed: z.literal(true),
+  })
+  .strict()
+
+const activeSubtitleStyleSchema = z
+  .object({
+    styles: subtitleStylePreferencesSchema,
+    presetId: z.string().regex(/^subtitle-style-[0-9a-f-]{36}$/).nullable(),
+  })
+  .strict()
+
+const subtitleStylePresetSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    styles: subtitleStylePreferencesSchema,
+  })
+  .strict()
+
 const extensionPairingClaimSchema = z
   .object({
     protocolVersion: z.literal(EXTENSION_CONNECTION_PROTOCOL_VERSION),
-    challengeId: z.string().regex(/^pair-[0-9a-f-]{36}$/),
-    token: z.string().min(32).max(128),
+    invitationId: z.string().regex(/^pair-[0-9a-f-]{36}$/),
+    ticket: z.string().min(32).max(128),
   })
   .strict()
 
@@ -134,24 +176,27 @@ const browserCookieSchema = z
 
 const browserMediaSessionSchema = z
   .object({
-    candidate: z
-      .object({
+    candidates: z
+      .array(z.object({
         kind: z.enum(["page", "embed", "network-media"]),
         pageUrl: z.string().min(1).max(2_048),
         frameUrl: z.string().min(1).max(8_192).optional(),
         mediaUrl: z.string().min(1).max(16_384).optional(),
         protocol: z.enum(["http", "https", "hls"]).optional(),
         candidateFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
-      })
-      .strict(),
-    cookies: z.array(browserCookieSchema).max(300).optional(),
-    authenticationConsentAt: z.string().datetime().optional(),
+      }).strict())
+      .min(1)
+      .max(80),
+    cookies: z.array(browserCookieSchema).max(300),
+    authenticationConsentAt: z.string().datetime(),
   })
   .strict()
 
-const retryDownloadItemSchema = z.object({
-  lowQualityApproved: z.boolean().optional().default(false),
-})
+const retryDownloadItemSchema = z
+  .object({
+    lowQualityApproved: z.boolean().optional().default(false),
+  })
+  .strict()
 
 const modelIdSchema = z.string().regex(/^[a-z0-9][a-z0-9.-]{0,159}$/)
 const providerIdSchema = z.enum([
@@ -199,10 +244,12 @@ const summaryImportSchema = z
   })
   .strict()
 
-const summaryActivationSchema = z.object({
-  kind: summaryKindSchema,
-  artifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
-})
+const summaryActivationSchema = z
+  .object({
+    kind: summaryKindSchema,
+    artifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+  })
+  .strict()
 
 const noteSchema = z
   .object({
@@ -216,48 +263,58 @@ const noteSchema = z
   })
   .strict()
 
-const mediaDownloadSchema = z.object({
-  height: z.number().int().positive().max(4320),
-})
+const mediaDownloadSchema = z
+  .object({
+    height: z.number().int().positive().max(4320),
+  })
+  .strict()
 
-const mediaActivationSchema = z.object({
-  renditionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
-})
+const mediaActivationSchema = z
+  .object({
+    renditionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+  })
+  .strict()
 
-const subtitleActivationSchema = z.object({
-  languageCode: z
-    .string()
-    .regex(/^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/),
-  trackId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
-})
+const subtitleActivationSchema = z
+  .object({
+    languageCode: z
+      .string()
+      .regex(/^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$/),
+    trackId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
+  })
+  .strict()
 
 const removalTargetSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("video"),
     videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("subtitle-artifact"),
     videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
     artifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("media-rendition"),
     videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
     renditionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("summary-artifact"),
     videoId: z.string().regex(/^[A-Za-z0-9_-]+$/),
     artifactId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
-  }),
+  }).strict(),
 ])
 
-const removalPreviewSchema = z.object({ target: removalTargetSchema })
-const removalExecutionSchema = z.object({
-  target: removalTargetSchema,
-  planDigest: z.string().regex(/^[0-9a-f]{64}$/),
-})
+const removalPreviewSchema = z
+  .object({ target: removalTargetSchema })
+  .strict()
+const removalExecutionSchema = z
+  .object({
+    target: removalTargetSchema,
+    planDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .strict()
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
@@ -340,6 +397,26 @@ function operationErrorResponse(
     return context.json(payload, 500)
   }
   return context.json({ error: errorMessage(error), code: "operation-failed" }, 500)
+}
+
+function localImportErrorResponse(context: Context, error: unknown) {
+  if (error instanceof LocalMediaImportError) {
+    return context.json({ error: error.message, code: error.code }, error.status)
+  }
+  return context.json(
+    { error: errorMessage(error), code: "local-import-failed" },
+    500,
+  )
+}
+
+function subtitleStyleErrorResponse(context: Context, error: unknown) {
+  if (error instanceof SubtitleStyleOperationError) {
+    return context.json({ error: error.message, code: error.code }, error.status)
+  }
+  return context.json(
+    { error: errorMessage(error), code: "subtitle-style-failed" },
+    500,
+  )
 }
 
 function serveFile(
@@ -442,7 +519,7 @@ export function createApplication(options: ApplicationOptions) {
       "/player/:videoId",
       "/policy",
       "/extension",
-      "/extension/install",
+      "/extension/download",
       "/extension/connect",
       "/extension/usage",
       "/extension/library",
@@ -484,14 +561,31 @@ export function createApplication(options: ApplicationOptions) {
       options.extensionPairing.status(new URL(context.req.url).origin),
     )
   })
-  app.post("/api/extension/pairing/start", (context) => {
+  app.post("/api/extension/package", (context) => {
     if (!sameOrigin(context.req.raw)) {
       return context.json({ error: "forbidden" }, 403)
     }
-    return context.json(
-      options.extensionPairing.start(new URL(context.req.url).origin),
-      201,
+    const bootstrap = options.extensionPairing.createBootstrap(
+      new URL(context.req.url).origin,
     )
+    try {
+      const archive = options.extensionPackage.createPackage(bootstrap)
+      return new Response(archive.contents, {
+        headers: {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache",
+          "Content-Disposition": `attachment; filename="${archive.filename}"`,
+          "Content-Type": "application/zip",
+          "X-INSU-Package-SHA256": archive.checksum,
+        },
+      })
+    } catch (error) {
+      options.extensionPairing.revokeInvitation(bootstrap.invitationId)
+      return context.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        500,
+      )
+    }
   })
   app.post(
     "/api/extension/pairing/claim",
@@ -509,10 +603,11 @@ export function createApplication(options: ApplicationOptions) {
         const payload = context.req.valid("json")
         return context.json(
           options.extensionPairing.claim(
-            payload.challengeId,
-            payload.token,
+            payload.invitationId,
+            payload.ticket,
             origin,
             payload.protocolVersion,
+            new URL(context.req.url).origin,
           ),
           201,
         )
@@ -605,6 +700,73 @@ export function createApplication(options: ApplicationOptions) {
     context.json(options.models.catalog()),
   )
   app.get("/api/runtime", (context) => context.json(options.runtime.status()))
+  app.get("/api/subtitle-styles", (context) => {
+    try {
+      return context.json(options.subtitleStyles.catalog())
+    } catch (error) {
+      return subtitleStyleErrorResponse(context, error)
+    }
+  })
+  app.put(
+    "/api/subtitle-styles/active",
+    zValidator("json", activeSubtitleStyleSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        const payload = context.req.valid("json")
+        return context.json(
+          options.subtitleStyles.setActive(payload.styles, payload.presetId),
+        )
+      } catch (error) {
+        return subtitleStyleErrorResponse(context, error)
+      }
+    },
+  )
+  app.post(
+    "/api/subtitle-styles/presets",
+    zValidator("json", subtitleStylePresetSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        const payload = context.req.valid("json")
+        return context.json(
+          options.subtitleStyles.createPreset(payload.name, payload.styles),
+          201,
+        )
+      } catch (error) {
+        return subtitleStyleErrorResponse(context, error)
+      }
+    },
+  )
+  app.put(
+    "/api/subtitle-styles/presets/:presetId",
+    zValidator("json", subtitleStylePresetSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        const payload = context.req.valid("json")
+        return context.json(
+          options.subtitleStyles.updatePreset(
+            context.req.param("presetId"),
+            payload.name,
+            payload.styles,
+          ),
+        )
+      } catch (error) {
+        return subtitleStyleErrorResponse(context, error)
+      }
+    },
+  )
+  app.delete("/api/subtitle-styles/presets/:presetId", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      return context.json(
+        options.subtitleStyles.removePreset(context.req.param("presetId")),
+      )
+    } catch (error) {
+      return subtitleStyleErrorResponse(context, error)
+    }
+  })
   app.post(
     "/api/agent-intents",
     zValidator("json", agentIntentSchema),
@@ -617,7 +779,42 @@ export function createApplication(options: ApplicationOptions) {
       }
     },
   )
-  app.get("/api/library", (context) => context.json(options.downloads.list()))
+  app.get("/api/library", (context) => context.json(options.library.list()))
+  app.post(
+    "/api/library/imports",
+    zValidator("json", createLocalMediaImportSchema),
+    (context) => {
+      if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+      try {
+        return context.json(options.imports.create(context.req.valid("json")), 201)
+      } catch (error) {
+        return localImportErrorResponse(context, error)
+      }
+    },
+  )
+  app.put("/api/library/imports/:importId/content", async (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      return context.json(
+        await options.imports.upload(
+          context.req.param("importId"),
+          context.req.raw,
+        ),
+        202,
+      )
+    } catch (error) {
+      return localImportErrorResponse(context, error)
+    }
+  })
+  app.delete("/api/library/imports/:importId", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      options.imports.remove(context.req.param("importId"))
+      return context.json(options.library.list())
+    } catch (error) {
+      return localImportErrorResponse(context, error)
+    }
+  })
   app.post(
     "/api/library/items",
     zValidator("json", createLibraryItemsSchema),
@@ -638,11 +835,9 @@ export function createApplication(options: ApplicationOptions) {
     app.post(`/api/download-queue/${action}`, (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
-        return context.json(
-          action === "pause"
-            ? options.downloads.pause()
-            : options.downloads.resume(),
-        )
+        if (action === "pause") options.downloads.pause()
+        else options.downloads.resume()
+        return context.json(options.library.list())
       } catch (error) {
         return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
@@ -654,12 +849,11 @@ export function createApplication(options: ApplicationOptions) {
     (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
-        return context.json(
-          options.downloads.retry(
-            context.req.param("itemId"),
-            context.req.valid("json").lowQualityApproved,
-          ),
+        options.downloads.retry(
+          context.req.param("itemId"),
+          context.req.valid("json").lowQualityApproved,
         )
+        return context.json(options.library.list())
       } catch (error) {
         return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
@@ -670,9 +864,8 @@ export function createApplication(options: ApplicationOptions) {
     (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
-        return context.json(
-          options.downloads.approveLowQuality(context.req.param("itemId")),
-        )
+        options.downloads.approveLowQuality(context.req.param("itemId"))
+        return context.json(options.library.list())
       } catch (error) {
         return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
@@ -683,16 +876,22 @@ export function createApplication(options: ApplicationOptions) {
     (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
-        return context.json(
-          options.downloads.cancel(
-            context.req.param("itemId"),
-          ),
-        )
+        options.downloads.cancel(context.req.param("itemId"))
+        return context.json(options.library.list())
       } catch (error) {
         return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
     },
   )
+  app.delete("/api/library/items/:itemId", (context) => {
+    if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
+    try {
+      options.downloads.remove(context.req.param("itemId"))
+      return context.json(options.library.list())
+    } catch (error) {
+      return operationErrorResponse(context, error, DownloadQueueOperationError)
+    }
+  })
   app.get("/api/models/:modelId", (context) => {
     try {
       return context.json(options.models.detail(modelId(context.req.param("modelId"))))
@@ -1048,6 +1247,42 @@ export function createApplication(options: ApplicationOptions) {
       }
     },
   )
+  app.get(
+    "/api/jobs/:videoId/subtitles/artifacts/:artifactId/tracks/:trackId/export",
+    (context) => {
+      try {
+        const format = context.req.query("format")
+        if (format !== "srt" && format !== "txt") {
+          return context.json({ error: "unsupported subtitle export format" }, 400)
+        }
+        const track = options.jobs.subtitleTrackForExport(
+          context.req.param("videoId"),
+          context.req.param("artifactId"),
+          context.req.param("trackId"),
+        )
+        const source = readFileSync(track.path, "utf8")
+        const body = format === "srt" ? webVttToSrt(source) : webVttToText(source)
+        const filename = [
+          context.req.param("videoId"),
+          track.kind,
+          track.languageCode,
+          `r${track.revision}`,
+        ].join("-") + `.${format}`
+        return new Response(body, {
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Disposition": `attachment; filename="${filename}"`,
+            "Content-Type":
+              format === "srt"
+                ? "application/x-subrip; charset=utf-8"
+                : "text/plain; charset=utf-8",
+          },
+        })
+      } catch (error) {
+        return context.json({ error: errorMessage(error) }, 404)
+      }
+    },
+  )
   app.get("/api/jobs/:videoId/playback", (context) => {
     try {
       return context.json(options.jobs.playbackState(context.req.param("videoId")))
@@ -1109,7 +1344,10 @@ export function createApplication(options: ApplicationOptions) {
   })
   app.get("/watch/:videoId/config.js", (context) => {
     try {
-      const config = options.jobs.playerConfig(context.req.param("videoId"))
+      const config = {
+        ...options.jobs.playerConfig(context.req.param("videoId")),
+        captionStyles: options.subtitleStyles.catalog().active,
+      }
       return context.body(`window.INSU_PLAYER_CONFIG = ${JSON.stringify(config)};\n`, 200, {
         "Content-Type": "text/javascript; charset=utf-8",
         "Cache-Control": "no-store",

@@ -81,6 +81,52 @@ const TRACK_FIELDS = new Set([
   "bytes",
 ])
 const REQUIRED_TRACK_FIELDS = [...TRACK_FIELDS].filter((field) => field !== "bytes")
+const CONTENT_MANIFEST_FIELDS = new Set([
+  "schemaVersion",
+  "mode",
+  "sourceFormat",
+  "sourceLanguage",
+  "outputLanguage",
+  "sourceTranscript",
+  "timingSourceArtifactId",
+  "sourceContentArtifactId",
+  "sourceContentKind",
+  "sourceContentManifest",
+  "sourceContentChecksum",
+  "referenceArtifactIds",
+  "timingProcessor",
+  "contentProcessor",
+  "sentenceReview",
+  "outputProfile",
+  "rules",
+  "segments",
+])
+const SEGMENTATION_MANIFEST_FIELDS = new Set([
+  "schemaVersion",
+  "contentMode",
+  "sourceLanguage",
+  "outputLanguage",
+  "sourceTranscript",
+  "contentManifest",
+  "sourceContentArtifactId",
+  "sourceContentKind",
+  "timingProcessor",
+  "contentProcessor",
+  "sentenceReview",
+  "segmentationProcessor",
+  "alignmentMethod",
+  "alignmentReview",
+  "alignmentFingerprint",
+  "targetRevision",
+  "targetFrozen",
+  "targetFingerprint",
+  "widthProfile",
+  "timingProfile",
+  "outputProfile",
+  "timedUnits",
+  "boundaryHints",
+  "contentUnits",
+])
 
 interface ResolvedSubtitleArtifactTrack extends SubtitleArtifactTrack {
   relativePath: string
@@ -248,15 +294,46 @@ function validateManifestSchema(
     throw new Error(`${artifactId}.manifestPath is not valid JSON`)
   }
   const expectedVersion = kind === "segmentation" ? 4 : 5
+  const record = manifest as Record<string, unknown>
   if (
     !manifest ||
     typeof manifest !== "object" ||
     Array.isArray(manifest) ||
-    (manifest as Record<string, unknown>).schemaVersion !== expectedVersion
+    record.schemaVersion !== expectedVersion
   ) {
     throw new Error(
       `${artifactId}.manifestPath must use schemaVersion ${expectedVersion}`,
     )
+  }
+  const expectedFields =
+    kind === "segmentation"
+      ? SEGMENTATION_MANIFEST_FIELDS
+      : CONTENT_MANIFEST_FIELDS
+  if (
+    Object.keys(record).length !== expectedFields.size ||
+    Object.keys(record).some((key) => !expectedFields.has(key))
+  ) {
+    throw new Error(`${artifactId}.manifestPath fields do not match the current schema`)
+  }
+  if (kind === "segmentation") {
+    if (
+      record.targetFrozen !== true ||
+      record.alignmentMethod !== "agent-semantic" ||
+      !record.segmentationProcessor ||
+      typeof record.segmentationProcessor !== "object" ||
+      (record.segmentationProcessor as Record<string, unknown>).provider !== "agent" ||
+      (record.segmentationProcessor as Record<string, unknown>).service !== "codex"
+    ) {
+      throw new Error(`${artifactId}.manifestPath is not a completed Agent segmentation`)
+    }
+  } else if (
+    record.mode !== (kind === "translation" ? "translate" : "proofread") ||
+    !record.contentProcessor ||
+    typeof record.contentProcessor !== "object" ||
+    (record.contentProcessor as Record<string, unknown>).provider !== "agent" ||
+    (record.contentProcessor as Record<string, unknown>).service !== "codex"
+  ) {
+    throw new Error(`${artifactId}.manifestPath is not completed Agent content`)
   }
 }
 
@@ -369,6 +446,7 @@ function expectedRoles(kind: SubtitleArtifactKind): SubtitleTrackRole[] {
 
 function validateTrackContract(artifact: ResolvedSubtitleArtifact) {
   const expected = expectedRoles(artifact.kind)
+  const expectedSet = new Set(expected)
   const byRole = new Map(artifact.tracks.map((track) => [track.role, track]))
   if (artifact.lifecycleState === "ready") {
     const actual = [...byRole.keys()].sort()
@@ -383,7 +461,7 @@ function validateTrackContract(artifact: ResolvedSubtitleArtifact) {
     }
   }
   for (const track of artifact.tracks) {
-    if (!expected.includes(track.role)) {
+    if (!expectedSet.has(track.role)) {
       throw new Error(`${artifact.id}.${track.role} is not valid for its kind`)
     }
     const expectedLanguage =
@@ -616,12 +694,11 @@ function related(
   relation: SubtitleArtifactDependency["relation"],
   byId: Map<string, ResolvedSubtitleArtifact>,
 ) {
-  return artifact.dependencies
-    .filter((dependency) => dependency.relation === relation)
-    .map((dependency) => {
+  return artifact.dependencies.flatMap((dependency) => {
+    if (dependency.relation !== relation) return []
       const parent = byId.get(dependency.artifactId)
       if (!parent) throw new Error(`${artifact.id} references a missing dependency`)
-      return parent
+      return [parent]
     })
 }
 
@@ -720,14 +797,11 @@ function resolverEligible(artifact: ResolvedSubtitleArtifact) {
 function playbackCandidates(artifacts: ResolvedSubtitleArtifact[]) {
   return artifacts.flatMap((artifact): SubtitleCandidate[] =>
     resolverEligible(artifact)
-      ? artifact.tracks
-          .filter(
-            (track) =>
-              track.playbackEligible &&
-              track.state === "ready" &&
-              track.cueCount > 0,
-          )
-          .map((track) => ({ artifact, track }))
+      ? artifact.tracks.flatMap((track) =>
+          track.playbackEligible && track.state === "ready" && track.cueCount > 0
+            ? [{ artifact, track }]
+            : [],
+        )
       : [],
   )
 }

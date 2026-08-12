@@ -58,7 +58,7 @@ fi
 for required_path in \
   "plugins/insu-player/skills/watch-video/assets/library/app/index.html" \
   "plugins/insu-player/skills/watch-video/assets/server/insu-player-server.js" \
-  "plugins/insu-player/skills/watch-video/assets/server/drizzle/meta/_journal.json" \
+  "plugins/insu-player/skills/watch-video/assets/server/current-schema.sql" \
   "plugins/insu-player/chrome-extension/manifest.json" \
   "plugins/insu-player/chrome-extension/service-worker.js"; do
   [ -f "$package_dir/$required_path" ] || { printf 'error: release is missing %s\n' "$required_path" >&2; exit 1; }

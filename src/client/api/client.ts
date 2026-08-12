@@ -15,14 +15,19 @@ import type {
   TranscriptionModelDetailResponse,
 } from "@shared/contracts/resources"
 import type {
+  CreateLocalMediaImportRequest,
+  CreateLocalMediaImportResponse,
   CreateLibraryItemsRequest,
   CreateLibraryItemsResponse,
   DownloadSourceInput,
   LibraryResponse,
 } from "@shared/contracts/library"
 import type {
+  SubtitleStylePreferences,
+  SubtitleStyleResponse,
+} from "@shared/contracts/subtitle-style"
+import type {
   ExtensionPairingStatus,
-  StartExtensionPairingResponse,
 } from "@shared/contracts/browser-extension"
 import type {
   SummaryArtifactKind,
@@ -62,6 +67,22 @@ async function fetchJson<T>(input: string, init?: RequestInit) {
     throw new Error(body || `HTTP ${response.status}`)
   }
   return (await response.json()) as T
+}
+
+async function fetchDownload(input: string, init?: RequestInit) {
+  const response = await fetch(input, { cache: "no-store", ...init })
+  if (!response.ok) {
+    const body = await response.text().catch(() => "")
+    throw new Error(body || `HTTP ${response.status}`)
+  }
+  const disposition = response.headers.get("content-disposition") ?? ""
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1]
+  if (!filename) throw new Error("伺服器沒有提供下載檔名")
+  return {
+    blob: await response.blob(),
+    filename,
+    checksum: response.headers.get("x-insu-package-sha256"),
+  }
 }
 
 export const api = {
@@ -159,6 +180,81 @@ export const api = {
       body: JSON.stringify({ kind, source, ...(videoId ? { videoId } : {}) }),
     }),
   library: () => fetchJson<LibraryResponse>("/api/library"),
+  createLocalMediaImport: (payload: CreateLocalMediaImportRequest) =>
+    fetchJson<CreateLocalMediaImportResponse>("/api/library/imports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  uploadLocalMediaImport: (
+    uploadUrl: string,
+    file: File,
+    onProgress: (progress: number) => void,
+  ) =>
+    new Promise<{ accepted: true; importId: string; videoId: string }>(
+      (resolve, reject) => {
+        const request = new XMLHttpRequest()
+        request.open("PUT", uploadUrl)
+        request.setRequestHeader("Content-Type", file.type || "application/octet-stream")
+        request.upload.addEventListener("progress", (event) => {
+          if (event.lengthComputable) onProgress((event.loaded / event.total) * 100)
+        })
+        request.addEventListener("load", () => {
+          if (request.status >= 200 && request.status < 300) {
+            resolve(JSON.parse(request.responseText))
+            return
+          }
+          try {
+            const payload = JSON.parse(request.responseText) as { error?: unknown }
+            reject(new Error(typeof payload.error === "string" ? payload.error : `HTTP ${request.status}`))
+          } catch {
+            reject(new Error(request.responseText || `HTTP ${request.status}`))
+          }
+        })
+        request.addEventListener("error", () => reject(new Error("本機影音上傳中斷")))
+        request.send(file)
+      },
+    ),
+  removeLocalMediaImport: (importId: string) =>
+    fetchJson<LibraryResponse>(
+      `/api/library/imports/${encodeURIComponent(importId)}`,
+      { method: "DELETE" },
+    ),
+  subtitleStyles: () =>
+    fetchJson<SubtitleStyleResponse>("/api/subtitle-styles"),
+  setActiveSubtitleStyles: (
+    styles: SubtitleStylePreferences,
+    presetId: string | null,
+  ) =>
+    fetchJson<SubtitleStyleResponse>("/api/subtitle-styles/active", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ styles, presetId }),
+    }),
+  createSubtitleStylePreset: (name: string, styles: SubtitleStylePreferences) =>
+    fetchJson<SubtitleStyleResponse>("/api/subtitle-styles/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, styles }),
+    }),
+  updateSubtitleStylePreset: (
+    presetId: string,
+    name: string,
+    styles: SubtitleStylePreferences,
+  ) =>
+    fetchJson<SubtitleStyleResponse>(
+      `/api/subtitle-styles/presets/${encodeURIComponent(presetId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, styles }),
+      },
+    ),
+  removeSubtitleStylePreset: (presetId: string) =>
+    fetchJson<SubtitleStyleResponse>(
+      `/api/subtitle-styles/presets/${encodeURIComponent(presetId)}`,
+      { method: "DELETE" },
+    ),
   createLibraryItems: (sources: DownloadSourceInput[], rightsConfirmed: true) =>
     fetchJson<CreateLibraryItemsResponse>("/api/library/items", {
       method: "POST",
@@ -167,10 +263,8 @@ export const api = {
     }),
   extensionPairing: () =>
     fetchJson<ExtensionPairingStatus>("/api/extension/pairing"),
-  startExtensionPairing: () =>
-    fetchJson<StartExtensionPairingResponse>("/api/extension/pairing/start", {
-      method: "POST",
-    }),
+  downloadExtensionPackage: () =>
+    fetchDownload("/api/extension/package", { method: "POST" }),
   revokeExtensionPairing: () =>
     fetchJson<{ paired: false }>("/api/extension/pairing", {
       method: "DELETE",
@@ -192,6 +286,11 @@ export const api = {
   cancelLibraryDownload: (itemId: string) =>
     fetchJson<LibraryResponse>(
       `/api/library/items/${encodeURIComponent(itemId)}/download`,
+      { method: "DELETE" },
+    ),
+  removeLibraryDownload: (itemId: string) =>
+    fetchJson<LibraryResponse>(
+      `/api/library/items/${encodeURIComponent(itemId)}`,
       { method: "DELETE" },
     ),
   pauseDownloadQueue: () =>

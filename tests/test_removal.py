@@ -82,7 +82,7 @@ class LibraryRemovalTests(unittest.TestCase):
 
     def write_status(self, **overrides: object) -> None:
         payload: dict[str, object] = {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "videoId": "demo-video",
             "title": "Demo Video",
             "sourceUrl": "https://example.test/watch?v=demo-video",

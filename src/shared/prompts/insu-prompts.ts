@@ -296,7 +296,7 @@ export function buildMindMapPrompt(
     `影音 ID：${safeVideoId}\n文字摘要產物：${safeArtifactId(summaryArtifactId)}\n心智圖語言：${safeLanguageCode}`,
     "只能從指定文字摘要整理結構，不得加入摘要中不存在的結論。輸出一個根節點、最多四層且最多 120 個節點的安全 Markdown 樹。不要加入 HTML、圖片、程式碼區塊或外部連結。需要時間連結時只能使用目前影音的同源播放器時間。",
     "完成後使用 current-schema 心智圖契約驗證並匯入新 revision。不要覆寫或刪除既有心智圖。驗證失敗時不得顯示為可用版本。",
-    "完成後告訴我到「影片中心 → 詳細資訊 → 影音摘要」查看心智圖。",
+    "完成後告訴我到「影片中心 → 詳細資訊 → 影音大綱」查看心智圖。",
   ].join("\n\n")
 }
 
@@ -317,7 +317,7 @@ export function buildSubtitleManagementPrompt(context: SubtitlePromptContext) {
     knownSubtitleContext(context),
     "先判斷目前缺少的是原始轉錄、完整句校正或翻譯、字幕切分、時間同步或驗證。只接續缺少的精確階段，不得重做已通過驗證的階段。",
     ...subtitleContinuationWorkflow(context),
-    "不要替我刪除字幕，也不要替我切換目前播放版本。這兩項由我在字幕管理介面操作。",
+    "不要替我刪除字幕，也不要替我切換播放器字幕。字幕刪除由我在字幕管理操作，播放字幕由我在播放器選擇。",
   ].join("\n\n")
 }
 

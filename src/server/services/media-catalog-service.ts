@@ -20,6 +20,52 @@ const ACTIVE_OPERATION_STATES = new Set([
   "validating",
 ])
 const OPERATION_HEARTBEAT_GRACE_MS = 15_000
+const CATALOG_FIELDS = [
+  "schemaVersion",
+  "videoId",
+  "revision",
+  "activeRenditionId",
+  "availability",
+  "renditions",
+  "operation",
+] as const
+const AVAILABILITY_FIELDS = ["discoveredAt", "formats"] as const
+const FORMAT_FIELDS = [
+  "width",
+  "height",
+  "fps",
+  "estimatedBytes",
+  "container",
+  "videoCodec",
+] as const
+const RENDITION_FIELDS = [
+  "id",
+  "requestedHeight",
+  "width",
+  "height",
+  "container",
+  "videoCodec",
+  "audioCodec",
+  "path",
+  "sizeBytes",
+  "checksum",
+  "createdAt",
+  "formatId",
+  "selection",
+] as const
+const OPERATION_FIELDS = [
+  "id",
+  "requestedHeight",
+  "state",
+  "stage",
+  "progress",
+  "message",
+  "error",
+  "pid",
+  "startedAt",
+  "updatedAt",
+  "completedAt",
+] as const
 
 interface StoredMediaRendition extends Omit<MediaRendition, "active"> {
   path: string
@@ -62,6 +108,16 @@ function validTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value))
 }
 
+function hasExactKeys(
+  value: Record<string, unknown>,
+  fields: readonly string[],
+) {
+  return (
+    Object.keys(value).length === fields.length &&
+    fields.every((field) => field in value)
+  )
+}
+
 function processIsAlive(pid: unknown) {
   if (!Number.isInteger(pid) || Number(pid) <= 0) return false
   try {
@@ -97,6 +153,7 @@ function safeRelativePath(value: unknown) {
 function parseFormat(value: unknown): MediaSourceFormat | null {
   if (!value || typeof value !== "object") return null
   const candidate = value as Record<string, unknown>
+  if (!hasExactKeys(candidate, FORMAT_FIELDS)) return null
   const height = positiveInteger(candidate.height)
   if (!height || candidate.container !== "mp4") return null
   const width = nullablePositiveInteger(candidate.width)
@@ -124,6 +181,9 @@ function parseOperation(value: unknown): MediaOperation | null {
   if (value === null) return null
   if (!value || typeof value !== "object") throw new Error("media operation is invalid")
   const candidate = value as Record<string, unknown>
+  if (!hasExactKeys(candidate, OPERATION_FIELDS)) {
+    throw new Error("media operation fields do not match the current schema")
+  }
   const state = String(candidate.state)
   if (
     ![
@@ -202,6 +262,9 @@ export function readStoredMediaCatalog(
     string,
     unknown
   >
+  if (!hasExactKeys(payload, CATALOG_FIELDS)) {
+    throw new Error("media catalog fields do not match the current schema")
+  }
   if (payload.schemaVersion !== 1 || payload.videoId !== videoId) {
     throw new Error("media catalog identity is invalid")
   }
@@ -213,8 +276,12 @@ export function readStoredMediaCatalog(
   if (!availability || typeof availability !== "object") {
     throw new Error("media catalog availability is invalid")
   }
-  const rawFormats = (availability as Record<string, unknown>).formats
-  const discoveredAt = (availability as Record<string, unknown>).discoveredAt
+  const availabilityRecord = availability as Record<string, unknown>
+  if (!hasExactKeys(availabilityRecord, AVAILABILITY_FIELDS)) {
+    throw new Error("media catalog availability fields do not match the current schema")
+  }
+  const rawFormats = availabilityRecord.formats
+  const discoveredAt = availabilityRecord.discoveredAt
   if (discoveredAt !== null && !validTimestamp(discoveredAt)) {
     throw new Error("media catalog discoveredAt is invalid")
   }
@@ -229,6 +296,9 @@ export function readStoredMediaCatalog(
   const renditions = payload.renditions.map((raw) => {
     if (!raw || typeof raw !== "object") throw new Error("media rendition is invalid")
     const rendition = raw as Record<string, unknown>
+    if (!hasExactKeys(rendition, RENDITION_FIELDS)) {
+      throw new Error("media rendition fields do not match the current schema")
+    }
     const id = typeof rendition.id === "string" ? rendition.id : ""
     const relativePath = safeRelativePath(rendition.path)
     const requestedHeight = positiveInteger(rendition.requestedHeight)

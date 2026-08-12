@@ -99,8 +99,8 @@ interface RawStatus {
   schemaVersion: number
   videoId: string
   title: string
-  sourceUrl: string
-  sourceKind: "page" | "embed" | "network-media"
+  sourceUrl: string | null
+  sourceKind: "page" | "embed" | "network-media" | "local-file"
   durationSeconds: number | null
   state: JobState
   stage: string
@@ -326,11 +326,44 @@ export class JobRepository {
         `media item record must use schemaVersion ${MEDIA_RECORD_SCHEMA_VERSION}`,
       )
     }
+    const requiredFields = new Set([
+      "schemaVersion",
+      "videoId",
+      "title",
+      "sourceUrl",
+      "sourceKind",
+      "durationSeconds",
+      "state",
+      "stage",
+      "progress",
+      "message",
+      "assets",
+      "subtitleArtifacts",
+      "activeSubtitleTracks",
+      "subtitlePipeline",
+      "transcription",
+      "process",
+      "lastError",
+      "createdAt",
+      "updatedAt",
+      "completedAt",
+      "history",
+    ])
+    if (
+      Object.keys(status).length !== requiredFields.size ||
+      Object.keys(status).some((key) => !requiredFields.has(key))
+    ) {
+      throw new Error("media item record fields do not match the current schema")
+    }
     if (
       typeof status.title !== "string" ||
       !status.title.trim() ||
-      typeof status.sourceUrl !== "string" ||
-      !["page", "embed", "network-media"].includes(String(status.sourceKind)) ||
+      !["page", "embed", "network-media", "local-file"].includes(
+        String(status.sourceKind),
+      ) ||
+      (status.sourceKind === "local-file"
+        ? status.sourceUrl !== null
+        : typeof status.sourceUrl !== "string" || !status.sourceUrl.trim()) ||
       typeof status.message !== "string" ||
       !status.message.trim() ||
       !isTimestamp(status.createdAt) ||
@@ -553,6 +586,77 @@ export class JobRepository {
     return publicSubtitleCatalog(this.resolvedSubtitleCatalog(videoId))
   }
 
+  registerLocalMedia(input: {
+    videoId: string
+    title: string
+    durationSeconds: number
+    createdAt: string
+    assets: RawStatus["assets"]
+  }) {
+    if (!VIDEO_ID_PATTERN.test(input.videoId)) throw new Error("invalid video ID")
+    if (!input.title.trim()) throw new Error("local media title is required")
+    if (!Number.isFinite(input.durationSeconds) || input.durationSeconds <= 0) {
+      throw new Error("local media duration is invalid")
+    }
+    const status: RawStatus = {
+      schemaVersion: MEDIA_RECORD_SCHEMA_VERSION,
+      videoId: input.videoId,
+      title: input.title.trim(),
+      sourceUrl: null,
+      sourceKind: "local-file",
+      durationSeconds: input.durationSeconds,
+      state: "downloaded",
+      stage: "local_import_complete",
+      progress: 100,
+      message: "影音已匯入，等待處理字幕",
+      createdAt: input.createdAt,
+      updatedAt: input.createdAt,
+      completedAt: null,
+      lastError: null,
+      process: null,
+      assets: input.assets,
+      subtitlePipeline: null,
+      subtitleArtifacts: [],
+      activeSubtitleTracks: {},
+      transcription: null,
+      history: [
+        {
+          at: input.createdAt,
+          state: "downloaded",
+          stage: "local_import_complete",
+          message: "完成本機影音匯入",
+        },
+      ],
+    }
+    this.db
+      .insert(jobs)
+      .values({
+        videoId: input.videoId,
+        title: status.title,
+        sourceUrl: null,
+        state: status.state,
+        effectiveState: status.state,
+        stage: status.stage,
+        progress: status.progress,
+        message: status.message,
+        createdAt: status.createdAt,
+        updatedAt: status.updatedAt,
+        completedAt: null,
+        lastError: null,
+        watchable: false,
+        sizeBytes: 0,
+        thumbnailUrl: null,
+        watchUrl: null,
+        hasLog: false,
+        durationSeconds: status.durationSeconds,
+        recordJson: status as unknown as Record<string, unknown>,
+        recordRevision: 1,
+        projectedAt: input.createdAt,
+      })
+      .run()
+    return this.summarize(input.videoId)
+  }
+
   setActiveSubtitleTrack(
     videoId: string,
     languageCode: string,
@@ -606,6 +710,34 @@ export class JobRepository {
       label: `${track.languageCode} · ${roleLabels[track.role] ?? track.role}`,
       path: track.absolutePath,
     }))
+  }
+
+  subtitleTrackForExport(videoId: string, artifactId: string, trackId: string) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(artifactId)) {
+      throw new Error("invalid subtitle artifact ID")
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(trackId)) {
+      throw new Error("invalid subtitle track ID")
+    }
+    const artifact = this.resolvedSubtitleCatalog(videoId).artifacts.find(
+      (candidate) => candidate.id === artifactId,
+    )
+    if (!artifact) throw new Error("subtitle artifact not found")
+    if (artifact.lifecycleState !== "ready" || artifact.validationState === "invalid") {
+      throw new Error("subtitle artifact is not ready for export")
+    }
+    const track = artifact.tracks.find((candidate) => candidate.id === trackId)
+    if (!track || track.state !== "ready" || !isRegularFile(track.absolutePath)) {
+      throw new Error("subtitle track is unavailable for export")
+    }
+    return {
+      artifactId: artifact.id,
+      kind: artifact.kind,
+      revision: artifact.revision,
+      languageCode: track.languageCode,
+      role: track.role,
+      path: track.absolutePath,
+    }
   }
 
   activeCaptionPaths(videoId: string) {
@@ -767,6 +899,7 @@ export class JobRepository {
         stage: jobs.stage,
         progress: jobs.progress,
         message: jobs.message,
+        watchable: jobs.watchable,
         updatedAt: jobs.updatedAt,
       })
       .from(jobs)
@@ -878,17 +1011,19 @@ export class JobRepository {
 
       transaction.delete(jobHistory).where(eq(jobHistory.videoId, summary.videoId)).run()
       transaction.delete(mediaSources).where(eq(mediaSources.videoId, summary.videoId)).run()
-      transaction
-        .insert(mediaSources)
-        .values({
-          id: `${summary.videoId}:primary`,
-          videoId: summary.videoId,
-          sourceUrl: summary.sourceUrl,
-          sourceType: summary.sourceKind,
-          externalId: summary.videoId,
-          createdAt: summary.createdAt,
-        })
-        .run()
+      if (summary.sourceKind !== "local-file" && summary.sourceUrl) {
+        transaction
+          .insert(mediaSources)
+          .values({
+            id: `${summary.videoId}:primary`,
+            videoId: summary.videoId,
+            sourceUrl: summary.sourceUrl,
+            sourceType: summary.sourceKind,
+            externalId: summary.videoId,
+            createdAt: summary.createdAt,
+          })
+          .run()
+      }
       const history = status.history
       if (history.length > 0) {
         transaction

@@ -16,9 +16,6 @@ export const loadJobDetailDialog = () =>
 export const loadLibraryDialog = () =>
   import("@/features/library/LibraryDialog")
 
-export const loadAddMediaDialog = () =>
-  import("@/features/library/AddMediaDialog")
-
 export const loadPlayerDialog = () =>
   import("@/features/player/PlayerDialog")
 

@@ -6,6 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
+import { createHash } from "node:crypto"
 import path from "node:path"
 
 import type {
@@ -21,20 +22,20 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"])
 
 interface MediaSession {
   id: string
-  candidate: BrowserMediaCandidate
+  candidates: BrowserMediaCandidate[]
+  candidateFingerprint: string
   cookies: BrowserCookieInput[]
-  authenticationConsentAt: string | null
+  authenticationConsentAt: string
   expiresAt: number
 }
 
 export interface ClaimedMediaSession {
-  sourceUrl: string
+  sourceUrls: string[]
   pageUrl: string
-  frameUrl: string | null
-  sourceKind: BrowserMediaCandidate["kind"]
+  sourceKind: "page"
   cookieFile: string | null
   authentication: "none" | "browser-session"
-  authenticationConsentAt: string | null
+  authenticationConsentAt: string
   dispose: () => void
 }
 
@@ -87,10 +88,13 @@ function validateCookie(cookie: BrowserCookieInput) {
 }
 
 function cookieHeader(cookies: BrowserCookieInput[], host: string) {
-  return cookies
-    .filter((cookie) => cookieMatchesHost(cookie, host))
-    .map((cookie) => `${cookie.name}=${cookie.value}`)
-    .join("; ")
+  const values: string[] = []
+  for (const cookie of cookies) {
+    if (cookieMatchesHost(cookie, host)) {
+      values.push(`${cookie.name}=${cookie.value}`)
+    }
+  }
+  return values.join("; ")
 }
 
 function netscapeCookieJar(cookies: BrowserCookieInput[]) {
@@ -152,35 +156,73 @@ export class MediaSessionService {
     request: CreateBrowserMediaSessionRequest,
   ): Promise<CreateBrowserMediaSessionResponse> {
     this.prune()
-    const pageUrl = parseWebUrl(request.candidate.pageUrl, "頁面網址", 2_048)
-    const frameUrl = request.candidate.frameUrl
-      ? parseWebUrl(request.candidate.frameUrl, "嵌入頁面網址", 8_192)
-      : null
-    const mediaUrl = request.candidate.mediaUrl
-      ? parseWebUrl(request.candidate.mediaUrl, "媒體網址", 16_384)
-      : null
-    if (request.candidate.kind === "embed" && !frameUrl) {
+    if (
+      !Array.isArray(request.candidates) ||
+      request.candidates.length === 0 ||
+      request.candidates.length > 80 ||
+      request.candidates[0]?.kind !== "page"
+    ) {
       throw new MediaSessionOperationError(
-        "嵌入來源缺少頁面網址",
+        "影音來源組必須從目前頁面開始",
         "invalid-source",
         400,
       )
     }
-    if (request.candidate.kind === "network-media" && !mediaUrl) {
+    const candidates = request.candidates.map((candidate) => {
+      const pageUrl = parseWebUrl(candidate.pageUrl, "頁面網址", 2_048)
+      const frameUrl = candidate.frameUrl
+        ? parseWebUrl(candidate.frameUrl, "嵌入頁面網址", 8_192)
+        : null
+      const mediaUrl = candidate.mediaUrl
+        ? parseWebUrl(candidate.mediaUrl, "媒體網址", 16_384)
+        : null
+      if (candidate.kind === "embed" && !frameUrl) {
+        throw new MediaSessionOperationError(
+          "嵌入來源缺少頁面網址",
+          "invalid-source",
+          400,
+        )
+      }
+      if (candidate.kind === "network-media" && !mediaUrl) {
+        throw new MediaSessionOperationError(
+          "網路媒體來源缺少實際網址",
+          "invalid-source",
+          400,
+        )
+      }
+      if (!/^[0-9a-f]{64}$/.test(candidate.candidateFingerprint)) {
+        throw new MediaSessionOperationError(
+          "媒體候選識別碼無效",
+          "invalid-source",
+          400,
+        )
+      }
+      return {
+        ...candidate,
+        pageUrl: pageUrl.toString(),
+        ...(frameUrl ? { frameUrl: frameUrl.toString() } : {}),
+        ...(mediaUrl ? { mediaUrl: mediaUrl.toString() } : {}),
+      }
+    })
+    const primaryPageUrl = candidates[0].pageUrl
+    if (candidates.some((candidate) => candidate.pageUrl !== primaryPageUrl)) {
       throw new MediaSessionOperationError(
-        "網路媒體來源缺少實際網址",
+        "備援來源不屬於目前頁面",
         "invalid-source",
         400,
       )
     }
-    if (!/^[0-9a-f]{64}$/.test(request.candidate.candidateFingerprint)) {
+    if (
+      new Set(candidates.map((candidate) => candidate.candidateFingerprint)).size !==
+      candidates.length
+    ) {
       throw new MediaSessionOperationError(
-        "媒體候選識別碼無效",
+        "影音來源組包含重複項目",
         "invalid-source",
         400,
       )
     }
-    const cookies = request.cookies ?? []
+    const cookies = request.cookies
     if (cookies.length > MAX_COOKIE_COUNT) {
       throw new MediaSessionOperationError(
         "瀏覽器登入資料超過單次上限",
@@ -189,9 +231,11 @@ export class MediaSessionService {
       )
     }
     const allowedHosts = new Set(
-      [pageUrl, frameUrl, mediaUrl]
-        .filter((url): url is URL => Boolean(url))
-        .map((url) => url.hostname),
+      candidates.flatMap((candidate) =>
+        [candidate.pageUrl, candidate.frameUrl, candidate.mediaUrl]
+          .filter((value): value is string => Boolean(value))
+          .map((value) => new URL(value).hostname),
+      ),
     )
     for (const cookie of cookies) {
       validateCookie(cookie)
@@ -203,38 +247,38 @@ export class MediaSessionService {
         )
       }
     }
-    if (cookies.length > 0 && !request.authenticationConsentAt) {
+    if (!Number.isFinite(Date.parse(request.authenticationConsentAt))) {
       throw new MediaSessionOperationError(
-        "傳送登入狀態前需要明確同意",
+        "加入下載前需要確認本次瀏覽器來源傳送",
         "browser-session-consent-required",
         400,
       )
     }
-    const candidate: BrowserMediaCandidate = {
-      ...request.candidate,
-      pageUrl: pageUrl.toString(),
-      ...(frameUrl ? { frameUrl: frameUrl.toString() } : {}),
-      ...(mediaUrl ? { mediaUrl: mediaUrl.toString() } : {}),
-    }
-    if (
-      mediaUrl &&
-      (candidate.protocol === "hls" || /\.m3u8(?:$|\?)/i.test(mediaUrl.toString()))
-    ) {
-      await this.validateHls(candidate, cookies)
-    }
+    await Promise.all(
+      candidates.flatMap((candidate) =>
+        candidate.mediaUrl &&
+        (candidate.protocol === "hls" || /\.m3u8(?:$|\?)/i.test(candidate.mediaUrl))
+          ? [this.validateHls(candidate, cookies)]
+          : [],
+      ),
+    )
+    const candidateFingerprint = createHash("sha256")
+      .update(candidates.map((candidate) => candidate.candidateFingerprint).join("\n"))
+      .digest("hex")
     const id = `media-session-${crypto.randomUUID()}`
     const expiresAt = Date.now() + SESSION_TTL_MS
     this.sessions.set(id, {
       id,
-      candidate,
+      candidates,
+      candidateFingerprint,
       cookies,
-      authenticationConsentAt: request.authenticationConsentAt ?? null,
+      authenticationConsentAt: request.authenticationConsentAt,
       expiresAt,
     })
     return {
       sessionId: id,
       expiresAt: new Date(expiresAt).toISOString(),
-      candidateFingerprint: candidate.candidateFingerprint,
+      candidateFingerprint,
     }
   }
 
@@ -243,16 +287,15 @@ export class MediaSessionService {
     const session = this.sessions.get(sessionId)
     if (!session) {
       throw new MediaSessionOperationError(
-        "瀏覽器媒體工作階段已失效，請重新從擴充功能加入",
+        "本次來源資料已失效，請回到原分頁重新加入",
         "media-session-expired",
         409,
       )
     }
     this.sessions.delete(sessionId)
-    const sourceUrl =
-      session.candidate.mediaUrl ??
-      session.candidate.frameUrl ??
-      session.candidate.pageUrl
+    const sourceUrls = [...new Set(session.candidates.map((candidate) =>
+      candidate.mediaUrl ?? candidate.frameUrl ?? candidate.pageUrl
+    ))]
     let cookieFile: string | null = null
     if (session.cookies.length > 0) {
       cookieFile = path.join(this.cookieRoot, `${session.id}.txt`)
@@ -264,10 +307,9 @@ export class MediaSessionService {
       chmodSync(cookieFile, 0o600)
     }
     return {
-      sourceUrl,
-      pageUrl: session.candidate.pageUrl,
-      frameUrl: session.candidate.frameUrl ?? null,
-      sourceKind: session.candidate.kind,
+      sourceUrls,
+      pageUrl: session.candidates[0].pageUrl,
+      sourceKind: "page",
       cookieFile,
       authentication:
         session.cookies.length > 0 ? "browser-session" : "none",
@@ -288,7 +330,7 @@ export class MediaSessionService {
     const session = this.sessions.get(sessionId)
     if (!session) {
       throw new MediaSessionOperationError(
-        "瀏覽器媒體工作階段已失效，請重新從擴充功能加入",
+        "本次來源資料已失效，請回到原分頁重新加入",
         "media-session-expired",
         409,
       )
@@ -299,9 +341,9 @@ export class MediaSessionService {
           ? ("browser-session" as const)
           : ("none" as const),
       authenticationConsentAt: session.authenticationConsentAt,
-      sourceKind: session.candidate.kind,
-      pageUrl: session.candidate.pageUrl,
-      candidateFingerprint: session.candidate.candidateFingerprint,
+      sourceKind: "page" as const,
+      pageUrl: session.candidates[0].pageUrl,
+      candidateFingerprint: session.candidateFingerprint,
     }
   }
 

@@ -1,19 +1,42 @@
 import { expect, test, chromium } from "@playwright/test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { unzipSync } from "fflate"
 
-const repositoryRoot = path.resolve(import.meta.dirname, "../..")
-const extensionPath = path.join(
-  repositoryRoot,
-  "plugins/insu-player/chrome-extension",
-)
+import { EXTENSION_CONNECTION_PROTOCOL_VERSION } from "../../src/shared/contracts/browser-extension"
 
-test("connects the unpacked extension from the currently open INSU Player page", async ({
+function extractPackage(archive: Uint8Array, target: string) {
+  const files = unzipSync(archive)
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const output = path.join(target, relativePath)
+    mkdirSync(path.dirname(output), { recursive: true })
+    writeFileSync(output, contents)
+  }
+  return files
+}
+
+test("connects automatically from the service-specific extension ZIP", async ({
   baseURL,
 }) => {
   if (!baseURL) throw new Error("extension test requires baseURL")
-  const userDataDir = mkdtempSync(path.join(tmpdir(), "insu-extension-e2e-"))
+  const serverOrigin = new URL(baseURL).origin
+  const packageResponse = await fetch(`${serverOrigin}/api/extension/package`, {
+    method: "POST",
+    headers: { Origin: serverOrigin },
+  })
+  expect(packageResponse.status).toBe(200)
+
+  const root = mkdtempSync(path.join(tmpdir(), "insu-extension-e2e-"))
+  const extensionPath = path.join(root, "extension")
+  const userDataDir = path.join(root, "profile")
+  mkdirSync(extensionPath)
+  const files = extractPackage(
+    new Uint8Array(await packageResponse.arrayBuffer()),
+    extensionPath,
+  )
+  expect(Object.keys(files)).toContain("pairing-bootstrap.json")
+
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
     args: [
@@ -33,27 +56,44 @@ test("connects the unpacked extension from the currently open INSU Player page",
     const homepage = await context.newPage()
     await homepage.goto(baseURL)
     const policy = homepage.getByRole("dialog", { name: "使用規範" })
-    await expect(policy).toBeVisible()
-    await policy.getByRole("button", { name: "我了解並同意" }).click()
-    await expect(
-      homepage.getByRole("heading", { name: /用 Agent/ }),
-    ).toBeVisible()
+    if (await policy.isVisible()) {
+      await policy.getByRole("button", { name: "我了解並同意" }).click()
+    }
 
-    await homepage.bringToFront()
     const extensionPagePromise = context.waitForEvent("page")
     await serviceWorker.evaluate(async (url) => {
       await chrome.tabs.create({ url, active: false })
     }, `chrome-extension://${extensionId}/popup.html`)
     const extensionPage = await extensionPagePromise
     await extensionPage.waitForLoadState("domcontentloaded")
-    const connectButton = extensionPage.getByRole("button", {
-      name: "連接目前的 INSU Player",
-    })
-    await expect(connectButton).toBeVisible()
-    await connectButton.click()
+
     await expect(extensionPage.getByRole("status")).toContainText(
       "已連接本機服務",
+      { timeout: 10_000 },
     )
+    await expect(extensionPage.locator(".eyebrow")).toHaveCSS(
+      "color",
+      "rgb(139, 124, 246)",
+    )
+    await expect(extensionPage.locator(".primary").first()).toHaveCSS(
+      "background-color",
+      "rgb(139, 124, 246)",
+    )
+    await expect(extensionPage.locator('input[type="file"]')).toHaveCount(0)
+    await expect(
+      extensionPage.getByRole("button", { name: /匯入配對檔/ }),
+    ).toHaveCount(0)
+    await expect(
+      extensionPage.getByText(
+        "點擊以下按鈕代表有權下載、轉錄與觀看這項內容，且同意把這組來源需要的 Cookie 傳到本機服務，只供這次下載使用。",
+      ),
+    ).toHaveCount(1)
+    await expect(extensionPage.locator('input[type="checkbox"]')).toHaveCount(0)
+    await expect(extensionPage.locator("#candidate-list")).toHaveCount(0)
+    await expect(extensionPage.getByText(/^主要$|^備援/)).toHaveCount(0)
+    await expect(
+      extensionPage.getByRole("button", { name: /偵測 iframe|選擇來源模式/ }),
+    ).toHaveCount(0)
     await expect
       .poll(() =>
         homepage.evaluate(async () => {
@@ -61,20 +101,26 @@ test("connects the unpacked extension from the currently open INSU Player page",
           return response.json()
         }),
       )
-      .toMatchObject({ protocolVersion: 2, paired: true })
+      .toMatchObject({
+        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
+        paired: true,
+      })
 
     const stored = await extensionPage.evaluate(async () =>
-      chrome.storage.local.get("insuConnection"),
+      chrome.storage.local.get(null),
     )
     expect(stored).toMatchObject({
       insuConnection: {
-        protocolVersion: 2,
-        serverOrigin: baseURL,
+        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
+        serverOrigin,
         connectedAt: expect.any(String),
+        token: expect.any(String),
       },
     })
+    expect(JSON.stringify(stored)).not.toContain("invitationId")
+    expect(JSON.stringify(stored)).not.toContain("ticket")
   } finally {
     await context.close()
-    rmSync(userDataDir, { recursive: true, force: true })
+    rmSync(root, { recursive: true, force: true })
   }
 })

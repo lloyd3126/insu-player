@@ -240,9 +240,9 @@ class MonitorPlayerJobTests(unittest.TestCase):
 
     def test_rejects_legacy_schema_and_paths_outside_project(self) -> None:
         status = self.write_status(state="ready", stage="complete", progress=100)
-        status["schemaVersion"] = 3
+        status["schemaVersion"] = 2
         write_media_record(self.workspace, status)
-        with self.assertRaisesRegex(ValueError, "schemaVersion 2"):
+        with self.assertRaisesRegex(ValueError, "schemaVersion 3"):
             self.snapshot()
 
         outside = Path(self.temporary.name) / "outside"

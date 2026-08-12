@@ -12,12 +12,16 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { unzipSync } from "fflate"
 
 import { createApplication } from "@server/app"
 import { openAppDatabase } from "@server/db/client"
 import { JobRepository } from "@server/repositories/job-repository"
 import { DownloadQueueService } from "@server/services/download-queue-service"
+import { LibraryService } from "@server/services/library-service"
+import { LocalMediaImportService } from "@server/services/local-media-import-service"
 import { ExtensionPairingService } from "@server/services/extension-pairing-service"
+import { ExtensionPackageService } from "@server/services/extension-package-service"
 import { MediaSessionService } from "@server/services/media-session-service"
 import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 import { NoteService } from "@server/services/note-service"
@@ -25,14 +29,16 @@ import type { RemovalOperations } from "@server/services/removal-service"
 import { ResourceService } from "@server/services/resource-service"
 import { RuntimeService } from "@server/services/runtime-service"
 import { SummaryService } from "@server/services/summary-service"
+import { SubtitleStyleService } from "@server/services/subtitle-style-service"
 import type { MediaOperations } from "@server/services/media-service"
 import type { RemovalTarget } from "@shared/contracts/removal"
 import { EXTENSION_CONNECTION_PROTOCOL_VERSION } from "@shared/contracts/browser-extension"
+import { DEFAULT_SUBTITLE_STYLES } from "@shared/contracts/subtitle-style"
 
 const repositoryRoot = path.resolve(import.meta.dir, "../..")
-const migrations = path.join(
+const schema = path.join(
   repositoryRoot,
-  "plugins/insu-player/skills/watch-video/assets/server/drizzle",
+  "plugins/insu-player/skills/watch-video/assets/server/current-schema.sql",
 )
 
 let workspace = ""
@@ -156,7 +162,30 @@ function seedJob() {
   writeFileSync(path.join(sourceRoot, "source.vtt"), english)
   writeFileSync(path.join(translationRoot, "input.vtt"), english)
   writeFileSync(path.join(translationRoot, "output.vtt"), chinese)
-  writeFileSync(path.join(translationRoot, "manifest.json"), '{"schemaVersion":5}\n')
+  const translationManifestContents = `${JSON.stringify({
+    schemaVersion: 5,
+    mode: "translate",
+    sourceFormat: "model-timed-units",
+    sourceLanguage: "en",
+    outputLanguage: "zh-TW",
+    sourceTranscript: "transcript.json",
+    timingSourceArtifactId: sourceId,
+    sourceContentArtifactId: sourceId,
+    sourceContentKind: "model-transcript",
+    sourceContentManifest: null,
+    sourceContentChecksum: null,
+    referenceArtifactIds: [],
+    timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
+    contentProcessor: { provider: "agent", service: "codex" },
+    sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-08T01:00:00.000Z" },
+    outputProfile: {},
+    rules: {},
+    segments: [],
+  })}\n`
+  writeFileSync(
+    path.join(translationRoot, "manifest.json"),
+    translationManifestContents,
+  )
   const digest = (contents: string) => createHash("sha256").update(contents).digest("hex")
   const artifactDigest = (
     tracks: Array<Record<string, unknown>>,
@@ -178,7 +207,8 @@ function seedJob() {
     tracks: Array<Record<string, unknown>>,
     overrides: Record<string, unknown> = {},
   ) => {
-    const manifestContents = kind === "source" ? undefined : '{"schemaVersion":5}\n'
+    const manifestContents =
+      kind === "source" ? undefined : translationManifestContents
     const currentTracks = tracks.map((track) => ({
       updatedAt: "2026-08-08T01:00:00.000Z",
       ...track,
@@ -213,7 +243,7 @@ function seedJob() {
   }
   writeFileSync(path.join(job, "logs", "workflow.log"), "downloaded\nreflowed\n")
   return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       videoId: "demo-video",
       title: "雙語測試影音",
       sourceUrl: "https://example.test/video",
@@ -304,12 +334,67 @@ function mutateStatus(
     .run(JSON.stringify(status), "demo-video")
 }
 
+function seedDownloadItem({
+  itemId,
+  operationId,
+  sourceUrl,
+  state = "failed",
+  videoId = null,
+  sessionId = null,
+  resumable = true,
+}: {
+  itemId: string
+  operationId: string
+  sourceUrl: string
+  state?: "failed" | "cancelled"
+  videoId?: string | null
+  sessionId?: string | null
+  resumable?: boolean
+}) {
+  const timestamp = "2026-08-11T01:00:00.000Z"
+  sqlite
+    .query(
+      "INSERT INTO operations (id, video_id, parent_operation_id, kind, state, stage, progress, message, inputs_json, outputs_json, consent_json, resumable, attempt, pid, error_code, error_message, created_at, started_at, updated_at, completed_at) VALUES (?, ?, NULL, 'media-download', ?, 'media-download', 0, '影音下載失敗', '{}', '{}', '{\"rightsConfirmed\":true}', ?, 1, NULL, 'download-failed', 'download process failed', ?, ?, ?, ?)",
+    )
+    .run(
+      operationId,
+      videoId,
+      state,
+      resumable ? 1 : 0,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+    )
+  sqlite
+    .query(
+      "INSERT INTO operation_events (operation_id, sequence, type, state, stage, progress, message, data_json, created_at) VALUES (?, 1, 'created', ?, 'media-download', 0, '影音下載失敗', '{}', ?)",
+    )
+    .run(operationId, state, timestamp)
+  sqlite
+    .query(
+      "INSERT INTO download_queue_items (id, source_kind, page_url, source_url, source_key, session_id, operation_id, video_id, rights_confirmed, low_quality_approved, authentication, authentication_consent_at, created_at, completed_at) VALUES (?, 'page', ?, ?, ?, ?, ?, ?, 1, 0, ?, NULL, ?, ?)",
+    )
+    .run(
+      itemId,
+      sourceUrl,
+      sourceUrl,
+      `page:${sourceUrl}`,
+      sessionId,
+      operationId,
+      videoId,
+      sessionId ? "browser-session" : "none",
+      timestamp,
+      timestamp,
+    )
+}
+
 beforeEach(() => {
   previewedTarget = null
   executedRemoval = null
   workspace = mkdtempSync(path.join(tmpdir(), "insu-player-api-test-"))
   const status = seedJob()
-  const opened = openAppDatabase(path.join(workspace, "app.db"), migrations)
+  const opened = openAppDatabase(path.join(workspace, "app.db"), schema)
   sqlite = opened.sqlite
   database = opened.db
   sqlite
@@ -347,16 +432,34 @@ beforeEach(() => {
     ),
     mediaSessions,
   )
+  const fakeFfmpeg = path.join(workspace, "fake-ffmpeg")
+  writeFileSync(
+    fakeFfmpeg,
+    "#!/bin/sh\nprintf 'Duration: 00:00:03.250, start: 0.000000, bitrate: 100 kb/s\\nStream #0:0: Video: h264, yuv420p, 640x360\\nStream #0:1: Audio: aac, 44100 Hz, stereo\\n' >&2\nexit 1\n",
+    { mode: 0o700 },
+  )
+  chmodSync(fakeFfmpeg, 0o700)
+  const imports = new LocalMediaImportService(
+    workspace,
+    opened.db,
+    jobs,
+    fakeFfmpeg,
+  )
   app = createApplication({
     jobs,
     downloads: downloadQueueService,
+    imports,
+    library: new LibraryService(downloadQueueService, imports),
     extensionPairing: new ExtensionPairingService(
       opened.db,
+    ),
+    extensionPackage: new ExtensionPackageService(
       path.join(repositoryRoot, "plugins/insu-player/chrome-extension"),
     ),
     mediaSessions,
     models: new TranscriptionModelCatalogService(workspace, opened.db),
     summaries: new SummaryService(jobs, opened.db),
+    subtitleStyles: new SubtitleStyleService(opened.db),
     notes: new NoteService(opened.db),
     media,
     removals,
@@ -399,12 +502,11 @@ describe("Hono application", () => {
       "/guide/add-media",
       "/prompts",
       "/supported-sites",
-      "/extension/install",
+      "/extension/download",
       "/extension/connect",
       "/extension/usage",
       "/settings",
       "/settings/models/cloud.groq.whisper-large-v3",
-      "/library/add",
       "/library/list",
       "/jobs/demo-video/activity",
       "/player/demo-video?caption=zh-TW",
@@ -433,8 +535,8 @@ describe("Hono application", () => {
       status: "ok",
       runtime: "bun",
       framework: "hono",
-      buildId: "insu-player-library-queue-v1",
-      dataSchemaVersion: 5,
+      buildId: "insu-player-extension-bootstrap-v1",
+      dataSchemaVersion: 9,
       extensionProtocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       database: "sqlite",
       port: 4178,
@@ -478,22 +580,61 @@ describe("Hono application", () => {
     expect(activeTrackCount.count).toBe(2)
   })
 
-  test("pairs one Chrome extension and keeps raw tokens and cookies out of SQLite", async () => {
+  test("downloads the exact extension package and pairs once without storing raw secrets", async () => {
     const origin = "http://127.0.0.1:4178"
     const extensionOrigin = `chrome-extension://${"a".repeat(32)}`
-    const start = await app.request(`${origin}/api/extension/pairing/start`, {
+
+    const packageResponse = await app.request(`${origin}/api/extension/package`, {
       method: "POST",
       headers: { Origin: origin },
     })
-    expect(start.status).toBe(201)
-    const invitation = (await start.json()) as {
+    expect(packageResponse.status).toBe(200)
+    expect(packageResponse.headers.get("content-type")).toBe("application/zip")
+    expect(packageResponse.headers.get("content-disposition")).toContain(
+      "insu-player-extension-v0.3.0.zip",
+    )
+    const packageBytes = new Uint8Array(await packageResponse.arrayBuffer())
+    const packageChecksum = packageResponse.headers.get("x-insu-package-sha256")
+    if (!packageChecksum) throw new Error("missing extension package checksum")
+    expect(
+      createHash("sha256").update(packageBytes).digest("hex"),
+    ).toBe(packageChecksum)
+    const packageFiles = unzipSync(packageBytes)
+    expect(Object.keys(packageFiles).sort()).toEqual([
+      "connection-protocol.js",
+      "content-bridge.js",
+      "manifest.json",
+      "media-discovery.js",
+      "pairing-bootstrap.json",
+      "popup.css",
+      "popup.html",
+      "popup.js",
+      "service-worker.js",
+    ])
+    const invitation = JSON.parse(
+      new TextDecoder().decode(packageFiles["pairing-bootstrap.json"]),
+    ) as {
       protocolVersion: number
-      challengeId: string
-      token: string
+      invitationId: string
+      ticket: string
+      serverOrigin: string
     }
     expect(invitation.protocolVersion).toBe(
       EXTENSION_CONNECTION_PROTOCOL_VERSION,
     )
+    expect(invitation.serverOrigin).toBe(origin)
+    const storedInvitation = sqlite
+      .query(
+        "select ticket_hash, claimed_at, revoked_at from extension_pairing_invitations where id = ?",
+      )
+      .get(invitation.invitationId) as {
+        ticket_hash: string
+        claimed_at: string | null
+        revoked_at: string | null
+      }
+    expect(storedInvitation.ticket_hash).not.toContain(invitation.ticket)
+    expect(storedInvitation.claimed_at).toBeNull()
+    expect(storedInvitation.revoked_at).toBeNull()
 
     const incompatibleClaim = await app.request(
       `${origin}/api/extension/pairing/claim`,
@@ -504,8 +645,8 @@ describe("Hono application", () => {
           Origin: extensionOrigin,
         },
         body: JSON.stringify({
-          challengeId: invitation.challengeId,
-          token: invitation.token,
+          invitationId: invitation.invitationId,
+          ticket: invitation.ticket,
         }),
       },
     )
@@ -519,12 +660,29 @@ describe("Hono application", () => {
       },
       body: JSON.stringify({
         protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
-        challengeId: invitation.challengeId,
-        token: invitation.token,
+        invitationId: invitation.invitationId,
+        ticket: invitation.ticket,
       }),
     })
     expect(claim.status).toBe(201)
     expect(claim.headers.get("access-control-allow-origin")).toBe(extensionOrigin)
+    const claimed = (await claim.json()) as { connectionToken: string }
+    expect(claimed.connectionToken).not.toBe(invitation.ticket)
+
+    const reused = await app.request(`${origin}/api/extension/pairing/claim`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: extensionOrigin,
+      },
+      body: JSON.stringify({
+        protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
+        invitationId: invitation.invitationId,
+        ticket: invitation.ticket,
+      }),
+    })
+    expect(reused.status).toBe(409)
+    expect(await reused.json()).toMatchObject({ code: "bootstrap-consumed" })
 
     const pairingStatus = await app.request(`${origin}/api/extension/pairing`)
     expect(pairingStatus.status).toBe(200)
@@ -532,9 +690,7 @@ describe("Hono application", () => {
       protocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       paired: true,
       extensionOrigin,
-      extensionDirectory: expect.stringContaining(
-        "plugins/insu-player/chrome-extension",
-      ),
+      serverOrigin: origin,
     })
 
     const authenticationHeaders = {
@@ -542,14 +698,14 @@ describe("Hono application", () => {
       "X-INSU-Extension-Protocol": String(
         EXTENSION_CONNECTION_PROTOCOL_VERSION,
       ),
-      "X-INSU-Extension-Token": invitation.token,
+      "X-INSU-Extension-Token": claimed.connectionToken,
     }
     expect(
       (
         await app.request(`${origin}/api/extension/health`, {
           headers: {
             Origin: extensionOrigin,
-            "X-INSU-Extension-Token": invitation.token,
+            "X-INSU-Extension-Token": claimed.connectionToken,
           },
         })
       ).status,
@@ -574,11 +730,13 @@ describe("Hono application", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          candidate: {
-            kind: "page",
-            pageUrl: "https://example.test/video",
-            candidateFingerprint: "b".repeat(64),
-          },
+          candidates: [
+            {
+              kind: "page",
+              pageUrl: "https://example.test/video",
+              candidateFingerprint: "b".repeat(64),
+            },
+          ],
           cookies: [
             {
               name: "empty",
@@ -607,9 +765,10 @@ describe("Hono application", () => {
     )
     expect(mediaSession.status).toBe(201)
     expect(await mediaSession.json()).toMatchObject({
-      candidateFingerprint: "b".repeat(64),
+      candidateFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
     })
 
+    downloadQueueService.pause()
     const enqueue = await app.request(
       `${origin}/api/extension/library/items`,
       {
@@ -631,14 +790,18 @@ describe("Hono application", () => {
       },
     )
     expect(enqueue.status).toBe(202)
-    expect(await enqueue.json()).toEqual({
-      accepted: true,
-      itemIds: ["media:demo-video"],
-    })
+    const enqueued = (await enqueue.json()) as {
+      accepted: boolean
+      itemIds: string[]
+    }
+    expect(enqueued.accepted).toBe(true)
+    expect(enqueued.itemIds).toHaveLength(1)
+    expect(enqueued.itemIds[0]?.startsWith("library-")).toBe(true)
 
     const database = readFileSync(path.join(workspace, "app.db"))
     expect(database.includes(Buffer.from(secretCookie))).toBe(false)
-    expect(database.includes(Buffer.from(invitation.token))).toBe(false)
+    expect(database.includes(Buffer.from(invitation.ticket))).toBe(false)
+    expect(database.includes(Buffer.from(claimed.connectionToken))).toBe(false)
 
     const revoke = await app.request(`${origin}/api/extension/pairing`, {
       method: "DELETE",
@@ -663,7 +826,7 @@ describe("Hono application", () => {
     )
     expect(response.status).toBe(500)
     expect(await response.json()).toEqual({
-      error: "media item record must use schemaVersion 2",
+      error: "media item record must use schemaVersion 3",
     })
     expect(
       sqlite.query("select count(*) as count from media_items").get(),
@@ -707,7 +870,11 @@ describe("Hono application", () => {
     )
     expect(catalogResponse.status).toBe(200)
     const catalog = (await catalogResponse.json()) as {
-      artifacts: Array<{ id: string; kind: string; tracks: unknown[] }>
+      artifacts: Array<{
+        id: string
+        kind: string
+        tracks: Array<{ id: string; languageCode: string }>
+      }>
       activeTracks: Array<{ languageCode: string; artifactKind: string }>
     }
     expect(catalog.artifacts.map(({ kind }) => kind)).toEqual([
@@ -747,6 +914,23 @@ describe("Hono application", () => {
         },
       ],
     })
+    const outputTrack = artifact?.tracks.find(
+      ({ languageCode }) => languageCode === "zh-TW",
+    )
+    const exportedText = await app.request(
+      `http://127.0.0.1:4178/api/jobs/demo-video/subtitles/artifacts/${artifact?.id}/tracks/${outputTrack?.id}/export?format=txt`,
+    )
+    expect(exportedText.status).toBe(200)
+    expect(exportedText.headers.get("content-disposition")).toContain("attachment")
+    expect(await exportedText.text()).toBe("完整句子\n")
+
+    const exportedSrt = await app.request(
+      `http://127.0.0.1:4178/api/jobs/demo-video/subtitles/artifacts/${artifact?.id}/tracks/${outputTrack?.id}/export?format=srt`,
+    )
+    expect(exportedSrt.status).toBe(200)
+    expect(await exportedSrt.text()).toContain(
+      "1\n00:00:00,000 --> 00:00:02,000\n完整句子",
+    )
 
     const captions = await app.request(
       "http://127.0.0.1:4178/api/jobs/demo-video/captions",
@@ -817,6 +1001,91 @@ describe("Hono application", () => {
     expect(media.status).toBe(206)
     expect(media.headers.get("content-range")).toBe("bytes 0-3/26")
     expect(await media.text()).toBe("fake")
+  })
+
+  test("persists subtitle styles and saved presets through the current API", async () => {
+    const origin = "http://127.0.0.1:4178"
+    const custom = {
+      ...DEFAULT_SUBTITLE_STYLES,
+      primary: { ...DEFAULT_SUBTITLE_STYLES.primary, fontScale: 1.25 },
+    }
+    const created = await app.request(`${origin}/api/subtitle-styles/presets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ name: "大字模式", styles: custom }),
+    })
+    expect(created.status).toBe(201)
+    expect(await created.json()).toMatchObject({
+      active: custom,
+      presets: [{ name: "大字模式", styles: custom }],
+    })
+
+    const catalog = await app.request(`${origin}/api/subtitle-styles`)
+    expect(await catalog.json()).toMatchObject({
+      active: custom,
+      activePresetId: expect.stringMatching(/^subtitle-style-/),
+    })
+  })
+
+  test("imports one authorized local file and publishes it as playable media", async () => {
+    const origin = "http://127.0.0.1:4178"
+    const bytes = new TextEncoder().encode("test-mp4")
+    const created = await app.request(`${origin}/api/library/imports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({
+        originalName: "Local Clip.mp4",
+        title: "Local Clip",
+        sizeBytes: bytes.byteLength,
+        contentType: "video/mp4",
+        rightsConfirmed: true,
+      }),
+    })
+    expect(created.status).toBe(201)
+    const metadata = (await created.json()) as {
+      importId: string
+      uploadUrl: string
+    }
+    expect(metadata.importId).toMatch(/^local-import-/)
+
+    const pending = await app.request(`${origin}/api/library`)
+    const pendingLibrary = (await pending.json()) as {
+      items: Array<Record<string, unknown>>
+    }
+    expect(
+      pendingLibrary.items.find((item) => item.id === metadata.importId),
+    ).toMatchObject({ kind: "import", state: "awaiting_upload" })
+
+    const uploaded = await app.request(`${origin}${metadata.uploadUrl}`, {
+      method: "PUT",
+      headers: {
+        Origin: origin,
+        "Content-Type": "video/mp4",
+        "Content-Length": String(bytes.byteLength),
+      },
+      body: bytes,
+    })
+    expect(uploaded.status).toBe(202)
+    const completed = (await uploaded.json()) as { videoId: string }
+    expect(completed.videoId).toMatch(/^local-[0-9a-f]{16}$/)
+
+    const library = await app.request(`${origin}/api/library`)
+    const completedLibrary = (await library.json()) as {
+      items: Array<{ kind: string; job?: Record<string, unknown> }>
+    }
+    expect(
+      completedLibrary.items.find(
+        (item) => item.job?.videoId === completed.videoId,
+      ),
+    ).toMatchObject({
+      kind: "media",
+      job: {
+        videoId: completed.videoId,
+        sourceUrl: null,
+        sourceKind: "local-file",
+        watchable: true,
+      },
+    })
   })
 
   test("serves media quality metadata and protects every media mutation by origin", async () => {
@@ -1172,7 +1441,7 @@ describe("Hono application", () => {
     ).toBe(404)
   })
 
-  test("requires content rights and reuses an existing watchable library item", async () => {
+  test("requires content rights and accepts a fresh download of existing media", async () => {
     const origin = "http://127.0.0.1:4178"
     const missingRights = await app.request(`${origin}/api/library/items`, {
       method: "POST",
@@ -1187,6 +1456,7 @@ describe("Hono application", () => {
       error: "開始下載前請先確認內容權利",
     })
 
+    downloadQueueService.pause()
     const response = await app.request(`${origin}/api/library/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: origin },
@@ -1196,9 +1466,36 @@ describe("Hono application", () => {
       }),
     })
     expect(response.status).toBe(202)
-    expect(await response.json()).toEqual({
+    const created = (await response.json()) as {
+      accepted: boolean
+      itemIds: string[]
+    }
+    expect(created.accepted).toBe(true)
+    expect(created.itemIds).toHaveLength(1)
+    expect(created.itemIds[0]?.startsWith("library-")).toBe(true)
+    expect(downloadQueueService.list()).toMatchObject({
+      items: [
+        { id: created.itemIds[0], kind: "download", state: "queued" },
+        { id: "media:demo-video", kind: "media" },
+      ],
+      queue: { queuedCount: 1 },
+    })
+
+    const repeated = await app.request(`${origin}/api/library/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({
+        sources: [
+          { kind: "page", pageUrl: "https://example.test/video" },
+          { kind: "page", pageUrl: "https://example.test/video" },
+        ],
+        rightsConfirmed: true,
+      }),
+    })
+    expect(repeated.status).toBe(202)
+    expect(await repeated.json()).toEqual({
       accepted: true,
-      itemIds: ["media:demo-video"],
+      itemIds: [created.itemIds[0], created.itemIds[0]],
     })
   })
 
@@ -1249,6 +1546,114 @@ describe("Hono application", () => {
       ],
       queue: { activeCount: 0, queuedCount: 0 },
     })
+
+    downloadQueueService.pause()
+    expect(
+      downloadQueueService.create(
+        [{ kind: "page", pageUrl: "https://example.test/video" }],
+        true,
+      ),
+    ).toEqual({ accepted: true, itemIds: ["library-stable-demo"] })
+    expect(downloadQueueService.list()).toMatchObject({
+      items: [
+        { id: "library-stable-demo", kind: "download", state: "queued" },
+        { id: "media:demo-video", kind: "media" },
+      ],
+      queue: { activeCount: 0, queuedCount: 1 },
+    })
+    const redownloadInputs = sqlite
+      .query("select inputs_json from operations where id = ?")
+      .get("operation-complete-download") as { inputs_json: string }
+    expect(JSON.parse(redownloadInputs.inputs_json)).toMatchObject({
+      redownloadBaselineUpdatedAt:
+        jobRepository.listDownloadProjections()[0]?.updatedAt,
+    })
+  })
+
+  test("reconciles a stale failed extension download from published media without its consumed session", () => {
+    seedDownloadItem({
+      itemId: "library-published-demo",
+      operationId: "operation-published-demo",
+      sourceUrl: "https://example.test/video",
+      videoId: "demo-video",
+      sessionId: "media-session-00000000-0000-4000-8000-000000000000",
+      resumable: false,
+    })
+
+    const library = downloadQueueService.list()
+    expect(library).toMatchObject({
+      items: [
+        {
+          id: "library-published-demo",
+          kind: "media",
+          job: { videoId: "demo-video", watchable: true },
+        },
+      ],
+      queue: { activeCount: 0, queuedCount: 0, attentionCount: 0 },
+    })
+    expect(
+      sqlite
+        .query(
+          "select video_id, state, stage, progress, error_code, error_message from operations where id = ?",
+        )
+        .get("operation-published-demo"),
+    ).toEqual({
+      video_id: "demo-video",
+      state: "downloaded",
+      stage: "complete",
+      progress: 100,
+      error_code: null,
+      error_message: null,
+    })
+    expect(
+      sqlite
+        .query(
+          "select state, stage from operation_events where operation_id = ? order by sequence desc limit 1",
+        )
+        .get("operation-published-demo"),
+    ).toEqual({ state: "downloaded", stage: "complete" })
+
+    expect(downloadQueueService.retry("library-published-demo")).toMatchObject({
+      items: [{ id: "library-published-demo", kind: "media" }],
+    })
+  })
+
+  test("deletes a failed download item and its operation without touching media", async () => {
+    const origin = "http://127.0.0.1:4178"
+    seedDownloadItem({
+      itemId: "library-failed-removal",
+      operationId: "operation-failed-removal",
+      sourceUrl: "https://example.test/failed-removal",
+    })
+
+    const forbidden = await app.request(
+      `${origin}/api/library/items/library-failed-removal`,
+      { method: "DELETE", headers: { Origin: "https://untrusted.example" } },
+    )
+    expect(forbidden.status).toBe(403)
+
+    const removed = await app.request(
+      `${origin}/api/library/items/library-failed-removal`,
+      { method: "DELETE", headers: { Origin: origin } },
+    )
+    expect(removed.status).toBe(200)
+    expect(await removed.json()).toMatchObject({
+      items: [{ kind: "media", job: { videoId: "demo-video" } }],
+      queue: { attentionCount: 0 },
+    })
+    expect(
+      sqlite
+        .query("select count(*) as count from download_queue_items where id = ?")
+        .get("library-failed-removal"),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite
+        .query("select count(*) as count from operations where id = ?")
+        .get("operation-failed-removal"),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite.query("select count(*) as count from media_items").get(),
+    ).toEqual({ count: 1 })
   })
 
   test("persists the global queue pause without starting newly added items", async () => {

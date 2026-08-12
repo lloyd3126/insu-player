@@ -1,8 +1,8 @@
-export const CONNECTION_PROTOCOL_VERSION = 2
-export const CONNECT_REQUEST_MESSAGE = "INSU_EXTENSION_CONNECT_REQUEST"
-export const CONNECT_RESPONSE_MESSAGE = "INSU_EXTENSION_CONNECT_RESPONSE"
-export const EXPECTED_SERVER_BUILD_ID = "insu-player-library-queue-v1"
-export const EXPECTED_DATA_SCHEMA_VERSION = 5
+export const CONNECTION_PROTOCOL_VERSION = 4
+export const BOOTSTRAP_KIND = "insu-player-extension-bootstrap"
+export const BOOTSTRAP_SCHEMA_VERSION = 1
+export const EXPECTED_SERVER_BUILD_ID = "insu-player-extension-bootstrap-v1"
+export const EXPECTED_DATA_SCHEMA_VERSION = 9
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
@@ -59,16 +59,39 @@ export function isCurrentInsuHealth(value) {
   )
 }
 
-export function isConnectionChallenge(value, expectedOrigin) {
-  return (
-    isRecord(value) &&
-    value.protocolVersion === CONNECTION_PROTOCOL_VERSION &&
-    value.serverOrigin === expectedOrigin &&
-    typeof value.challengeId === "string" &&
-    /^pair-[0-9a-f-]{36}$/.test(value.challengeId) &&
-    typeof value.token === "string" &&
-    value.token.length >= 32 &&
-    typeof value.expiresAt === "string" &&
-    Date.parse(value.expiresAt) > Date.now()
-  )
+export function normalizeBootstrap(value, now = Date.now()) {
+  if (!isRecord(value)) return null
+  const serverOrigin = normalizeLoopbackOrigin(value.serverOrigin)
+  if (
+    value.kind !== BOOTSTRAP_KIND ||
+    value.schemaVersion !== BOOTSTRAP_SCHEMA_VERSION ||
+    value.protocolVersion !== CONNECTION_PROTOCOL_VERSION ||
+    value.buildId !== EXPECTED_SERVER_BUILD_ID ||
+    value.dataSchemaVersion !== EXPECTED_DATA_SCHEMA_VERSION ||
+    !serverOrigin ||
+    typeof value.invitationId !== "string" ||
+    !/^pair-[0-9a-f-]{36}$/.test(value.invitationId) ||
+    typeof value.ticket !== "string" ||
+    value.ticket.length < 32 ||
+    typeof value.issuedAt !== "string" ||
+    !Number.isFinite(Date.parse(value.issuedAt)) ||
+    typeof value.expiresAt !== "string" ||
+    !Number.isFinite(Date.parse(value.expiresAt)) ||
+    Date.parse(value.issuedAt) >= Date.parse(value.expiresAt) ||
+    Date.parse(value.expiresAt) <= now
+  ) {
+    return null
+  }
+  return {
+    kind: BOOTSTRAP_KIND,
+    schemaVersion: BOOTSTRAP_SCHEMA_VERSION,
+    protocolVersion: CONNECTION_PROTOCOL_VERSION,
+    serverOrigin,
+    buildId: EXPECTED_SERVER_BUILD_ID,
+    dataSchemaVersion: EXPECTED_DATA_SCHEMA_VERSION,
+    invitationId: value.invitationId,
+    ticket: value.ticket,
+    issuedAt: value.issuedAt,
+    expiresAt: value.expiresAt,
+  }
 }

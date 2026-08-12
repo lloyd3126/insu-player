@@ -39,10 +39,22 @@ class PortableReleaseTests(unittest.TestCase):
                 self.assertIn(prefix + "VERSION", names)
                 self.assertIn(prefix + "MANIFEST.sha256", names)
                 self.assertIn(prefix + "scripts/portable/setup.sh", names)
-                self.assertIn(prefix + "scripts/portable/update.sh", names)
                 self.assertIn(prefix + ".agents/plugins/marketplace.json", names)
                 self.assertIn(prefix + ".agents/skills/watch-video/SKILL.md", names)
+                self.assertIn(
+                    prefix + ".agents/skills/migrate-player-library/SKILL.md",
+                    names,
+                )
                 self.assertIn(prefix + "plugins/insu-player/.codex-plugin/plugin.json", names)
+                self.assertIn(
+                    prefix + "plugins/insu-player/skills/migrate-player-library/SKILL.md",
+                    names,
+                )
+                self.assertIn(
+                    prefix
+                    + "plugins/insu-player/skills/migrate-player-library/scripts/migrate_library.py",
+                    names,
+                )
                 self.assertIn(
                     prefix + "plugins/insu-player/chrome-extension/manifest.json",
                     names,
@@ -76,7 +88,7 @@ class PortableReleaseTests(unittest.TestCase):
                     names,
                 )
                 self.assertIn(
-                    prefix + "plugins/insu-player/skills/watch-video/assets/server/drizzle/meta/_journal.json",
+                    prefix + "plugins/insu-player/skills/watch-video/assets/server/current-schema.sql",
                     names,
                 )
                 forbidden_parts = {

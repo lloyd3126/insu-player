@@ -1,6 +1,6 @@
-export const SERVER_BUILD_ID = "insu-player-library-queue-v1"
-export const DATA_SCHEMA_VERSION = 5
-export const MEDIA_RECORD_SCHEMA_VERSION = 2
+export const SERVER_BUILD_ID = "insu-player-extension-bootstrap-v1"
+export const DATA_SCHEMA_VERSION = 9
+export const MEDIA_RECORD_SCHEMA_VERSION = 3
 
 interface RuntimeDescriptor {
   buildId?: unknown

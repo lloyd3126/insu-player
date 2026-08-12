@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect, useRef } from "react"
 
 import { useOverlayState } from "@/app/overlay-context"
 import {
-  loadAddMediaDialog,
   loadChromeExtensionDialog,
   loadJobDetailDialog,
   loadLibraryDialog,
@@ -44,11 +43,6 @@ const LibraryDialog = lazy(() =>
     default: module.LibraryDialog,
   })),
 )
-const AddMediaDialog = lazy(() =>
-  loadAddMediaDialog().then((module) => ({
-    default: module.AddMediaDialog,
-  })),
-)
 const PlayerDialog = lazy(() =>
   loadPlayerDialog().then((module) => ({
     default: module.PlayerDialog,
@@ -72,7 +66,6 @@ const DIALOG_LABELS = {
   "chrome-extension": "Chrome 擴充功能",
   "transcription-settings": "轉錄設定",
   library: "影片中心",
-  "add-media": "加入影音",
   player: "影音播放器",
   detail: "影音詳情",
   policy: "使用規範",
@@ -130,8 +123,6 @@ export function OverlayCoordinator() {
         return <TranscriptionSettingsDialog />
       case "library":
         return <LibraryDialog />
-      case "add-media":
-        return <AddMediaDialog />
       case "player":
         return <PlayerDialog />
       case "detail":

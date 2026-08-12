@@ -13,7 +13,7 @@ export const jobs = sqliteTable(
   {
     videoId: text("video_id").primaryKey(),
     title: text("title").notNull(),
-    sourceUrl: text("source_url").notNull().default(""),
+    sourceUrl: text("source_url"),
     state: text("state").notNull(),
     effectiveState: text("effective_state").notNull(),
     stage: text("stage").notNull(),
@@ -251,7 +251,9 @@ export const downloadQueueItems = sqliteTable(
     operationId: text("operation_id")
       .notNull()
       .references(() => operations.id, { onDelete: "cascade" }),
-    videoId: text("video_id"),
+    videoId: text("video_id").references(() => jobs.videoId, {
+      onDelete: "cascade",
+    }),
     rightsConfirmed: integer("rights_confirmed", { mode: "boolean" })
       .notNull(),
     lowQualityApproved: integer("low_quality_approved", { mode: "boolean" })
@@ -275,14 +277,85 @@ export const downloadQueueSettings = sqliteTable("download_queue_settings", {
   updatedAt: text("updated_at").notNull(),
 })
 
+export const localMediaImports = sqliteTable(
+  "local_media_imports",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => operations.id, { onDelete: "cascade" }),
+    videoId: text("video_id").references(() => jobs.videoId, {
+      onDelete: "cascade",
+    }),
+    originalName: text("original_name").notNull(),
+    title: text("title").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    uploadedBytes: integer("uploaded_bytes").notNull().default(0),
+    checksum: text("checksum"),
+    rightsConfirmed: integer("rights_confirmed", { mode: "boolean" }).notNull(),
+    createdAt: text("created_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("local_media_import_operation_idx").on(table.operationId),
+    index("local_media_import_created_idx").on(table.createdAt),
+  ],
+)
+
+export const subtitleStylePresets = sqliteTable(
+  "subtitle_style_presets",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    stylesJson: text("styles_json", { mode: "json" })
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("subtitle_style_preset_name_idx").on(table.name)],
+)
+
+export const subtitleStyleSettings = sqliteTable("subtitle_style_settings", {
+  id: text("id").primaryKey(),
+  activeStylesJson: text("active_styles_json", { mode: "json" })
+    .$type<Record<string, unknown>>()
+    .notNull(),
+  activePresetId: text("active_preset_id").references(
+    () => subtitleStylePresets.id,
+    { onDelete: "set null" },
+  ),
+  updatedAt: text("updated_at").notNull(),
+})
+
 export const extensionPairings = sqliteTable("extension_pairings", {
   id: text("id").primaryKey(),
+  protocolVersion: integer("protocol_version").notNull(),
   extensionOrigin: text("extension_origin").notNull(),
   tokenHash: text("token_hash").notNull(),
   pairedAt: text("paired_at").notNull(),
   lastSeenAt: text("last_seen_at").notNull(),
   revokedAt: text("revoked_at"),
 })
+
+export const extensionPairingInvitations = sqliteTable(
+  "extension_pairing_invitations",
+  {
+    id: text("id").primaryKey(),
+    protocolVersion: integer("protocol_version").notNull(),
+    serverOrigin: text("server_origin").notNull(),
+    ticketHash: text("ticket_hash").notNull(),
+    issuedAt: text("issued_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    claimedAt: text("claimed_at"),
+    claimedExtensionOrigin: text("claimed_extension_origin"),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [
+    index("extension_pairing_invitation_expiry_idx").on(table.expiresAt),
+  ],
+)
 
 export const localModelDownloadRuns = sqliteTable(
   "local_model_download_runs",
@@ -573,28 +646,6 @@ export const noteAnchors = sqliteTable(
   },
 )
 
-export const collections = sqliteTable("collections", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description").notNull().default(""),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-})
-
-export const collectionItems = sqliteTable(
-  "collection_items",
-  {
-    collectionId: text("collection_id")
-      .notNull()
-      .references(() => collections.id, { onDelete: "cascade" }),
-    videoId: text("video_id")
-      .notNull()
-      .references(() => jobs.videoId, { onDelete: "cascade" }),
-    ordinal: integer("ordinal").notNull().default(0),
-    addedAt: text("added_at").notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.collectionId, table.videoId] })],
-)
 
 export const tags = sqliteTable("tags", {
   id: text("id").primaryKey(),

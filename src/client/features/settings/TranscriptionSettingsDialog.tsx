@@ -1,34 +1,41 @@
-import { useOverlay } from "@/app/overlay-context"
+import { useCallback } from "react"
+
+import { useOverlayActions, useOverlayState } from "@/app/overlay-context"
 import { AppDialog } from "@/components/shared/AppDialog"
 import { ModelsContent } from "@/features/resources/ModelsDialog"
 import { RoutedModelDetailsDialog } from "@/features/resources/ModelDetailsDialog"
 
 export function TranscriptionSettingsDialog() {
-  const overlay = useOverlay()
+  const state = useOverlayState()
+  const actions = useOverlayActions()
   const active =
-    overlay.state?.type === "transcription-settings" ? overlay.state : null
-  const openDetails = (modelId: string) => {
-    overlay.actions.open({
+    state?.type === "transcription-settings" ? state : null
+  const returnTo = active?.returnTo
+  const openDetails = useCallback((modelId: string) => {
+    actions.open({
       type: "transcription-settings",
       modelId,
-      returnTo: active?.returnTo,
+      returnTo,
     })
-  }
-  const closeDetails = () => {
-    overlay.actions.open(
+  }, [actions, returnTo])
+  const closeDetails = useCallback(() => {
+    actions.open(
       {
         type: "transcription-settings",
-        returnTo: active?.returnTo,
+        returnTo,
       },
-      { replace: true, returnTo: active?.returnTo ?? null },
+      { replace: true, returnTo: returnTo ?? null },
     )
-  }
+  }, [actions, returnTo])
+  const handleDetailsOpenChange = useCallback((open: boolean) => {
+    if (!open) closeDetails()
+  }, [closeDetails])
 
   return (
     <AppDialog
       open={Boolean(active)}
       onOpenChange={(open) =>
-        open ? undefined : overlay.actions.close("transcription-settings")
+        open ? undefined : actions.close("transcription-settings")
       }
       kicker="TRANSCRIPTION"
       title="轉錄設定"
@@ -40,9 +47,7 @@ export function TranscriptionSettingsDialog() {
       <ModelsContent onOpenDetails={openDetails} />
       <RoutedModelDetailsDialog
         modelId={active?.modelId}
-        onOpenChange={(open) => {
-          if (!open) closeDetails()
-        }}
+        onOpenChange={handleDetailsOpenChange}
       />
     </AppDialog>
   )

@@ -24,6 +24,7 @@ import {
   SUBTITLE_KIND_COPY,
   validationLabel,
 } from "@/features/job-detail/subtitle-artifact-ui"
+import { SubtitleExportDialog } from "@/features/job-detail/SubtitleExportDialog"
 import type {
   ActiveSubtitleTrack,
   SubtitleArtifact,
@@ -88,6 +89,12 @@ export function SubtitleRevisionTable({
   onRemoved: (artifactId: string) => void
 }) {
   const copy = SUBTITLE_KIND_COPY[kind]
+  const activeLanguagesByArtifact = new Map<string, string[]>()
+  for (const track of activeTracks) {
+    const languages = activeLanguagesByArtifact.get(track.artifactId) ?? []
+    languages.push(track.languageCode)
+    activeLanguagesByArtifact.set(track.artifactId, languages)
+  }
 
   return (
     <Table
@@ -111,9 +118,7 @@ export function SubtitleRevisionTable({
       </TableHeader>
       <TableBody>
         {artifacts.map((artifact) => {
-          const activeLanguageCodes = activeTracks
-            .filter((track) => track.artifactId === artifact.id)
-            .map((track) => track.languageCode)
+          const activeLanguageCodes = activeLanguagesByArtifact.get(artifact.id) ?? []
           return (
             <TableRow key={artifact.id}>
               <TableCell>
@@ -156,6 +161,11 @@ export function SubtitleRevisionTable({
                     </TooltipTrigger>
                     <TooltipContent>預覽字幕</TooltipContent>
                   </Tooltip>
+                  <SubtitleExportDialog
+                    videoId={videoId}
+                    artifact={artifact}
+                    label={copy.label}
+                  />
                   <ResourceRemovalDialog
                     target={{
                       kind: "subtitle-artifact",

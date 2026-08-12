@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
-import { alignCaptionTracks, cleanCueText, parseWebVtt } from "./subtitle"
+import {
+  alignCaptionTracks,
+  cleanCueText,
+  parseWebVtt,
+  webVttToSrt,
+  webVttToText,
+} from "./subtitle"
 
 describe("subtitle domain", () => {
   test("parses WebVTT cue settings and normalizes cue text", () => {
@@ -38,6 +44,24 @@ S0001-P02
       { start: 0, end: 3.02, text: "嗨 創業學校的創辦人們" },
       { start: 3.02, end: 9.64, text: "我是 Jeff Ralston YC 的總裁" },
     ])
+  })
+
+  test("exports SRT timing and joins TXT cues with one ASCII space", () => {
+    const source = `WEBVTT
+
+S0001-P01
+00:00:01.250 --> 00:01:02.005
+<b>第一句</b>
+
+S0001-P02
+01:02:03.040 --> 01:02:05.500
+Second   sentence
+`
+
+    expect(webVttToSrt(source)).toBe(
+      "1\n00:00:01,250 --> 00:01:02,005\n第一句\n\n2\n01:02:03,040 --> 01:02:05,500\nSecond sentence\n",
+    )
+    expect(webVttToText(source)).toBe("第一句 Second sentence\n")
   })
 
   test("uses the English sentence timeline for bilingual comparison", () => {

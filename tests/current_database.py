@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = (
+SCHEMA = (
     ROOT
     / "plugins"
     / "insu-player"
@@ -13,8 +13,7 @@ MIGRATION = (
     / "watch-video"
     / "assets"
     / "server"
-    / "drizzle"
-    / "0000_current.sql"
+    / "current-schema.sql"
 )
 
 
@@ -24,7 +23,9 @@ def create_current_database(workspace: Path) -> Path:
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.executescript(MIGRATION.read_text(encoding="utf-8"))
+        connection.executescript(SCHEMA.read_text(encoding="utf-8"))
+        connection.execute("PRAGMA application_id = 0x494e5355")
+        connection.execute("PRAGMA user_version = 9")
         connection.commit()
     finally:
         connection.close()
@@ -79,7 +80,7 @@ def write_media_record(workspace: Path, record: dict[str, object]) -> None:
             (
                 video_id,
                 str(record.get("title") or video_id),
-                str(record.get("sourceUrl") or ""),
+                record.get("sourceUrl"),
                 str(record.get("state") or "queued"),
                 str(record.get("state") or "queued"),
                 str(record.get("stage") or "queued"),

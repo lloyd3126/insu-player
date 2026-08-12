@@ -15,18 +15,18 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 DATA_TABLES = (
     "agent_intents",
     "active_subtitle_tracks",
     "active_summary_artifacts",
-    "collection_items",
-    "collections",
     "download_queue_items",
     "download_queue_settings",
     "extension_pairings",
+    "extension_pairing_invitations",
     "job_assets",
     "job_history",
+    "local_media_imports",
     "media_items",
     "media_sources",
     "local_model_download_runs",
@@ -44,6 +44,8 @@ DATA_TABLES = (
     "subtitle_artifacts",
     "subtitle_pipelines",
     "subtitle_runs",
+    "subtitle_style_presets",
+    "subtitle_style_settings",
     "summary_artifacts",
     "summary_dependencies",
     "tag_assignments",
@@ -59,9 +61,14 @@ SESSION_FILES = (
     ".insu-player-server.json",
     ".insu-player-server.pid",
     ".insu-provider-session.json",
+    ".insu-player-migration-input.json",
 )
 TRANSIENT_SESSION_DIRECTORIES = (
     ".agent-tools/insu-player/tmp/cookie-sessions",
+    ".agent-tools/insu-player/tmp/imports",
+)
+REMOVED_DIRECTORIES = (
+    ".insu-player-migrations",
 )
 CANONICAL_MODEL_NAMES = (
     "tiny", "tiny.en", "base", "base.en", "small", "small.en",
@@ -335,6 +342,10 @@ def build_plan(project_root: Path, workspace: Path) -> dict[str, Any]:
         relative: inspect_tree(workspace, workspace / relative)
         for relative in TRANSIENT_SESSION_DIRECTORIES
     }
+    migration_archives = {
+        relative: inspect_tree(workspace, workspace / relative)
+        for relative in REMOVED_DIRECTORIES
+    }
     database = inspect_database(workspace / "app.db")
     live_jobs = inspect_live_jobs(workspace)
     blocked: list[dict[str, object]] = []
@@ -353,6 +364,10 @@ def build_plan(project_root: Path, workspace: Path) -> dict[str, Any]:
         candidate = workspace / target_name
         if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
             blocked.append({"code": "unsafe-reset-target", "path": target_name})
+    for target_name in REMOVED_DIRECTORIES:
+        candidate = workspace / target_name
+        if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
+            blocked.append({"code": "unsafe-reset-target", "path": target_name})
     if database["error"]:
         blocked.append({"code": "database-inspection-failed", "message": database["error"]})
     if live_jobs:
@@ -366,11 +381,13 @@ def build_plan(project_root: Path, workspace: Path) -> dict[str, Any]:
         "jobs": jobs,
         "database": database,
         "transientSessions": transient_sessions,
+        "migrationArchives": migration_archives,
         "delete": [
             "jobs/**",
             *DATABASE_FILES,
             *SESSION_FILES,
             *(f"{name}/**" for name in TRANSIENT_SESSION_DIRECTORIES),
+            *(f"{name}/**" for name in REMOVED_DIRECTORIES),
         ],
         "apiKeys": {
             "action": "clear all session-only API keys by stopping the server",
@@ -476,6 +493,12 @@ def execute(args: argparse.Namespace) -> int:
         if candidate.is_dir():
             shutil.rmtree(candidate)
         candidate.mkdir(parents=True, mode=0o700)
+    for name in REMOVED_DIRECTORIES:
+        candidate = workspace / name
+        if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
+            raise ResetError(f"refusing to remove unsafe migration directory: {candidate}")
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
 
     print_json(
         {
@@ -507,6 +530,9 @@ def verify(args: argparse.Namespace) -> int:
         else ["missing"]
         for name in TRANSIENT_SESSION_DIRECTORIES
     }
+    remaining_migration_archives = [
+        name for name in REMOVED_DIRECTORIES if (workspace / name).exists()
+    ]
     valid = (
         not job_entries
         and database["exists"]
@@ -515,6 +541,7 @@ def verify(args: argparse.Namespace) -> int:
         and not nonzero_library_tables
         and api_keys["cleared"] is True
         and not any(transient_sessions.values())
+        and not remaining_migration_archives
     )
     result = {
         "schemaVersion": SCHEMA_VERSION,
@@ -530,6 +557,7 @@ def verify(args: argparse.Namespace) -> int:
         },
         "apiKeys": api_keys,
         "transientSessions": transient_sessions,
+        "remainingMigrationArchives": remaining_migration_archives,
         "preserved": {
             "agentTools": (workspace / ".agent-tools").is_dir(),
             "bunRuntime": (workspace / ".agent-tools/insu-player/bun-runtime").is_dir(),

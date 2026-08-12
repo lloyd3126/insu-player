@@ -20,37 +20,17 @@
     <main>
       <div id="connection" class="status" role="status">正在連接本機服務</div>
       <section id="connect-section" hidden>
-        <p class="connection-help">目前分頁已偵測到 INSU Player。按一次即可讓擴充功能記住這個本機服務。</p>
-        <button id="connect-insu" class="primary" type="button">連接目前的 INSU Player</button>
+        <p class="connection-help">這份 ZIP 會自動連接產生它的 INSU Player，不需要另外選擇設定檔。</p>
+        <button id="retry-connection" class="primary" type="button">重新嘗試連接</button>
+        <button id="open-install" class="secondary" type="button">開啟 INSU Player</button>
       </section>
       <section id="source-section" hidden>
         <p id="page-title" class="page-title"></p>
-        <div id="candidate-list" class="candidate-list" role="radiogroup" aria-label="選擇影音來源"></div>
-        <button id="advanced-scan" class="secondary" type="button">偵測 iframe 與串流</button>
-        <label class="check-row">
-          <input id="rights" type="checkbox" />
-          <span>我有權下載、轉錄與觀看這項內容</span>
-        </label>
-        <label class="check-row">
-          <input id="use-session" type="checkbox" />
-          <span>這個頁面需要目前 Chrome 的登入狀態</span>
-        </label>
+        <p class="consent-notice">點擊以下按鈕代表有權下載、轉錄與觀看這項內容，且同意把這組來源需要的 Cookie 傳到本機服務，只供這次下載使用。</p>
         <button id="enqueue" class="primary" type="button" disabled>加入下載佇列</button>
       </section>
       <p id="feedback" class="feedback" aria-live="polite"></p>
     </main>
-
-    <dialog id="cookie-consent">
-      <form method="dialog">
-        <span class="eyebrow">BROWSER SESSION</span>
-        <h2>只用於這一次下載</h2>
-        <p>INSU Player 會把目前來源需要的 Cookie 傳到本機服務，建立短期檔案供 yt-dlp 使用。Cookie 不會寫入 app.db 或工作紀錄，下載結束就會刪除。</p>
-        <div class="dialog-actions">
-          <button id="cookie-cancel" type="button" class="secondary">取消</button>
-          <button id="cookie-confirm" type="button" class="primary">同意並繼續</button>
-        </div>
-      </form>
-    </dialog>
 
     <script type="module" src="popup.js"></script>
   </body>

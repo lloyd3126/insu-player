@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -13,7 +14,10 @@ import { openAppDatabase } from "@server/db/client"
 import { jobs as mediaItems } from "@server/db/schema"
 import { JobRepository } from "@server/repositories/job-repository"
 import { DownloadQueueService } from "@server/services/download-queue-service"
+import { LibraryService } from "@server/services/library-service"
+import { LocalMediaImportService } from "@server/services/local-media-import-service"
 import { ExtensionPairingService } from "@server/services/extension-pairing-service"
+import { ExtensionPackageService } from "@server/services/extension-package-service"
 import { MediaSessionService } from "@server/services/media-session-service"
 import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 import { NoteService } from "@server/services/note-service"
@@ -22,6 +26,7 @@ import type { MediaOperations } from "@server/services/media-service"
 import { ResourceService } from "@server/services/resource-service"
 import { RuntimeService } from "@server/services/runtime-service"
 import { SummaryService } from "@server/services/summary-service"
+import { SubtitleStyleService } from "@server/services/subtitle-style-service"
 import type { MediaOperation } from "@shared/contracts/media"
 
 const root = path.resolve(import.meta.dir, "../..")
@@ -76,6 +81,56 @@ const sourceId = "demo-video-source-model-transcript-en-r1"
 const proofreadId = "demo-video-proofread-en-en-r1"
 const translationId = "demo-video-translation-en-zh-TW-r1"
 const segmentationId = "demo-video-segmentation-en-zh-TW-r1"
+function contentManifest(mode: "proofread" | "translate", outputLanguage: string) {
+  return `${JSON.stringify({
+  schemaVersion: 5,
+  mode,
+  sourceFormat: "model-timed-units",
+  sourceLanguage: "en",
+  outputLanguage,
+  sourceTranscript: "transcript.json",
+  timingSourceArtifactId: sourceId,
+  sourceContentArtifactId: sourceId,
+  sourceContentKind: "model-transcript",
+  sourceContentManifest: null,
+  sourceContentChecksum: null,
+  referenceArtifactIds: [],
+  timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
+  contentProcessor: { provider: "agent", service: "codex" },
+  sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-08T01:00:00.000Z" },
+  outputProfile: {},
+  rules: {},
+  segments: [],
+  })}\n`
+}
+const proofreadArtifactManifest = contentManifest("proofread", "en")
+const contentArtifactManifest = contentManifest("translate", "zh-TW")
+const segmentationArtifactManifest = `${JSON.stringify({
+  schemaVersion: 4,
+  contentMode: "translate",
+  sourceLanguage: "en",
+  outputLanguage: "zh-TW",
+  sourceTranscript: "transcript.json",
+  contentManifest: "content.json",
+  sourceContentArtifactId: sourceId,
+  sourceContentKind: "model-transcript",
+  timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
+  contentProcessor: { provider: "agent", service: "codex" },
+  sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-08T01:00:00.000Z" },
+  segmentationProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-08T01:00:00.000Z" },
+  alignmentMethod: "agent-semantic",
+  alignmentReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-08T01:00:00.000Z" },
+  alignmentFingerprint: "0".repeat(64),
+  targetRevision: 1,
+  targetFrozen: true,
+  targetFingerprint: "0".repeat(64),
+  widthProfile: {},
+  timingProfile: {},
+  outputProfile: {},
+  timedUnits: [],
+  boundaryHints: [],
+  contentUnits: [],
+})}\n`
 for (const artifactId of [sourceId, proofreadId, translationId, segmentationId]) {
   const artifactRoot = path.join(job, "subtitle-work", "artifacts", artifactId)
   mkdirSync(artifactRoot, { recursive: true })
@@ -90,8 +145,10 @@ for (const artifactId of [sourceId, proofreadId, translationId, segmentationId])
     writeFileSync(
       path.join(artifactRoot, "manifest.json"),
       artifactId === segmentationId
-        ? '{"schemaVersion":4}\n'
-        : '{"schemaVersion":5}\n',
+        ? segmentationArtifactManifest
+        : artifactId === proofreadId
+          ? proofreadArtifactManifest
+          : contentArtifactManifest,
     )
   }
 }
@@ -110,14 +167,12 @@ const artifactDigest = (
   }
   return hasher.digest("hex")
 }
-const contentArtifactManifest = '{"schemaVersion":5}\n'
-const segmentationArtifactManifest = '{"schemaVersion":4}\n'
 writeFileSync(
   path.join(job, "logs", "workflow.log"),
   "download complete\ntranscription complete\nsubtitle reflow complete\n",
 )
 const mediaRecord = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     videoId: "demo-video",
     title: "雙語測試影音",
     sourceUrl: "https://example.test/demo",
@@ -205,7 +260,7 @@ const mediaRecord = {
         manifestPath: `subtitle-work/artifacts/${proofreadId}/manifest.json`,
         checksum: artifactDigest(
           [["en", digest(english)], ["en", digest(english)]],
-          contentArtifactManifest,
+          proofreadArtifactManifest,
         ),
         warningCount: 0,
         hardDefectCount: 0,
@@ -360,10 +415,7 @@ const mediaRecord = {
 
 const opened = openAppDatabase(
   path.join(workspace, "app.db"),
-  path.join(
-    root,
-    "plugins/insu-player/skills/watch-video/assets/server/drizzle",
-  ),
+  path.join(root, "plugins/insu-player/skills/watch-video/assets/server/current-schema.sql"),
 )
 opened.db.insert(mediaItems).values({
   videoId: mediaRecord.videoId,
@@ -499,22 +551,41 @@ const media: MediaOperations = {
 }
 const jobs = new JobRepository(workspace, opened.db)
 const mediaSessions = new MediaSessionService(workspace)
+const downloads = new DownloadQueueService(
+  workspace,
+  opened.db,
+  jobs,
+  path.join(root, "plugins/insu-player/skills/watch-video/scripts/download-video.sh"),
+  mediaSessions,
+)
+const fakeFfmpeg = path.join(workspace, "fake-ffmpeg")
+writeFileSync(
+  fakeFfmpeg,
+  "#!/bin/sh\nprintf 'Duration: 00:00:03.250, start: 0.000000, bitrate: 100 kb/s\\nStream #0:0: Video: h264, yuv420p, 640x360\\nStream #0:1: Audio: aac, 44100 Hz, stereo\\n' >&2\nexit 1\n",
+  { mode: 0o700 },
+)
+chmodSync(fakeFfmpeg, 0o700)
+const imports = new LocalMediaImportService(
+  workspace,
+  opened.db,
+  jobs,
+  fakeFfmpeg,
+)
 const app = createApplication({
   jobs,
-  downloads: new DownloadQueueService(
-    workspace,
-    opened.db,
-    jobs,
-    path.join(root, "plugins/insu-player/skills/watch-video/scripts/download-video.sh"),
-    mediaSessions,
-  ),
+  downloads,
+  imports,
+  library: new LibraryService(downloads, imports),
   extensionPairing: new ExtensionPairingService(
     opened.db,
+  ),
+  extensionPackage: new ExtensionPackageService(
     path.join(root, "plugins/insu-player/chrome-extension"),
   ),
   mediaSessions,
   models: new TranscriptionModelCatalogService(workspace, opened.db),
   summaries: new SummaryService(jobs, opened.db),
+  subtitleStyles: new SubtitleStyleService(opened.db),
   notes: new NoteService(opened.db),
   media,
   removals,

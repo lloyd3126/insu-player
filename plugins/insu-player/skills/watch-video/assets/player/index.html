@@ -170,15 +170,23 @@
         object-fit: contain;
       }
 
-      .custom-caption {
+      .custom-captions {
         position: absolute;
         right: 6%;
         bottom: clamp(4.4rem, 9%, 6.4rem);
         left: 6%;
         z-index: 3;
-        width: fit-content;
         max-width: 88%;
         margin: 0 auto;
+        display: grid;
+        justify-items: center;
+        gap: 0.35rem;
+        pointer-events: none;
+      }
+
+      .custom-caption {
+        width: fit-content;
+        max-width: 100%;
         padding: 0.42em 0.72em 0.48em;
         border-radius: 0.12em;
         background: rgb(3 11 12 / 86%);
@@ -190,7 +198,6 @@
         line-height: 1.42;
         text-align: center;
         text-shadow: 0 1px 3px #000;
-        pointer-events: none;
       }
 
       .custom-caption[hidden] {
@@ -237,6 +244,10 @@
         display: flex;
         gap: 12px;
         align-items: center;
+      }
+
+      .caption-row + .caption-row {
+        margin-top: 10px;
       }
 
       select {
@@ -333,7 +344,7 @@
           padding: 18px;
         }
 
-        .custom-caption {
+        .custom-captions {
           bottom: 3.6rem;
         }
 
@@ -384,7 +395,10 @@
       <section class="player-shell" aria-label="本機影音播放器">
         <div class="player-wrap">
           <video id="player" playsinline controls preload="metadata"></video>
-          <div id="custom-caption" class="custom-caption" aria-live="polite" hidden></div>
+          <div id="custom-captions" class="custom-captions" aria-live="polite">
+            <div id="primary-caption" class="custom-caption" hidden></div>
+            <div id="secondary-caption" class="custom-caption" hidden></div>
+          </div>
         </div>
 
         <div class="control-deck">
@@ -394,10 +408,14 @@
           </div>
 
           <div class="caption-panel">
-            <label class="label" for="caption-language">Subtitle track</label>
+            <span class="label">Subtitle tracks</span>
             <div class="caption-row">
-              <select id="caption-language" aria-describedby="caption-status"></select>
-              <span id="caption-status" class="caption-status">等待載入</span>
+              <select id="primary-caption-language" aria-label="第一字幕" aria-describedby="primary-caption-status"></select>
+              <span id="primary-caption-status" class="caption-status">等待載入</span>
+            </div>
+            <div class="caption-row">
+              <select id="secondary-caption-language" aria-label="第二字幕" aria-describedby="secondary-caption-status"></select>
+              <span id="secondary-caption-status" class="caption-status">等待載入</span>
             </div>
           </div>
         </div>
@@ -440,12 +458,23 @@
         const kicker = document.querySelector("#kicker");
         const runtimeBadge = document.querySelector("#runtime-badge");
         const engineLabel = document.querySelector("#engine-label");
-        const captionBox = document.querySelector("#custom-caption");
-        const captionLanguage = document.querySelector("#caption-language");
-        const captionStatus = document.querySelector("#caption-status");
-
-        let activeCues = [];
-        let lastCueIndex = -1;
+        const captionContainer = document.querySelector("#custom-captions");
+        const captionBoxes = {
+          primary: document.querySelector("#primary-caption"),
+          secondary: document.querySelector("#secondary-caption"),
+        };
+        const captionLanguages = {
+          primary: document.querySelector("#primary-caption-language"),
+          secondary: document.querySelector("#secondary-caption-language"),
+        };
+        const captionStatuses = {
+          primary: document.querySelector("#primary-caption-status"),
+          secondary: document.querySelector("#secondary-caption-status"),
+        };
+        const captionTracks = {
+          primary: { activeCues: [], lastCueIndex: -1 },
+          secondary: { activeCues: [], lastCueIndex: -1 },
+        };
         let animationFrame = 0;
         let lastTimeMessage = 0;
 
@@ -465,10 +494,11 @@
         if (config.video.type) videoSource.type = config.video.type;
         video.append(videoSource);
 
-        const offOption = new Option("關閉字幕", "off");
-        captionLanguage.add(offOption);
-        config.captions.forEach((track) => {
-          captionLanguage.add(new Option(track.code, track.code));
+        Object.values(captionLanguages).forEach((select) => {
+          select.add(new Option("關閉字幕", "off"));
+          config.captions.forEach((track) => {
+            select.add(new Option(track.code, track.code));
+          });
         });
 
         function parseTimecode(value) {
@@ -521,21 +551,21 @@
           return cues.sort((a, b) => a.start - b.start);
         }
 
-        function findCueIndex(currentTime) {
+        function findCueIndex(track, currentTime) {
           if (
-            lastCueIndex >= 0 &&
-            activeCues[lastCueIndex] &&
-            currentTime >= activeCues[lastCueIndex].start &&
-            currentTime < activeCues[lastCueIndex].end
+            track.lastCueIndex >= 0 &&
+            track.activeCues[track.lastCueIndex] &&
+            currentTime >= track.activeCues[track.lastCueIndex].start &&
+            currentTime < track.activeCues[track.lastCueIndex].end
           ) {
-            return lastCueIndex;
+            return track.lastCueIndex;
           }
 
           let low = 0;
-          let high = activeCues.length - 1;
+          let high = track.activeCues.length - 1;
           while (low <= high) {
             const middle = Math.floor((low + high) / 2);
-            const cue = activeCues[middle];
+            const cue = track.activeCues[middle];
             if (currentTime < cue.start) high = middle - 1;
             else if (currentTime >= cue.end) low = middle + 1;
             else return middle;
@@ -543,49 +573,105 @@
           return -1;
         }
 
-        function updateCaption() {
-          const cueIndex = findCueIndex(video.currentTime || 0);
-          lastCueIndex = cueIndex;
-          const text = cueIndex >= 0 ? activeCues[cueIndex].text : "";
+        function updateCaption(position) {
+          const track = captionTracks[position];
+          const captionBox = captionBoxes[position];
+          const cueIndex = findCueIndex(track, video.currentTime || 0);
+          track.lastCueIndex = cueIndex;
+          const text = cueIndex >= 0 ? track.activeCues[cueIndex].text : "";
           captionBox.textContent = text;
           captionBox.hidden = !text;
         }
 
+        function updateCaptions() {
+          updateCaption("primary");
+          updateCaption("secondary");
+        }
+
         function followPlayback() {
-          updateCaption();
+          updateCaptions();
           if (!video.paused && !video.ended) {
             animationFrame = requestAnimationFrame(followPlayback);
           }
         }
 
-        function setCaptionMessage(message, isError = false) {
-          captionStatus.textContent = message;
-          captionStatus.dataset.error = String(isError);
+        function setCaptionMessage(position, message, isError = false) {
+          captionStatuses[position].textContent = message;
+          captionStatuses[position].dataset.error = String(isError);
         }
 
-        async function loadCaptions(language) {
+        async function loadCaptions(position, language) {
           cancelAnimationFrame(animationFrame);
-          captionBox.hidden = true;
-          lastCueIndex = -1;
+          const trackState = captionTracks[position];
+          captionBoxes[position].hidden = true;
+          trackState.lastCueIndex = -1;
 
           if (language === "off") {
-            activeCues = [];
-            setCaptionMessage("已關閉");
+            trackState.activeCues = [];
+            setCaptionMessage(position, "已關閉");
             return;
           }
 
           const track = config.captions.find((item) => item.code === language);
           if (!track) throw new Error(`找不到字幕設定：${language}`);
 
-          setCaptionMessage("正在載入……");
+          setCaptionMessage(position, "正在載入……");
           const response = await fetch(track.src, { cache: "no-store" });
           if (!response.ok) throw new Error(`字幕載入失敗：HTTP ${response.status}`);
 
-          activeCues = parseVtt(await response.text());
-          if (!activeCues.length) throw new Error("字幕檔沒有可用的 VTT cue");
+          trackState.activeCues = parseVtt(await response.text());
+          if (!trackState.activeCues.length) throw new Error("字幕檔沒有可用的 VTT cue");
 
-          setCaptionMessage(`${activeCues.length} 段已就緒`);
-          updateCaption();
+          setCaptionMessage(position, `${trackState.activeCues.length} 段已就緒`);
+          updateCaption(position);
+        }
+
+        const STYLE_SHADOWS = {
+          none: "none",
+          soft: "0 1px 3px #000",
+          strong: "0 2px 5px #000, 0 0 2px #000",
+        };
+
+        function clampNumber(value, minimum, maximum, fallback) {
+          return Number.isFinite(value)
+            ? Math.min(maximum, Math.max(minimum, value))
+            : fallback;
+        }
+
+        function safeColor(value, fallback) {
+          return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)
+            ? value
+            : fallback;
+        }
+
+        function transparentColor(value, opacity) {
+          const color = safeColor(value, "#030b0c");
+          const red = Number.parseInt(color.slice(1, 3), 16);
+          const green = Number.parseInt(color.slice(3, 5), 16);
+          const blue = Number.parseInt(color.slice(5, 7), 16);
+          return `rgb(${red} ${green} ${blue} / ${Math.round(opacity * 100)}%)`;
+        }
+
+        function applyCaptionStyles(styles) {
+          for (const position of ["primary", "secondary"]) {
+            const style = styles?.[position];
+            if (!style) continue;
+            const box = captionBoxes[position];
+            const scale = clampNumber(style.fontScale, 0.7, 2, 1);
+            const opacity = clampNumber(style.backgroundOpacity, 0, 1, 0.72);
+            const paddingX = clampNumber(style.paddingX, 0, 1.5, 0.7);
+            const paddingY = clampNumber(style.paddingY, 0, 1, 0.38);
+            box.style.fontSize = `clamp(${scale}rem, ${2.15 * scale}vw, ${1.55 * scale}rem)`;
+            box.style.fontWeight = String(clampNumber(style.fontWeight, 400, 800, 650));
+            box.style.color = safeColor(style.textColor, "#ffffff");
+            box.style.background = transparentColor(style.backgroundColor, opacity);
+            box.style.lineHeight = String(clampNumber(style.lineHeight, 1, 2, 1.3));
+            box.style.padding = `${paddingY}em ${paddingX}em`;
+            box.style.borderRadius = `${clampNumber(style.radius, 0, 0.8, 0.18)}em`;
+            box.style.textShadow = STYLE_SHADOWS[style.shadow] || STYLE_SHADOWS.soft;
+            box.style.letterSpacing = `${clampNumber(style.letterSpacing, -0.05, 0.1, 0)}em`;
+          }
+          captionContainer.style.gap = `${clampNumber(styles?.bilingual?.gap, 0, 2, 0.5)}rem`;
         }
 
         function setPlaybackStatus(message, badge) {
@@ -609,13 +695,13 @@
         });
         video.addEventListener("pause", () => {
           cancelAnimationFrame(animationFrame);
-          updateCaption();
+          updateCaptions();
           if (!video.ended) setPlaybackStatus("已暫停。", "PAUSED");
           postToParent("player:paused", { time: video.currentTime, duration: video.duration });
         });
-        video.addEventListener("seeking", updateCaption);
+        video.addEventListener("seeking", updateCaptions);
         video.addEventListener("timeupdate", () => {
-          updateCaption();
+          updateCaptions();
           const now = Date.now();
           if (now - lastTimeMessage >= 1500) {
             postToParent("player:time", { time: video.currentTime, duration: video.duration });
@@ -631,21 +717,26 @@
           postToParent("player:error", { code: video.error?.code || 0 });
         });
 
-        captionLanguage.addEventListener("change", async () => {
-          try {
-            await loadCaptions(captionLanguage.value);
-          } catch (error) {
-            activeCues = [];
-            captionBox.hidden = true;
-            setCaptionMessage(error.message, true);
-          }
+        Object.entries(captionLanguages).forEach(([position, select]) => {
+          select.addEventListener("change", async () => {
+            try {
+              await loadCaptions(position, select.value);
+            } catch (error) {
+              captionTracks[position].activeCues = [];
+              captionBoxes[position].hidden = true;
+              setCaptionMessage(position, error.message, true);
+            }
+          });
         });
 
         const configuredDefault = config.captions.some((track) => track.code === config.defaultLanguage)
           ? config.defaultLanguage
           : config.captions[0]?.code || "off";
-        captionLanguage.value = configuredDefault;
-        loadCaptions(configuredDefault).catch((error) => setCaptionMessage(error.message, true));
+        captionLanguages.primary.value = configuredDefault;
+        captionLanguages.secondary.value = "off";
+        applyCaptionStyles(config.captionStyles);
+        loadCaptions("primary", configuredDefault).catch((error) => setCaptionMessage("primary", error.message, true));
+        loadCaptions("secondary", "off").catch((error) => setCaptionMessage("secondary", error.message, true));
 
         window.addEventListener("message", (event) => {
           if (!isEmbedded || event.source !== window.parent || event.origin !== window.location.origin) return;
@@ -659,14 +750,23 @@
           if (message.type === "player:seek" && Number.isFinite(message.time)) {
             const upper = Number.isFinite(video.duration) ? Math.max(0, video.duration - 1) : message.time;
             video.currentTime = Math.max(0, Math.min(message.time, upper));
-            updateCaption();
+            updateCaptions();
           }
-          if (message.type === "player:set-caption" && typeof message.language === "string") {
-            const available = [...captionLanguage.options].some((option) => option.value === message.language);
-            if (available) {
-              captionLanguage.value = message.language;
-              captionLanguage.dispatchEvent(new Event("change"));
+          if (message.type === "player:set-captions") {
+            const requested = {
+              primary: message.primaryLanguage,
+              secondary: message.secondaryLanguage,
+            };
+            for (const position of ["primary", "secondary"]) {
+              const language = requested[position];
+              const select = captionLanguages[position];
+              const available = typeof language === "string" && [...select.options].some((option) => option.value === language);
+              if (available && select.value !== language) {
+                select.value = language;
+                select.dispatchEvent(new Event("change"));
+              }
             }
+            applyCaptionStyles(message.styles);
           }
         });
       })();

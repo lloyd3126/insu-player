@@ -1,7 +1,5 @@
 import { StatusBadge } from "@/components/shared/StatusBadge"
 import { JobFact, JobFactGrid } from "@/features/job-detail/JobFactGrid"
-import { JobHistoryCard } from "@/features/job-detail/JobHistoryCard"
-import { JobNextActionCard } from "@/features/job-detail/JobNextActionCard"
 import { VideoRemovalDialog } from "@/features/job-detail/VideoRemovalDialog"
 import type { JobDetail } from "@shared/contracts/job"
 import { formatBytes, formatDate, formatDuration } from "@shared/domain/format"
@@ -18,7 +16,6 @@ function sourceLabel(sourceUrl: string) {
 export function JobAboutPanel({ job }: { job: JobDetail }) {
   return (
     <div className="job-about-content">
-      <JobNextActionCard job={job} />
       <JobFactGrid className="job-about-facts">
         <JobFact label="目前狀態">
           <StatusBadge job={job} />
@@ -50,7 +47,6 @@ export function JobAboutPanel({ job }: { job: JobDetail }) {
         <JobFact label="更新時間">{formatDate(job.updatedAt)}</JobFact>
         <JobFact label="完成時間">{formatDate(job.completedAt)}</JobFact>
       </JobFactGrid>
-      <JobHistoryCard history={job.history} />
       <div className="flex flex-none justify-end">
         <VideoRemovalDialog videoId={job.videoId} />
       </div>

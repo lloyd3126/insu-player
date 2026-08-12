@@ -9,8 +9,8 @@ import {
   CONNECTION_PROTOCOL_VERSION,
   EXPECTED_DATA_SCHEMA_VERSION,
   EXPECTED_SERVER_BUILD_ID,
-  isConnectionChallenge,
   isCurrentInsuHealth,
+  normalizeBootstrap,
   normalizeConnection,
   normalizeLoopbackOrigin,
 } from "./connection-protocol.js"
@@ -69,19 +69,30 @@ describe("extension connection protocol", () => {
     expect(isCurrentInsuHealth({ ...health, buildId: "old-build" })).toBe(false)
   })
 
-  test("accepts only an unexpired challenge for the exact server origin", () => {
-    const challenge = {
+  test("accepts only an unexpired bootstrap for the exact current contract", () => {
+    const bootstrap = {
+      kind: "insu-player-extension-bootstrap",
+      schemaVersion: 1,
       protocolVersion: CONNECTION_PROTOCOL_VERSION,
-      challengeId: "pair-00000000-0000-4000-8000-000000000000",
-      token: "x".repeat(32),
+      buildId: EXPECTED_SERVER_BUILD_ID,
+      dataSchemaVersion: EXPECTED_DATA_SCHEMA_VERSION,
+      invitationId: "pair-00000000-0000-4000-8000-000000000000",
+      ticket: "x".repeat(32),
+      issuedAt: "2099-08-10T23:30:00.000Z",
       expiresAt: "2099-08-11T00:00:00.000Z",
       serverOrigin: "http://127.0.0.1:8000",
     }
+    expect(normalizeBootstrap(bootstrap)).toEqual(bootstrap)
+    expect(normalizeBootstrap({ ...bootstrap, schemaVersion: 2 })).toBeNull()
+    expect(normalizeBootstrap({ ...bootstrap, buildId: "old-build" })).toBeNull()
     expect(
-      isConnectionChallenge(challenge, "http://127.0.0.1:8000"),
-    ).toBe(true)
+      normalizeBootstrap({ ...bootstrap, issuedAt: bootstrap.expiresAt }),
+    ).toBeNull()
     expect(
-      isConnectionChallenge(challenge, "http://127.0.0.1:8010"),
-    ).toBe(false)
+      normalizeBootstrap(
+        { ...bootstrap, expiresAt: "2026-08-11T00:00:00.000Z" },
+        Date.parse("2026-08-11T00:00:00.001Z"),
+      ),
+    ).toBeNull()
   })
 })

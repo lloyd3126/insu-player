@@ -1,20 +1,40 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 
 import { HomePage } from "../pages/home.page"
 
+async function openMediaDetails(library: Locator, title = "雙語測試影音") {
+  const card = library.locator(".video-grid-card").filter({ hasText: title })
+  await card.hover()
+  await card.getByRole("button", { name: `設定 ${title}` }).click()
+}
+
+async function openMediaPlayer(library: Locator, title = "雙語測試影音") {
+  await library
+    .locator(".video-grid-card")
+    .filter({ hasText: title })
+    .getByRole("button", { name: `觀看 ${title}` })
+    .click()
+}
+
 test.describe("library and details @critical", () => {
+  test.describe.configure({ mode: "serial" })
   test("serves a browser-only card library without the homepage or Agent controls", async ({
     page,
   }) => {
     await page.goto("/extension/library")
-    await expect(page.getByRole("heading", { name: "我的影音" })).toBeVisible()
+    await expect(page.getByRole("searchbox", { name: "搜尋影音" })).toBeVisible()
+    await expect(page.getByText("LOCAL LIBRARY", { exact: true })).toHaveCount(0)
+    await expect(page.getByText("我的影音", { exact: true })).toHaveCount(0)
+    await expect(page.getByText("Chrome 影音頁", { exact: true })).toHaveCount(0)
     await expect(page.locator(".hero, .primary-nav, .prompt-action-card")).toHaveCount(0)
     await expect(page.getByRole("button", { name: "轉錄設定" })).toHaveCount(0)
     const card = page.locator(".video-grid-card").filter({
       hasText: "雙語測試影音",
     })
     await expect(card).toBeVisible()
-    await card.getByRole("button", { name: "觀看 雙語測試影音" }).first().click()
+    await expect(card.getByRole("combobox")).toHaveCount(0)
+    await expect(card.getByRole("button", { name: "觀看 雙語測試影音" })).toHaveCount(1)
+    await card.getByRole("button", { name: "觀看 雙語測試影音" }).click()
     const player = page.getByRole("dialog", { name: "雙語測試影音" })
     await expect(player).toBeVisible()
     await expect(player.locator("iframe")).toHaveAttribute(
@@ -183,14 +203,11 @@ test.describe("library and details @critical", () => {
       name: "關閉",
     }).click()
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    await expect(page).toHaveURL(/\/library\/list$/)
-    const row = library.getByRole("row").filter({ hasText: "雙語測試影音" })
-    await row.getByRole("button", { name: "雙語測試影音", exact: true }).click()
+    await openMediaDetails(library)
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await detail.getByRole("tab", { name: "執行紀錄" }).click()
     await expect(page).toHaveURL(
-      /\/jobs\/demo-video\/activity\?returnTo=%2Flibrary%2Flist$/,
+      /\/jobs\/demo-video\/activity\?returnTo=%2Flibrary%2Fgrid$/,
     )
 
     await page.reload()
@@ -207,17 +224,12 @@ test.describe("library and details @critical", () => {
     const home = new HomePage(page)
     await home.goto()
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    await library
-      .getByRole("row")
-      .filter({ hasText: "雙語測試影音" })
-      .getByRole("button", { name: "雙語測試影音", exact: true })
-      .click()
+    await openMediaDetails(library)
 
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await detail.getByRole("tab", { name: "畫質管理" }).click()
     await expect(page).toHaveURL(
-      /\/jobs\/demo-video\/quality\?returnTo=%2Flibrary%2Flist$/,
+      /\/jobs\/demo-video\/quality\?returnTo=%2Flibrary%2Fgrid$/,
     )
     await expect(detail.getByText("720p", { exact: true }).first()).toBeVisible()
     const qualityTable = detail.getByRole("table")
@@ -354,13 +366,9 @@ test.describe("library and details @critical", () => {
     const home = new HomePage(page)
     await home.goto()
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    await expect(page).toHaveURL(/\/library\/list$/)
-
-    const row = library.getByRole("row").filter({ hasText: "雙語測試影音" })
-    await row.getByRole("button", { name: "觀看" }).click()
+    await openMediaPlayer(library)
     const playerPath =
-      "/player/demo-video?caption=zh-TW&returnTo=%2Flibrary%2Flist"
+      "/player/demo-video?caption=zh-TW&returnTo=%2Flibrary%2Fgrid"
     await expect(page).toHaveURL(new RegExp(`${playerPath.replaceAll("?", "\\?")}$`))
 
     await page.reload()
@@ -378,9 +386,9 @@ test.describe("library and details @critical", () => {
     const returnedLibrary = page.getByRole("dialog", { name: "影片中心" })
     await expect(returnedLibrary).toBeVisible()
     await expect(
-      returnedLibrary.getByRole("tab", { name: "詳細資訊" }),
+      returnedLibrary.getByRole("tab", { name: "我的影音" }),
     ).toHaveAttribute("aria-selected", "true")
-    await expect(page).toHaveURL(/\/library\/list$/)
+    await expect(page).toHaveURL(/\/library\/grid$/)
 
     await returnedLibrary.getByRole("button", { name: "關閉" }).click()
     await expect(home.heroHeading).toBeVisible()
@@ -433,12 +441,7 @@ test.describe("library and details @critical", () => {
     const home = new HomePage(page)
     await home.goto()
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    await library
-      .getByRole("row")
-      .filter({ hasText: "雙語測試影音" })
-      .getByRole("button", { name: "雙語測試影音", exact: true })
-      .click()
+    await openMediaDetails(library)
 
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await detail.getByRole("button", { name: "移除影音" }).click()
@@ -465,8 +468,61 @@ test.describe("library and details @critical", () => {
       planDigest: "a".repeat(64),
     })
     await expect(removal).toBeHidden()
-    await expect(page).toHaveURL(/\/library$/)
+    await expect(page).toHaveURL(/\/library\/grid$/)
     await expect(page.getByRole("dialog", { name: "影片中心" })).toBeVisible()
+  })
+
+  test("stays in my media after removing media from the grid", async ({
+    page,
+  }) => {
+    await page.route("**/api/removals/preview", async (route) => {
+      if (route.request().method() !== "POST") return route.continue()
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schemaVersion: 1,
+          target: { kind: "video", videoId: "demo-video" },
+          planDigest: "b".repeat(64),
+          blocked: [],
+          warnings: [],
+        }),
+      })
+    })
+    await page.route("**/api/removals/execute", async (route) => {
+      if (route.request().method() !== "POST") return route.continue()
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schemaVersion: 1,
+          target: { kind: "video", videoId: "demo-video" },
+          planDigest: "b".repeat(64),
+          removed: true,
+        }),
+      })
+    })
+
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    const card = library.locator(".video-grid-card").filter({
+      hasText: "雙語測試影音",
+    })
+    await card.hover()
+    await card.getByRole("button", { name: "移除影音 雙語測試影音" }).click()
+    const removal = page.getByRole("alertdialog", {
+      name: "完整移除此影音",
+    })
+    const confirm = removal.getByRole("button", { name: "移除影音" })
+    await expect(confirm).toBeEnabled()
+    await confirm.click()
+
+    await expect(removal).toBeHidden()
+    await expect(page).toHaveURL(/\/library\/grid$/)
+    await expect(
+      library.getByRole("tab", { name: "我的影音" }),
+    ).toHaveAttribute("aria-selected", "true")
   })
 
   test("defaults to a YouTube-style grid when media exists", async ({ page }) => {
@@ -491,12 +547,20 @@ test.describe("library and details @critical", () => {
     const removeButton = card.getByRole("button", {
       name: "移除影音 雙語測試影音",
     })
+    const settingsButton = card.getByRole("button", {
+      name: "設定 雙語測試影音",
+    })
     await expect(removeButton).toBeHidden()
+    await expect(settingsButton).toBeHidden()
+    const titleHeader = card.locator('[data-slot="card-header"]')
+    expect((await titleHeader.boundingBox())?.height).toBeGreaterThanOrEqual(48)
     await card.hover()
     await expect(duration).toBeVisible()
     await expect(removeButton).toBeVisible()
+    await expect(settingsButton).toBeVisible()
     const thumbnailBox = await card.locator(".video-grid-card__thumbnail").boundingBox()
     const removeButtonBox = await removeButton.boundingBox()
+    const settingsButtonBox = await settingsButton.boundingBox()
     expect(removeButtonBox?.x).toBeGreaterThan(thumbnailBox?.x ?? 0)
     expect(removeButtonBox?.y).toBeGreaterThanOrEqual(thumbnailBox?.y ?? 0)
     expect(removeButtonBox?.x).toBeLessThanOrEqual(
@@ -505,6 +569,9 @@ test.describe("library and details @critical", () => {
     expect(removeButtonBox?.y).toBeLessThan(
       (thumbnailBox?.y ?? 0) + (thumbnailBox?.height ?? 0),
     )
+    expect(settingsButtonBox?.x).toBeGreaterThanOrEqual(thumbnailBox?.x ?? 0)
+    expect(settingsButtonBox?.y).toBeGreaterThanOrEqual(thumbnailBox?.y ?? 0)
+    expect(settingsButtonBox?.x).toBeLessThan(removeButtonBox?.x ?? 0)
     await removeButton.click()
     const removal = page.getByRole("alertdialog", {
       name: "完整移除此影音",
@@ -513,30 +580,158 @@ test.describe("library and details @critical", () => {
     await expect(page).toHaveURL(/\/library\/grid$/)
     await removal.getByRole("button", { name: "取消" }).click()
     await expect(removal).toBeHidden()
+    await card.hover()
+    await expect(settingsButton).toBeVisible()
+    await settingsButton.click()
+    await expect(page).toHaveURL(/\/jobs\/demo-video\/about\?returnTo=/)
+    await page.getByRole("dialog", { name: "雙語測試影音" }).getByRole("button", { name: "關閉" }).click()
+    await expect(page).toHaveURL(/\/library\/grid$/)
     await expect(library.locator(".metrics")).not.toBeVisible()
     await expect(card.getByText("字幕重排", { exact: true })).toHaveCount(0)
     await expect(card.getByRole("combobox")).toHaveCount(0)
+    const storage = mediaPanel.getByRole("button", { name: /^共 / })
+    await expect(storage).toBeVisible()
+    await storage.hover()
+    await expect(page.locator('[data-slot="tooltip-content"][data-open]')).toContainText(
+      "共",
+    )
     const searchBox = await search.boundingBox()
+    const storageBox = await storage.boundingBox()
     const panelMetrics = await mediaPanel.evaluate((element) => {
       const style = getComputedStyle(element)
       return {
         contentWidth:
           element.clientWidth - Number.parseFloat(style.paddingInlineEnd),
-        gutterWidth: element.getBoundingClientRect().width - element.clientWidth,
-        scrollbarGutter: style.scrollbarGutter,
       }
     })
-    expect(searchBox?.width).toBeCloseTo(
-      panelMetrics.contentWidth,
-      0,
+    expect(searchBox?.width ?? 0).toBeLessThan(panelMetrics.contentWidth)
+    expect(storageBox?.x ?? 0).toBeGreaterThan(searchBox?.x ?? 0)
+    await expect(mediaPanel).toHaveCSS("overflow-y", "hidden")
+    await expect(mediaPanel.locator(".library-media-scroll-region")).toHaveCSS(
+      "overflow-y",
+      "auto",
     )
-    expect(panelMetrics.gutterWidth).toBeGreaterThan(0)
-    expect(panelMetrics.scrollbarGutter).toBe("stable")
+    await expect(mediaPanel.locator(".library-media-scroll-region")).toHaveCSS(
+      "scrollbar-gutter",
+      "stable",
+    )
     const columnCount = await grid.evaluate(
       (element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
     )
     expect(columnCount).toBeGreaterThan(0)
     expect(columnCount).toBeLessThanOrEqual(3)
+  })
+
+  test("persists two caption styles and synchronizes one style to the other", async ({
+    page,
+  }) => {
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+
+    await expect(library.getByRole("tab")).toHaveText([
+      "我的影音",
+      "下載佇列",
+      "字幕樣式",
+    ])
+    await library.getByRole("tab", { name: "字幕樣式" }).click()
+    await expect(page).toHaveURL(/\/library\/subtitle-style$/)
+
+    const stylePanel = library.getByRole("tabpanel", { name: "字幕樣式" })
+    await expect(stylePanel.getByRole("tab")).toHaveText([
+      "第一字幕",
+      "第二字幕",
+      "雙語字幕",
+    ])
+    await expect(stylePanel.getByRole("columnheader")).toHaveText([
+      "設定",
+      "自訂值",
+    ])
+    await stylePanel.getByRole("spinbutton", { name: "文字縮放" }).fill("1.25")
+    await stylePanel.getByRole("button", { name: "同步到第二字幕" }).click()
+    await stylePanel.getByRole("tab", { name: "第二字幕" }).click()
+    await expect(
+      stylePanel.getByRole("spinbutton", { name: "文字縮放" }),
+    ).toHaveValue("1.25")
+    await stylePanel
+      .getByRole("textbox", { name: "文字顏色", exact: true })
+      .fill("#00ffff")
+    await stylePanel.getByRole("tab", { name: "雙語字幕" }).click()
+    await expect(
+      stylePanel.getByRole("button", { name: /同步到/ }),
+    ).toHaveCount(0)
+    await expect(stylePanel.getByLabel("雙語字幕預覽")).toBeVisible()
+    await stylePanel.getByRole("spinbutton", { name: "字幕間距" }).fill("0.8")
+    await stylePanel.getByRole("button", { name: "另存樣式" }).click()
+    const saveDialog = page.getByRole("dialog", { name: "另存字幕樣式" })
+    await saveDialog.getByRole("textbox", { name: "樣式名稱" }).fill("自訂閱讀")
+    await saveDialog.getByRole("button", { name: "保存" }).click()
+    await expect(saveDialog).toBeHidden()
+
+    await page.reload()
+    const reloadedLibrary = page.getByRole("dialog", { name: "影片中心" })
+    await expect(
+      reloadedLibrary.getByRole("tab", { name: "字幕樣式" }),
+    ).toHaveAttribute("aria-selected", "true")
+    const reloadedStylePanel = reloadedLibrary.getByRole("tabpanel", {
+      name: "字幕樣式",
+    })
+    await reloadedStylePanel.getByRole("tab", { name: "第一字幕" }).click()
+    await expect(
+      reloadedStylePanel.getByRole("spinbutton", { name: "文字縮放" }),
+    ).toHaveValue("1.25")
+    await reloadedStylePanel.getByRole("tab", { name: "第二字幕" }).click()
+    await expect(
+      reloadedStylePanel.getByRole("textbox", {
+        name: "文字顏色",
+        exact: true,
+      }),
+    ).toHaveValue("#00ffff")
+    await reloadedStylePanel.getByRole("tab", { name: "雙語字幕" }).click()
+    await expect(
+      reloadedStylePanel.getByRole("spinbutton", { name: "字幕間距" }),
+    ).toHaveValue("0.8")
+    await expect(
+      reloadedStylePanel.getByRole("combobox", { name: "已保存樣式" }),
+    ).toContainText("自訂閱讀")
+  })
+
+  test("imports a local file from the media toolbar and publishes its card", async ({
+    page,
+  }, testInfo) => {
+    const title = `Local import ${testInfo.parallelIndex} ${testInfo.retry} ${Date.now()}`
+    const home = new HomePage(page)
+    await home.goto()
+    const library = await home.openLibrary()
+    const mediaPanel = library.getByRole("tabpanel", { name: "我的影音" })
+    const storage = mediaPanel.getByRole("button", { name: /^共 / })
+    const importButton = mediaPanel.getByRole("button", { name: "匯入本機影音" })
+    const [storageBox, importBox] = await Promise.all([
+      storage.boundingBox(),
+      importButton.boundingBox(),
+    ])
+    expect(importBox?.x ?? 0).toBeGreaterThan(storageBox?.x ?? 0)
+
+    await mediaPanel.locator('input[aria-label="選擇本機影音"]').setInputFiles({
+      name: `${title}.mp4`,
+      mimeType: "video/mp4",
+      buffer: Buffer.from(`e2e-media-${title}`),
+    })
+    const importDialog = page.getByRole("dialog", { name: "匯入本機影音" })
+    await expect(importDialog.getByRole("textbox", { name: "影音標題" })).toHaveValue(
+      title,
+    )
+    await importDialog
+      .getByRole("checkbox", { name: "我有權匯入、轉錄與觀看這個影音" })
+      .check()
+    await importDialog.getByRole("button", { name: "開始匯入" }).click()
+    await expect(importDialog).toBeHidden()
+
+    const card = mediaPanel.locator(".video-grid-card").filter({ hasText: title })
+    await expect(card).toBeVisible({ timeout: 10_000 })
+    await expect(card.getByRole("button", { name: `觀看 ${title}` })).toBeVisible({
+      timeout: 10_000,
+    })
   })
 
   test("defaults to the list tab when the center is empty", async ({ page }) => {
@@ -562,96 +757,131 @@ test.describe("library and details @critical", () => {
     const library = await home.openLibrary()
 
     await expect(
-      library.getByRole("tab", { name: "詳細資訊" }),
+      library.getByRole("tab", { name: "下載佇列" }),
     ).toHaveAttribute("aria-selected", "true")
-    await expect(library.getByText("目前還沒有影音")).toBeVisible()
+    await expect(library.getByText("目前沒有下載工作")).toBeVisible()
+    await expect(library.getByRole("columnheader", { name: "影音" })).toHaveCSS(
+      "align-items",
+      "center",
+    )
+    const emptyRow = library.getByRole("row", { name: /目前沒有下載工作/ })
+    const backgroundBeforeHover = await emptyRow.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    )
+    await emptyRow.hover()
+    await expect(emptyRow).toHaveCSS("background-color", backgroundBeforeHover)
   })
 
-  test("shows fixed media caption and action columns", async ({ page }) => {
+  test("refreshes the download queue every second and stops outside that tab", async ({
+    page,
+  }) => {
+    let libraryReads = 0
+    page.on("request", (request) => {
+      if (
+        request.method() === "GET" &&
+        new URL(request.url()).pathname === "/api/library"
+      ) {
+        libraryReads += 1
+      }
+    })
+    const home = new HomePage(page)
+    await home.goto()
+    await page.clock.install()
+    const library = await home.openLibrary()
+    await expect.poll(() => libraryReads).toBeGreaterThanOrEqual(1)
+    const initialReads = libraryReads
+
+    await page.clock.fastForward(1_000)
+    expect(libraryReads).toBe(initialReads)
+
+    await library.getByRole("tab", { name: "下載佇列" }).click()
+    const readsBeforeQueueRefresh = libraryReads
+    await page.clock.fastForward(1_000)
+    await expect.poll(() => libraryReads).toBeGreaterThan(readsBeforeQueueRefresh)
+
+    await library.getByRole("button", { name: "關閉" }).click()
+    const readsAfterClose = libraryReads
+    await page.clock.fastForward(1_000)
+    expect(libraryReads).toBe(readsAfterClose)
+  })
+
+  test("shows only download work in the compact queue table", async ({ page }) => {
+    const activeItem = {
+      kind: "download",
+      id: "library-active",
+      sourceKind: "page",
+      pageUrl: "https://www.youtube.com/watch?v=active-video",
+      sourceUrl: "https://www.youtube.com/watch?v=active-video",
+      videoId: "active-video",
+      title: "Active Video",
+      thumbnailUrl: null,
+      state: "downloading",
+      stage: "media_download",
+      progress: 45,
+      message: "正在下載 1080p 影片",
+      errorCode: null,
+      queueAhead: null,
+      lowQualityApproved: false,
+      authentication: "none",
+      authenticationConsentAt: null,
+      createdAt: "2026-08-11T00:00:00Z",
+      updatedAt: "2026-08-11T00:01:00Z",
+      completedAt: null,
+    }
+    await page.route("**/api/library", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [activeItem],
+          queue: {
+            paused: false,
+            concurrency: 2,
+            queuedCount: 0,
+            activeCount: 1,
+            attentionCount: 0,
+          },
+          serverTime: "2026-08-11T00:01:00Z",
+        }),
+      }),
+    )
     const home = new HomePage(page)
     await home.goto()
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    await expect(library.locator(".metrics")).toBeVisible()
+    await library.getByRole("tab", { name: "下載佇列" }).click()
+    await expect(library.locator(".metrics")).toHaveCount(0)
+    await expect(library.getByRole("searchbox", { name: "搜尋影音" })).toHaveCount(0)
+    await expect(library.getByRole("combobox", { name: "篩選狀態" })).toHaveCount(0)
+    await expect(library.getByRole("button", { name: /^共 / })).toHaveCount(0)
+    await expect(library.getByRole("button", { name: "重新整理下載佇列" })).toHaveCount(0)
     const table = library.getByRole("table")
-    const row = table.getByRole("row").filter({ hasText: "雙語測試影音" })
+    const row = table.getByRole("row").filter({ hasText: "Active Video" })
 
-    await expect(table.getByRole("columnheader")).toHaveCount(3)
-    await expect(table.getByRole("columnheader", { name: "目前狀態" })).toHaveCount(0)
+    await expect(table.getByRole("columnheader")).toHaveText(["影音", "操作"])
+    await expect(table.getByRole("columnheader", { name: "字幕" })).toHaveCount(0)
     await expect(table.getByRole("columnheader", { name: "操作" })).toBeVisible()
     await expect(library.getByText("01 / INSU COLLECTION", { exact: true })).toHaveCount(0)
     await expect(library.getByText("影音處理資訊", { exact: true })).toHaveCount(0)
-    await expect(row.getByText("字幕重排", { exact: true })).toHaveCount(0)
-    const detailsPanel = library.getByRole("tabpanel", { name: "詳細資訊" })
+    await expect(row.getByText("45%", { exact: true })).toBeVisible()
+    const detailsPanel = library.getByRole("tabpanel", { name: "下載佇列" })
     const tableFrame = library.locator(".job-table-frame")
     await expect(detailsPanel).toHaveCSS("overflow-y", "hidden")
-    await expect(tableFrame).toHaveCSS("overflow-y", "auto")
-    await expect(tableFrame).toHaveCSS("scrollbar-gutter", "stable")
-    const captions = row.getByRole("combobox", { name: "雙語測試影音 字幕" })
-    await expect(captions).toContainText("zh-TW")
-    await captions.click()
-    await expect(page.getByRole("option", { name: "en" })).toBeVisible()
-    await expect(page.getByRole("option", { name: "zh-TW" })).toBeVisible()
-    await page.getByRole("option", { name: "en" }).click()
-    await expect(captions).toContainText("en")
+    await expect(tableFrame).toHaveCSS("overflow-y", "hidden")
+    await expect(table.locator("tbody")).toHaveCSS("overflow-y", "auto")
+    await expect(table.locator("tbody")).toHaveCSS("scrollbar-gutter", "stable")
     expect(await table.evaluate((element) => getComputedStyle(element).tableLayout)).toBe("fixed")
-
-    const watch = row.getByRole("button", { name: "觀看" })
-    const settings = row.getByRole("button", { name: "設定" })
-    const remove = row.getByRole("button", { name: "移除影音" })
-    const titleLink = row.getByRole("button", {
-      name: "雙語測試影音",
-      exact: true,
-    })
-    const captionCell = row.locator('[data-label="字幕"]')
     const actionCell = row.locator('[data-label="操作"]')
     const videoCell = row.locator('[data-label="影音"]')
-    const [
-      watchBox,
-      settingsBox,
-      removeBox,
-      captionsBox,
-      captionCellBox,
-      actionsBox,
-      actionCellBox,
-      videoCellBox,
-    ] = await Promise.all([
-      watch.boundingBox(),
-      settings.boundingBox(),
-      remove.boundingBox(),
-      captions.boundingBox(),
-      captionCell.boundingBox(),
-      row.locator(".job-actions").boundingBox(),
+    const [actionsBox, actionCellBox, videoCellBox] = await Promise.all([
+      row.locator(".library-download-actions").boundingBox(),
       actionCell.boundingBox(),
       videoCell.boundingBox(),
     ])
-    expect(watchBox?.width).toBeCloseTo(settingsBox?.width ?? 0, 0)
-    expect(watchBox?.width).toBeCloseTo(removeBox?.width ?? 0, 0)
-    expect(watchBox?.width).toBeCloseTo(watchBox?.height ?? 0, 0)
-    expect(captionCellBox?.width).toBeCloseTo((captionsBox?.width ?? 0) + 16, 0)
-    expect(actionCellBox?.width).toBeCloseTo((actionsBox?.width ?? 0) + 16, 0)
+    expect(actionsBox?.width ?? 0).toBeLessThanOrEqual(actionCellBox?.width ?? 0)
     expect(videoCellBox?.width).toBeGreaterThan(actionCellBox?.width ?? 0)
-    await expect(watch).toHaveText("")
-    await expect(row.getByRole("button", { name: "詳情" })).toHaveCount(0)
-    const tooltip = page.locator('[data-slot="tooltip-content"][data-open]')
-    await watch.hover()
-    await expect(tooltip).toHaveText("觀看")
-    await settings.hover()
-    await expect(tooltip).toHaveText("設定")
-    await titleLink.hover()
-    await expect(titleLink).toHaveCSS("text-decoration-line", "underline")
-    await remove.click()
-    const removal = page.getByRole("alertdialog", {
-      name: "完整移除此影音",
-    })
-    await expect(removal).toBeVisible()
-    await removal.getByRole("button", { name: "取消" }).click()
-    await expect(removal).toBeHidden()
-    await settings.click()
-    await expect(page).toHaveURL(/\/jobs\/demo-video\/about\?returnTo=/)
-    await expect(
-      page.getByRole("dialog", { name: "雙語測試影音" }),
-    ).toBeVisible()
+    await expect(row.getByRole("link", { name: "開啟來源 Active Video" })).toBeVisible()
+    await expect(row.getByRole("button", { name: "取消下載 Active Video" })).toBeVisible()
+    await expect(library.getByText("雙語測試影音")).toHaveCount(0)
   })
 
   test("separates media facts subtitles segmentation and processing records", async ({
@@ -674,17 +904,16 @@ test.describe("library and details @critical", () => {
     const home = new HomePage(page)
     await home.goto()
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    const row = library.getByRole("row").filter({ hasText: "雙語測試影音" })
-    await row.getByRole("button", { name: "雙語測試影音", exact: true }).click()
+    await openMediaDetails(library)
 
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await expect(detail.getByRole("tab")).toHaveText([
       "關於影音",
+      "影音狀態",
       "畫質管理",
       "字幕管理",
       "影音摘要",
-      "影音筆記",
+      "影音大綱",
       "執行紀錄",
     ])
     await expect(detail.getByRole("tab", { name: "關於影音" })).toHaveAttribute(
@@ -696,41 +925,14 @@ test.describe("library and details @critical", () => {
     await expect(detail.getByText("容量", { exact: true })).toBeVisible()
     await expect(detail.getByText("更新時間", { exact: true })).toBeVisible()
     const aboutPanel = detail.getByRole("tabpanel", { name: "關於影音" })
-    const aboutNextAction = aboutPanel.locator(".job-next-action")
-    await expect(aboutNextAction).toContainText("字幕已完成")
-    await expect(aboutNextAction).toContainText(
-      "字幕管理的切分字幕中預覽版本",
-    )
+    await expect(aboutPanel.locator(".job-next-action")).toHaveCount(0)
     await expect(aboutPanel.getByText("狀態歷程", { exact: true })).toHaveCount(
       0,
     )
     await expect(
       aboutPanel.getByText("最新紀錄優先", { exact: true }),
     ).toHaveCount(0)
-    const historyTable = aboutPanel.getByRole("table")
-    await expect(historyTable.getByRole("columnheader")).toHaveText([
-      "時間",
-      "狀態",
-      "訊息",
-    ])
-    const historyRows = historyTable.getByRole("row")
-    await expect(historyRows).toHaveCount(3)
-    await expect(historyRows.nth(1)).toContainText("字幕已完成")
-    await expect(historyRows.nth(2)).toContainText("影音處理中")
-    const historyViewport = aboutPanel.locator(
-      '[data-slot="scroll-area-viewport"]',
-    )
-    await expect(historyViewport).toBeVisible()
-    expect(
-      await aboutPanel.evaluate(
-        (element) => getComputedStyle(element).overflowY,
-      ),
-    ).toBe("hidden")
-    expect(
-      await historyViewport.evaluate(
-        (element) => getComputedStyle(element).overflowY,
-      ),
-    ).toMatch(/auto|scroll/)
+    await expect(aboutPanel.getByRole("table")).toHaveCount(0)
     const removalTrigger = aboutPanel.getByRole("button", { name: "移除影音" })
     await expect(removalTrigger).toBeVisible()
     await removalTrigger.click()
@@ -761,6 +963,35 @@ test.describe("library and details @critical", () => {
     await removalDialog.getByRole("button", { name: "取消" }).click()
     await expect(removalDialog).toBeHidden()
     await expect(removalTrigger).toBeFocused()
+    await detail.getByRole("tab", { name: "影音狀態" }).click()
+    const statusPanel = detail.getByRole("tabpanel", { name: "影音狀態" })
+    const historyTable = statusPanel.getByRole("table")
+    await expect(historyTable.getByRole("columnheader")).toHaveText([
+      "時間",
+      "狀態",
+      "訊息",
+    ])
+    const historyRows = historyTable.getByRole("row")
+    await expect(historyRows).toHaveCount(3)
+    await expect(historyRows.nth(1)).toContainText("字幕已完成")
+    await expect(historyRows.nth(2)).toContainText("影音處理中")
+    await expect(statusPanel).toHaveCSS("overflow-y", "hidden")
+    await expect(statusPanel.locator(".history-table-container")).toHaveCSS(
+      "overflow-y",
+      "hidden",
+    )
+    await expect(statusPanel.locator(".history-table__body")).toHaveCSS(
+      "overflow-y",
+      "auto",
+    )
+    await expect(historyTable.getByRole("columnheader", { name: "時間" })).toHaveCSS(
+      "align-items",
+      "center",
+    )
+    await expect(historyRows.nth(1).getByRole("cell").first()).toHaveCSS(
+      "align-items",
+      "center",
+    )
     await expect(detail.getByText("Workflow log", { exact: true })).toHaveCount(
       0,
     )
@@ -787,11 +1018,8 @@ test.describe("library and details @critical", () => {
     await expect(
       subtitleNextAction.getByRole("button", { name: "複製提示" }),
     ).toHaveCount(0)
-    await expect(
-      subtitlePanel.getByRole("region", {
-        name: "播放字幕版本",
-      }),
-    ).toBeVisible()
+    await expect(subtitlePanel.getByText("PLAYBACK VERSION", { exact: true })).toHaveCount(0)
+    await expect(subtitlePanel.getByRole("combobox", { name: /播放版本/ })).toHaveCount(0)
     const sourceRevisions = sourcePanel.getByRole("table", {
       name: "原始字幕版本",
     })
@@ -815,9 +1043,19 @@ test.describe("library and details @critical", () => {
       name: "預覽原始字幕 r1",
     })
     const sourceActions = sourceRevisions.getByRole("button")
-    await expect(sourceActions).toHaveCount(2)
+    await expect(sourceActions).toHaveCount(3)
     await expect(sourceActions.nth(0)).toHaveAccessibleName("預覽原始字幕 r1")
-    await expect(sourceActions.nth(1)).toHaveAccessibleName("移除原始字幕 r1")
+    await expect(sourceActions.nth(1)).toHaveAccessibleName("下載原始字幕 r1")
+    await expect(sourceActions.nth(2)).toHaveAccessibleName("移除原始字幕 r1")
+    await sourceActions.nth(1).click()
+    const exportDialog = page.getByRole("dialog", { name: "下載原始字幕 r1" })
+    const downloadPromise = page.waitForEvent("download")
+    await exportDialog.getByRole("link", { name: "TXT" }).click()
+    const subtitleDownload = await downloadPromise
+    expect(subtitleDownload.suggestedFilename()).toBe(
+      "demo-video-source-en-r1.txt",
+    )
+    await exportDialog.getByRole("button", { name: "關閉" }).click()
     await sourcePreviewTrigger.click()
     await expect(page).toHaveURL(
       /artifact=demo-video-source-model-transcript-en-r1/,
@@ -886,11 +1124,17 @@ test.describe("library and details @critical", () => {
     await expect(
       summaryPanel.getByRole("heading", { name: "請 Agent 建立文字摘要" }),
     ).toBeVisible()
+    await expect(summaryPanel.getByText("尚未建立文字摘要")).toBeVisible()
     await expect(
       summaryPanel.getByRole("heading", { name: "請 Agent 建立心智圖" }),
+    ).toHaveCount(0)
+    await detail.getByRole("tab", { name: "影音大綱" }).click()
+    await expect(page).toHaveURL(/\/jobs\/demo-video\/outline\?returnTo=/)
+    const outlinePanel = detail.getByRole("tabpanel", { name: "影音大綱" })
+    await expect(
+      outlinePanel.getByRole("heading", { name: "請 Agent 建立心智圖" }),
     ).toBeVisible()
-    await expect(summaryPanel.getByText("尚未建立文字摘要")).toBeVisible()
-    await expect(summaryPanel.getByText("尚未建立心智圖")).toBeVisible()
+    await expect(outlinePanel.getByText("尚未建立心智圖")).toBeVisible()
 
     await detail.getByRole("tab", { name: "字幕管理" }).click()
     await subtitlePanel.getByRole("tab", { name: "翻譯字幕" }).click()
@@ -969,12 +1213,6 @@ test.describe("library and details @critical", () => {
     ).toBeVisible()
     await expect.poll(() => subtitleArtifactRequests).toBe(4)
     await segmentedPreview.getByRole("button", { name: "關閉" }).click()
-
-    await detail.getByRole("tab", { name: "影音筆記" }).click()
-    await expect(detail.getByText("尚未建立影音筆記")).toBeVisible()
-    await expect(
-      detail.getByRole("button", { name: "新增筆記" }),
-    ).toBeVisible()
 
     await detail.getByRole("tab", { name: "執行紀錄" }).click()
     const activityPanel = detail.getByRole("tabpanel", {
@@ -1072,12 +1310,7 @@ test.describe("library and details @critical", () => {
     const home = new HomePage(page)
     await home.goto()
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    await library
-      .getByRole("row")
-      .filter({ hasText: "雙語測試影音" })
-      .getByRole("button", { name: "雙語測試影音", exact: true })
-      .click()
+    await openMediaDetails(library)
     const detail = page.getByRole("dialog", { name: "雙語測試影音" })
     await detail.getByRole("tab", { name: "字幕管理" }).click()
 
@@ -1104,53 +1337,6 @@ test.describe("library and details @critical", () => {
       table.getByText("English sentence 240", { exact: true }),
     ).toBeVisible()
     expect(await table.getByRole("row").count()).toBeLessThan(50)
-  })
-
-  test("switches the active subtitle revision from subtitle management", async ({
-    page,
-  }) => {
-    const home = new HomePage(page)
-    await home.goto()
-    const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    await library
-      .getByRole("row")
-      .filter({ hasText: "雙語測試影音" })
-      .getByRole("button", { name: "雙語測試影音", exact: true })
-      .click()
-
-    const detail = page.getByRole("dialog", { name: "雙語測試影音" })
-    await detail.getByRole("tab", { name: "字幕管理" }).click()
-    const selector = detail.getByRole("combobox", { name: "en 播放版本" })
-    await expect(selector).toContainText("en · 校正字幕 · r1")
-
-    const selectSource = page.waitForRequest(
-      (candidate) =>
-        candidate.method() === "PUT" &&
-        new URL(candidate.url()).pathname ===
-          "/api/jobs/demo-video/subtitles/active",
-    )
-    await selector.click()
-    await page.getByRole("option", { name: "en · 模型轉錄 · r1" }).click()
-    expect((await selectSource).postDataJSON()).toEqual({
-      languageCode: "en",
-      trackId: "demo-video-source-model-transcript-en-r1-source_raw",
-    })
-    await expect(selector).toContainText("en · 模型轉錄 · r1")
-
-    const restoreProofread = page.waitForRequest(
-      (candidate) =>
-        candidate.method() === "PUT" &&
-        new URL(candidate.url()).pathname ===
-          "/api/jobs/demo-video/subtitles/active",
-    )
-    await selector.click()
-    await page.getByRole("option", { name: "en · 校正字幕 · r1" }).click()
-    expect((await restoreProofread).postDataJSON()).toEqual({
-      languageCode: "en",
-      trackId: "demo-video-proofread-en-en-r1-output_sentence",
-    })
-    await expect(selector).toContainText("en · 校正字幕 · r1")
   })
 
   test("persists paused and closing playback against the active video", async ({
@@ -1193,7 +1379,7 @@ test.describe("library and details @critical", () => {
     const playerFrame = page.frameLocator('iframe[title="本機影音播放器"]')
     await expect(playerFrame.locator("body")).toBeVisible()
 
-    await playerDialog.getByLabel("播放器字幕").click()
+    await playerDialog.getByLabel("第一字幕").click()
     await page.getByRole("option", { name: "en", exact: true }).click()
     await expect
       .poll(
@@ -1238,21 +1424,77 @@ test.describe("library and details @critical", () => {
   test("opens the same-origin player in an iframe and can transition to details", async ({ page }) => {
     const home = new HomePage(page)
     await home.goto()
+    await page.evaluate(async () => {
+      const response = await fetch("/api/subtitle-styles/active", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          presetId: null,
+          styles: {
+            primary: {
+              fontScale: 1,
+              fontWeight: 650,
+              textColor: "#ffffff",
+              backgroundColor: "#030b0c",
+              backgroundOpacity: 0.72,
+              lineHeight: 1.3,
+              paddingX: 0.7,
+              paddingY: 0.38,
+              radius: 0.18,
+              shadow: "soft",
+              letterSpacing: 0,
+            },
+            secondary: {
+              fontScale: 1,
+              fontWeight: 650,
+              textColor: "#ffe08a",
+              backgroundColor: "#030b0c",
+              backgroundOpacity: 0.72,
+              lineHeight: 1.3,
+              paddingX: 0.7,
+              paddingY: 0.38,
+              radius: 0.18,
+              shadow: "soft",
+              letterSpacing: 0,
+            },
+            bilingual: { gap: 0.5 },
+          },
+        }),
+      })
+      if (!response.ok) throw new Error(`failed to reset subtitle styles: ${response.status}`)
+    })
     const library = await home.openLibrary()
-    await library.getByRole("tab", { name: "詳細資訊" }).click()
-    const row = library.getByRole("row").filter({ hasText: "雙語測試影音" })
-    const captions = row.getByRole("combobox", { name: "雙語測試影音 字幕" })
-    await captions.click()
-    await page.getByRole("option", { name: "en" }).click()
-    await row.getByRole("button", { name: "觀看" }).click()
+    await openMediaPlayer(library)
 
     const playerDialog = page.getByRole("dialog", { name: "雙語測試影音" })
     const playerFrame = page.frameLocator('iframe[title="本機影音播放器"]')
     await expect(playerFrame.getByRole("region", { name: "本機影音播放器" })).toBeVisible()
     await expect(playerFrame.locator("video")).toBeVisible()
     await expect(
-      playerDialog.getByRole("combobox", { name: "播放器字幕" }),
-    ).toContainText("en")
+      playerDialog.getByRole("combobox", { name: "第一字幕" }),
+    ).toContainText("zh-TW")
+    await expect(
+      playerDialog.getByRole("combobox", { name: "第二字幕" }),
+    ).toContainText("關閉字幕")
+
+    await playerDialog.getByRole("combobox", { name: "第二字幕" }).click()
+    await page.getByRole("option", { name: "en", exact: true }).click()
+    await expect(page).toHaveURL(/caption=zh-TW&caption2=en/)
+    await expect(playerFrame.locator("#primary-caption")).toContainText(
+      "過去一個月我一直在嘗試",
+    )
+    await expect(playerFrame.locator("#secondary-caption")).toContainText(
+      "For the last month",
+    )
+    await expect(playerFrame.locator("#primary-caption")).toHaveCSS(
+      "color",
+      "rgb(255, 255, 255)",
+    )
+    await expect(playerFrame.locator("#secondary-caption")).toHaveCSS(
+      "color",
+      "rgb(255, 224, 138)",
+    )
+    await expect(playerFrame.locator("#custom-captions")).toHaveCSS("gap", "8px")
 
     await playerDialog.getByRole("button", { name: "詳細資訊" }).click()
     await expect(page).toHaveURL(/\/jobs\/demo-video\/about\?returnTo=/)

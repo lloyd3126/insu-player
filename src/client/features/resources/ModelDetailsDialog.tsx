@@ -52,6 +52,7 @@ import type {
   TranscriptionModelDetailResponse,
   TranscriptionProviderStatus,
 } from "@shared/contracts/resources"
+import { modelStatusLabel } from "@/features/resources/model-status"
 
 interface DetailsState {
   model: TranscriptionModel
@@ -458,20 +459,6 @@ function Footer() {
   )
 }
 
-function modelStatusLabel(model: TranscriptionModel) {
-  const labels: Record<TranscriptionModel["status"], string> = {
-    ready: "可使用",
-    "not-downloaded": "未下載",
-    downloading: "下載中",
-    validating: "正在驗證",
-    "redownload-required": "需要重新下載",
-    "download-failed": "下載失敗",
-    "sdk-missing": "SDK 未安裝",
-    "credential-missing": "尚未設定 API Key",
-  }
-  return labels[model.status]
-}
-
 export function RoutedModelDetailsDialog({
   modelId,
   onOpenChange,
@@ -523,5 +510,3 @@ export const ModelDetailsDialog = {
   CloudModelDetails,
   Footer,
 }
-
-export { modelStatusLabel }

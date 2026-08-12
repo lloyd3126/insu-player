@@ -6,7 +6,7 @@ import { AppDialog } from "@/components/shared/AppDialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ChromeExtensionConnectContent,
-  ChromeExtensionInstallContent,
+  ChromeExtensionDownloadContent,
   ChromeExtensionUsageContent,
 } from "@/features/home/ChromeExtensionGuideContent"
 
@@ -32,17 +32,17 @@ export function ChromeExtensionDialog() {
     >
       <Tabs
         className="app-dialog-tabs grouped-dialog-tabs"
-        value={active?.tab ?? "install"}
+        value={active?.tab ?? "download"}
         onValueChange={(value) => selectTab(value as ChromeExtensionTab)}
       >
         <TabsList variant="line" aria-label="Chrome 擴充功能分頁">
-          <TabsTrigger value="install">1 安裝</TabsTrigger>
-          <TabsTrigger value="connect">2 連接</TabsTrigger>
+          <TabsTrigger value="download">1 下載</TabsTrigger>
+          <TabsTrigger value="connect">2 安裝與連接</TabsTrigger>
           <TabsTrigger value="usage">3 使用</TabsTrigger>
         </TabsList>
-        <TabsContent value="install" className="grouped-dialog-panel">
-          {active?.tab === "install" ? (
-            <ChromeExtensionInstallContent
+        <TabsContent value="download" className="grouped-dialog-panel">
+          {active?.tab === "download" ? (
+            <ChromeExtensionDownloadContent
               onContinue={() => selectTab("connect")}
             />
           ) : null}

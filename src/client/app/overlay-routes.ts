@@ -11,15 +11,16 @@ const USAGE_GUIDE_TABS = new Set([
   "add-media",
   "handoff",
 ])
-const CHROME_EXTENSION_TABS = new Set(["install", "connect", "usage"])
-const LIBRARY_VIEWS = new Set(["grid", "list"])
+const CHROME_EXTENSION_TABS = new Set(["download", "connect", "usage"])
+const LIBRARY_VIEWS = new Set(["grid", "list", "subtitle-style"])
 const LIBRARY_STATUSES = new Set(["all", "active", "attention", "watchable", "ready"])
 const JOB_DETAIL_TABS = new Set([
   "about",
+  "status",
   "quality",
   "subtitles",
   "summary",
-  "notes",
+  "outline",
   "activity",
 ])
 const SUBTITLE_MANAGEMENT_VIEWS = new Set([
@@ -85,7 +86,7 @@ function overlayDestinationFromLocation(
   if (segments[0] === "extension" && segments.length <= 2) {
     const tab =
       setValue<ChromeExtensionTab>(CHROME_EXTENSION_TABS, segments[1]) ??
-      (segments.length === 1 ? "install" : null)
+      (segments.length === 1 ? "download" : null)
     return tab ? { type: "chrome-extension", tab } : null
   }
   if (segments[0] === "settings") {
@@ -99,10 +100,12 @@ function overlayDestinationFromLocation(
     }
     return null
   }
-  if (segments[0] === "library" && segments[1] === "add") {
-    return segments.length === 2 ? { type: "add-media" } : null
-  }
   if (segments[0] === "library" && segments.length <= 2) {
+    const view = setValue<"grid" | "list" | "subtitle-style">(
+      LIBRARY_VIEWS,
+      segments[1],
+    )
+    if (segments.length === 2 && !view) return null
     const params = new URLSearchParams(search)
     const query = params.get("q")?.trim().slice(0, 200)
     const status = setValue<"all" | "active" | "attention" | "watchable" | "ready">(
@@ -111,7 +114,7 @@ function overlayDestinationFromLocation(
     )
     return {
       type: "library",
-      view: setValue(LIBRARY_VIEWS, segments[1]),
+      view,
       ...(query ? { query } : {}),
       ...(status && status !== "all" ? { status } : {}),
     }
@@ -144,6 +147,7 @@ function overlayDestinationFromLocation(
   if (segments[0] === "player" && segments[1] && segments.length === 2) {
     const params = new URLSearchParams(search)
     const caption = params.get("caption")?.trim()
+    const secondaryCaption = params.get("caption2")?.trim()
     const rawTime = params.get("time")
     const parsedTime = rawTime === null ? Number.NaN : Number(rawTime)
     const time =
@@ -153,7 +157,8 @@ function overlayDestinationFromLocation(
     return {
       type: "player",
       videoId: segments[1],
-      caption: caption || undefined,
+      ...(caption ? { caption } : {}),
+      ...(secondaryCaption ? { secondaryCaption } : {}),
       ...(time === undefined ? {} : { time }),
     }
   }
@@ -223,9 +228,6 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
         search.set("status", overlay.status)
       }
       break
-    case "add-media":
-      path = "/library/add"
-      break
     case "detail":
       path =
         overlay.tab === "subtitles"
@@ -238,6 +240,7 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
     case "player":
       path = `/player/${encodeURIComponent(overlay.videoId)}`
       if (overlay.caption) search.set("caption", overlay.caption)
+      if (overlay.secondaryCaption) search.set("caption2", overlay.secondaryCaption)
       if (overlay.time !== undefined) search.set("time", String(overlay.time))
       break
     case "policy":

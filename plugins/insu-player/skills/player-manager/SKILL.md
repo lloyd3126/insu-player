@@ -20,13 +20,15 @@ For an installed plugin cache, execute the script using the skill's absolute pat
 
 - Git checkout: require a clean worktree, fetch "origin/main", and allow only a fast-forward pull.
 - Codex plugin: run the official marketplace upgrade, then refresh `insu-player@insu-player`.
-- Portable ZIP: download the latest GitHub release, verify the ZIP checksum and internal manifest, refuse modified managed files, back up old managed files, and preserve the entire ".local/" tree.
+- Portable ZIP: releases are immutable. Install the current release into a new directory. Do not copy an older `.local/` tree into it.
 
 ~~~bash
 python3 plugins/insu-player/skills/player-manager/scripts/manage.py update --apply
 ~~~
 
 After code or plugin updates, tell the user to start a new Codex task or reload the workspace so skill discovery uses the new snapshot. Never silently schedule or background an update.
+
+The manager never mutates an existing workspace database to fit new code. If the installed release has a newer data contract and the user wants to keep the library, hand off to `$migrate-player-library` for its read-only preview, exact digest confirmation, staging rebuild, validation, and atomic cutover. If the user does not need the old data, use the reset protocol below. Do not add a runtime compatibility path.
 
 ## Remove
 
@@ -44,7 +46,7 @@ Read [references/lifecycle.md](references/lifecycle.md) before changing updater 
 
 ## Reset the Current Project Library
 
-Use this clean-break operation only when the user explicitly asks to rebuild the current project's entire INSU Player library. It removes videos, subtitles, session-only API Keys, job history, playback state, and `app.db`, while preserving repository code and the workspace-local Bun, Python, Whisper, FFmpeg, yt-dlp, and model downloads.
+Use this clean-break operation only when the user explicitly asks to rebuild the current project's entire INSU Player library. It removes videos, subtitles, incomplete local-import and Cookie sessions, session-only API Keys, job history, playback state, and `app.db`, while preserving repository code and the workspace-local Bun, Python, Whisper, FFmpeg, yt-dlp, and model downloads.
 
 Create the read-only preview first:
 

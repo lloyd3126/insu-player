@@ -73,7 +73,7 @@ caption_set_paths() {
   CAPTION_JOB_STATE="$CAPTION_SKILL_SCRIPT_DIR/job_state.py"
   CAPTION_PROGRESS_RUNNER="$CAPTION_SKILL_SCRIPT_DIR/run_progress.py"
   CAPTION_WEB_SERVER="$CAPTION_SKILL_SCRIPT_DIR/../assets/server/insu-player-server.js"
-  CAPTION_WEB_MIGRATIONS="$CAPTION_SKILL_SCRIPT_DIR/../assets/server/drizzle"
+  CAPTION_DATABASE_SCHEMA="$CAPTION_SKILL_SCRIPT_DIR/../assets/server/current-schema.sql"
   CAPTION_LIBRARY_APP="$CAPTION_SKILL_SCRIPT_DIR/../assets/library/app"
   CAPTION_PROVIDER_CREDENTIAL_SESSION="$CAPTION_SKILL_SCRIPT_DIR/provider_credential_session.py"
   CAPTION_LIBRARY_PID="$CAPTION_WORKSPACE/.insu-player-server.pid"

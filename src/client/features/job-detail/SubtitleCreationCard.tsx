@@ -63,59 +63,48 @@ function creationSources(
   kind: CreationKind,
   catalog: SubtitleCatalogResponse,
 ): CreationSource[] {
-  const usable = catalog.artifacts
-    .filter(isUsable)
-    .sort((left, right) => {
-      const completed = String(right.completedAt ?? "").localeCompare(
-        String(left.completedAt ?? ""),
-      )
-      return completed || right.revision - left.revision
-    })
-  const modelSources = usable
-    .filter(
-      (artifact) =>
-        artifact.kind === "source" &&
-        artifact.sourceType === "model-transcript" &&
-        artifact.timingUnitKind !== "cue",
+  const usable = catalog.artifacts.filter(isUsable)
+  usable.sort((left, right) => {
+    const completed = String(right.completedAt ?? "").localeCompare(
+      String(left.completedAt ?? ""),
     )
-    .map((artifact) => ({
+    return completed || right.revision - left.revision
+  })
+  const modelSources: CreationSource[] = []
+  const proofreads: CreationSource[] = []
+  const translations: CreationSource[] = []
+  for (const artifact of usable) {
+    if (
+      artifact.kind === "source" &&
+      artifact.sourceType === "model-transcript" &&
+      artifact.timingUnitKind !== "cue"
+    ) {
+      modelSources.push({
+        artifact,
+        timingArtifactId: artifact.id,
+        label: revisionLabel(artifact),
+        sourceKind: "model-transcript",
+      })
+      continue
+    }
+    if (artifact.kind !== "proofread" && artifact.kind !== "translation") {
+      continue
+    }
+    const timingArtifactId = relatedArtifactId(artifact, "timing-source")
+    if (!timingArtifactId) continue
+    const source: CreationSource = {
       artifact,
-      timingArtifactId: artifact.id,
+      timingArtifactId,
       label: revisionLabel(artifact),
-      sourceKind: "model-transcript" as const,
-    }))
+      sourceKind: artifact.kind,
+    }
+    if (artifact.kind === "proofread") proofreads.push(source)
+    else translations.push(source)
+  }
   if (kind === "proofread") return modelSources
-
-  const proofreads = usable
-    .filter((artifact) => artifact.kind === "proofread")
-    .flatMap((artifact) => {
-      const timingArtifactId = relatedArtifactId(artifact, "timing-source")
-      return timingArtifactId
-        ? [{
-            artifact,
-            timingArtifactId,
-            label: revisionLabel(artifact),
-            sourceKind: "proofread" as const,
-          }]
-        : []
-    })
   if (kind === "translation") {
     return proofreads.length > 0 ? proofreads : modelSources
   }
-
-  const translations = usable
-    .filter((artifact) => artifact.kind === "translation")
-    .flatMap((artifact) => {
-      const timingArtifactId = relatedArtifactId(artifact, "timing-source")
-      return timingArtifactId
-        ? [{
-            artifact,
-            timingArtifactId,
-            label: revisionLabel(artifact),
-            sourceKind: "translation" as const,
-          }]
-        : []
-    })
   return [...translations, ...proofreads]
 }
 

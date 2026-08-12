@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: download-video.sh <workspace> <video-url> [--download-only | --language SOURCE_BCP47 [--translate TARGET_BCP47 | --proofread]] [--allow-low-quality] [--library-source-url URL] [--source-kind page|embed|network-media] [--referer URL] [--cookie-file PATH]\n'
+  printf 'usage: download-video.sh <workspace> <video-url> [--fallback-url URL]... [--download-only | --language SOURCE_BCP47 [--translate TARGET_BCP47 | --proofread]] [--allow-low-quality] [--library-source-url URL] [--source-kind page|embed|network-media] [--queue-item-id ID] [--referer URL] [--cookie-file PATH]\n'
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then usage; exit 0; fi
@@ -23,6 +23,10 @@ library_source_url="$video_url"
 source_kind="page"
 referer_url=""
 cookie_file=""
+queue_item_id=""
+print_video_id=0
+fallback_urls=()
+fallback_count=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --language)
@@ -60,6 +64,15 @@ while [ "$#" -gt 0 ]; do
       source_kind="$2"
       shift 2
       ;;
+    --queue-item-id)
+      [ "$#" -ge 2 ] || caption_die "--queue-item-id requires a value"
+      queue_item_id="$2"
+      shift 2
+      ;;
+    --print-video-id)
+      print_video_id=1
+      shift
+      ;;
     --referer)
       [ "$#" -ge 2 ] || caption_die "--referer requires a URL"
       referer_url="$2"
@@ -70,10 +83,21 @@ while [ "$#" -gt 0 ]; do
       cookie_file="$2"
       shift 2
       ;;
+    --fallback-url)
+      [ "$#" -ge 2 ] || caption_die "--fallback-url requires a URL"
+      fallback_urls[$fallback_count]="$2"
+      fallback_count=$((fallback_count + 1))
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) caption_die "unknown option: $1" ;;
   esac
 done
+
+if [ "$print_video_id" -eq 1 ]; then
+  exec 3>&1
+  exec 1>&2
+fi
 
 if [ "$download_only" -eq 1 ]; then
   [ -z "$source_language" ] || caption_die "--download-only cannot be combined with --language"
@@ -97,6 +121,12 @@ case "$library_source_url" in http://*|https://*) ;; *) caption_die "library sou
 if [ -n "$referer_url" ]; then
   case "$referer_url" in http://*|https://*) ;; *) caption_die "referer URL must use http or https" ;; esac
 fi
+fallback_index=0
+while [ "$fallback_index" -lt "$fallback_count" ]; do
+  fallback_url="${fallback_urls[$fallback_index]}"
+  case "$fallback_url" in http://*|https://*) ;; *) caption_die "fallback URL must use http or https" ;; esac
+  fallback_index=$((fallback_index + 1))
+done
 if [ -n "$cookie_file" ]; then
   cookie_file=$(caption_abs_path "$cookie_file")
   case "$cookie_file" in
@@ -123,20 +153,55 @@ common_args=(
   --newline
   --no-overwrites
 )
-progress_security_args=(--redact-value "$video_url")
 if [ -n "$referer_url" ]; then common_args+=(--add-header "Referer:$referer_url"); fi
 if [ -n "$cookie_file" ]; then common_args+=(--cookies "$cookie_file"); fi
 
-caption_note "Resolving video metadata..."
-metadata_json=$("$CAPTION_YTDLP" "${common_args[@]}" --skip-download --dump-single-json "$video_url")
-printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c '
+candidate_urls=("$video_url")
+fallback_index=0
+while [ "$fallback_index" -lt "$fallback_count" ]; do
+  candidate_urls+=("${fallback_urls[$fallback_index]}")
+  fallback_index=$((fallback_index + 1))
+done
+progress_security_args=()
+for candidate_url in "${candidate_urls[@]}"; do
+  progress_security_args+=(--redact-value "$candidate_url")
+done
+
+metadata_is_safe() {
+  printf '%s' "$1" | "$CAPTION_PYTHON" -c '
 import json, sys
 data = json.load(sys.stdin)
 if data.get("is_live") or data.get("live_status") in {"is_live", "is_upcoming", "post_live"}:
     raise SystemExit("live streams are not supported")
 if data.get("has_drm") is True or any(item.get("has_drm") is True for item in data.get("formats") or [] if isinstance(item, dict)):
     raise SystemExit("DRM-protected media is not supported")
-' || caption_die "live or DRM-protected media is not supported"
+' >/dev/null 2>&1
+}
+
+resolve_candidate_metadata() {
+  local candidate_url="$1"
+  local candidate_metadata
+  if ! candidate_metadata=$("$CAPTION_YTDLP" "${common_args[@]}" --skip-download --dump-single-json "$candidate_url" 2>/dev/null); then
+    return 1
+  fi
+  if ! metadata_is_safe "$candidate_metadata"; then
+    return 1
+  fi
+  metadata_json="$candidate_metadata"
+  video_url="$candidate_url"
+  return 0
+}
+
+caption_note "Resolving video metadata..."
+metadata_json=""
+active_candidate_index=-1
+for candidate_index in "${!candidate_urls[@]}"; do
+  if resolve_candidate_metadata "${candidate_urls[$candidate_index]}"; then
+    active_candidate_index="$candidate_index"
+    break
+  fi
+done
+[ "$active_candidate_index" -ge 0 ] || caption_die "yt-dlp could not resolve a safe page or detected fallback source"
 video_id=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 video_title=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c 'import json,sys; print(json.load(sys.stdin).get("title") or "")')
 video_duration=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c 'import json,math,sys; value=json.load(sys.stdin).get("duration"); print(value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0 else "")')
@@ -147,13 +212,18 @@ source_dir="$job_dir/source"
 youtube_caption_dir="$job_dir/youtube-captions"
 mkdir -p "$source_dir" "$youtube_caption_dir" "$job_dir/logs"
 diagnostic_log="$job_dir/logs/workflow.log"
-if [ "$source_kind" = "network-media" ]; then diagnostic_log=/dev/null; fi
+if [ "$source_kind" = "network-media" ] || [ "$fallback_count" -gt 0 ] || [ -n "$cookie_file" ]; then
+  diagnostic_log=/dev/null
+fi
 
 job_init_args=(--job-dir "$job_dir" --video-id "$video_id" --source-url "$library_source_url" --source-kind "$source_kind" --title "$video_title")
 if [ -n "$video_duration" ]; then
   job_init_args+=(--duration-seconds "$video_duration")
 fi
 caption_job_state init "${job_init_args[@]}" >/dev/null
+if [ -n "$queue_item_id" ]; then
+  caption_job_state link-download --job-dir "$job_dir" --queue-item-id "$queue_item_id" >/dev/null
+fi
 pipeline_output_language="$source_language"
 if [ "$translation_mode" = "translate" ]; then pipeline_output_language="$translation_target"; fi
 if [ "$download_only" -eq 1 ]; then
@@ -177,8 +247,6 @@ attempt_log="$initial_run_dir/attempts.jsonl"
 media_selection_file="$initial_run_dir/selection.json"
 media_discovery_file="$initial_run_dir/discovery.json"
 media_catalog_file="$job_dir/media-work/catalog.json"
-printf '%s' "$metadata_json" | "$CAPTION_PYTHON" "$media_catalog_script" discover \
-  --job-dir "$job_dir" --video-id "$video_id" --output "$media_discovery_file" >/dev/null
 probe_result=""
 probe_statuses=""
 
@@ -275,8 +343,7 @@ video_file=""
 selected_height=""
 selected_info_file=""
 selected_attempt_dir=""
-quality_heights=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" "$media_quality_script" plan --preferred-max-height "$preferred_max_height")
-best_available_height=$(printf '%s\n' "$quality_heights" | sed -n '1p')
+best_available_height=""
 
 video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \
   --job-dir "$job_dir" --video-id "$video_id" 2>/dev/null || true)
@@ -285,47 +352,77 @@ if [ -n "$video_file" ]; then
 else
   caption_note "Downloading the highest verified browser-oriented MP4 up to ${preferred_max_height}p..."
   lower_quality_available=0
-  for height in $quality_heights; do
-    case "$height" in ''|*[!0-9]*) caption_die "invalid planned media height: $height" ;; esac
-    if [ "$height" -lt "$minimum_height" ] && [ "$allow_low_quality" -ne 1 ]; then
-      lower_quality_available=1
+  candidate_index="$active_candidate_index"
+  while [ "$candidate_index" -lt "${#candidate_urls[@]}" ]; do
+    if [ "$candidate_index" -ne "$active_candidate_index" ]; then
+      caption_note "Trying detected fallback source $candidate_index..."
+      if ! resolve_candidate_metadata "${candidate_urls[$candidate_index]}"; then
+        candidate_index=$((candidate_index + 1))
+        continue
+      fi
+    fi
+    if ! quality_heights=$(printf '%s' "$metadata_json" | "$CAPTION_PYTHON" "$media_quality_script" plan --preferred-max-height "$preferred_max_height" 2>/dev/null); then
+      candidate_index=$((candidate_index + 1))
       continue
     fi
+    candidate_best_height=$(printf '%s\n' "$quality_heights" | sed -n '1p')
+    [ -n "$candidate_best_height" ] || {
+      candidate_index=$((candidate_index + 1))
+      continue
+    }
+    printf '%s' "$metadata_json" | "$CAPTION_PYTHON" -c '
+import json, sys
+data = json.load(sys.stdin)
+data["id"] = sys.argv[1]
+json.dump(data, sys.stdout)
+' "$video_id" | "$CAPTION_PYTHON" "$media_catalog_script" discover \
+      --job-dir "$job_dir" --video-id "$video_id" --output "$media_discovery_file" >/dev/null
 
-    format_selector="bv*[ext=mp4][vcodec^=avc1][height=$height]+ba[ext=m4a]/b[ext=mp4][vcodec^=avc1][height=$height]/bv*[ext=mp4][height=$height]+ba[ext=m4a]/b[ext=mp4][height=$height]"
-    retry=1
-    while [ "$retry" -le 2 ]; do
-      attempt_dir="$source_dir/.video-download-${height}p-${retry}"
-      cleanup_attempt_dir "$attempt_dir"
-      mkdir -p "$attempt_dir"
-      caption_note "Checking a fresh ${height}p stream URL (attempt ${retry}/2)..."
-      if ! probe_video_format "$format_selector"; then
-        record_media_attempt "$height" "$retry" "$probe_result" "$probe_statuses" "not-run"
-        cleanup_attempt_dir "$attempt_dir"
-        retry=$((retry + 1))
+    for height in $quality_heights; do
+      case "$height" in ''|*[!0-9]*) caption_die "invalid planned media height: $height" ;; esac
+      if [ "$height" -lt "$minimum_height" ] && [ "$allow_low_quality" -ne 1 ]; then
+        lower_quality_available=1
         continue
       fi
 
-      if "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
-        "${progress_security_args[@]}" \
-        --job-dir "$job_dir" --state downloading --stage media_download --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --progress-start 10 --progress-end 90 --allow-failure -- \
-        "$CAPTION_YTDLP" "${common_args[@]}" \
-        --format "$format_selector" --merge-output-format mp4 --recode-video mp4 --write-info-json \
-        --output "$attempt_dir/video.%(ext)s" "$video_url"; then
-        candidate_file="$attempt_dir/video.mp4"
-        if [ -f "$candidate_file" ]; then
-          record_media_attempt "$height" "$retry" "ok" "$probe_statuses" "success"
-          selected_height="$height"
-          selected_info_file="$attempt_dir/video.info.json"
-          selected_attempt_dir="$attempt_dir"
-          break
+      format_selector="bv*[ext=mp4][vcodec^=avc1][height=$height]+ba[ext=m4a]/b[ext=mp4][vcodec^=avc1][height=$height]/bv*[ext=mp4][height=$height]+ba[ext=m4a]/b[ext=mp4][height=$height]/bv*[height=$height]+ba/b[height=$height]"
+      retry=1
+      while [ "$retry" -le 2 ]; do
+        attempt_dir="$source_dir/.video-download-${height}p-${retry}"
+        cleanup_attempt_dir "$attempt_dir"
+        mkdir -p "$attempt_dir"
+        caption_note "Checking a fresh ${height}p stream URL (attempt ${retry}/2)..."
+        if ! probe_video_format "$format_selector"; then
+          record_media_attempt "$height" "$retry" "$probe_result" "$probe_statuses" "not-run"
+          cleanup_attempt_dir "$attempt_dir"
+          retry=$((retry + 1))
+          continue
         fi
-      fi
-      record_media_attempt "$height" "$retry" "ok" "$probe_statuses" "failed"
-      cleanup_attempt_dir "$attempt_dir"
-      retry=$((retry + 1))
+
+        if "$CAPTION_PYTHON" "$CAPTION_PROGRESS_RUNNER" \
+          "${progress_security_args[@]}" \
+          --job-dir "$job_dir" --state downloading --stage media_download --message "正在下載 ${height}p 影片" --success-message "${height}p 影片下載完成" --progress-start 10 --progress-end 90 --allow-failure -- \
+          "$CAPTION_YTDLP" "${common_args[@]}" \
+          --format "$format_selector" --merge-output-format mp4 --recode-video mp4 --write-info-json \
+          --output "$attempt_dir/video.%(ext)s" "$video_url"; then
+          candidate_file="$attempt_dir/video.mp4"
+          if [ -f "$candidate_file" ]; then
+            record_media_attempt "$height" "$retry" "ok" "$probe_statuses" "success"
+            selected_height="$height"
+            selected_info_file="$attempt_dir/video.info.json"
+            selected_attempt_dir="$attempt_dir"
+            best_available_height="$candidate_best_height"
+            break
+          fi
+        fi
+        record_media_attempt "$height" "$retry" "ok" "$probe_statuses" "failed"
+        cleanup_attempt_dir "$attempt_dir"
+        retry=$((retry + 1))
+      done
+      if [ -n "$selected_height" ]; then break; fi
     done
     if [ -n "$selected_height" ]; then break; fi
+    candidate_index=$((candidate_index + 1))
   done
 
   if [ -z "$selected_height" ]; then
@@ -399,6 +496,7 @@ if [ "$download_only" -eq 1 ]; then
   trap - ERR
   caption_note "Download complete: $job_dir"
   caption_note "Video ID: $video_id"
+  if [ "$print_video_id" -eq 1 ]; then printf '%s\n' "$video_id" >&3; fi
   exit 0
 fi
 
@@ -426,3 +524,4 @@ caption_job_state update --job-dir "$job_dir" --state needs_transcription --stag
 trap - ERR
 caption_note "Download complete: $job_dir"
 caption_note "Video ID: $video_id"
+if [ "$print_video_id" -eq 1 ]; then printf '%s\n' "$video_id" >&3; fi

@@ -14,9 +14,9 @@ import { LocalModelOperationError } from "@server/services/local-model-service"
 import { TranscriptionModelCatalogService } from "@server/services/transcription-model-catalog-service"
 
 const repositoryRoot = path.resolve(import.meta.dir, "../../..")
-const migrations = path.join(
+const schema = path.join(
   repositoryRoot,
-  "plugins/insu-player/skills/watch-video/assets/server/drizzle",
+  "plugins/insu-player/skills/watch-video/assets/server/current-schema.sql",
 )
 const workspaces: string[] = []
 
@@ -54,7 +54,7 @@ afterEach(() => {
 describe("transcription model catalog", () => {
   test("selects validated Whisper medium on first use and pins exactly one model", () => {
     const workspace = preparedWorkspace()
-    const opened = openAppDatabase(path.join(workspace, "app.db"), migrations)
+    const opened = openAppDatabase(path.join(workspace, "app.db"), schema)
     try {
       const service = new TranscriptionModelCatalogService(workspace, opened.db)
       const catalog = service.catalog()

@@ -7,9 +7,10 @@ export function getPreferredCaption(
   fallback = NO_CAPTION,
   preferred: Array<string | null | undefined> = [],
 ) {
+  const available = new Set(codes)
   const selected = preferred.find(
     (language): language is string =>
-      typeof language === "string" && codes.includes(language),
+      typeof language === "string" && available.has(language),
   )
   if (selected) return selected
   return codes[0] ?? fallback

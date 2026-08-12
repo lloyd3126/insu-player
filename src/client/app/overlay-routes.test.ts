@@ -32,16 +32,16 @@ describe("overlay routes", () => {
     })
     expect(overlayFromLocation("/extension")).toEqual({
       type: "chrome-extension",
-      tab: "install",
+      tab: "download",
     })
+    expect(overlayFromLocation("/extension/install")).toBeNull()
     expect(pathForOverlay({
       type: "chrome-extension",
       tab: "usage",
     })).toBe("/extension/usage")
     expect(overlayFromLocation("/extension/library")).toBeNull()
     expect(overlayFromLocation("/extension/unknown")).toBeNull()
-    expect(overlayFromLocation("/library/add")).toEqual({ type: "add-media" })
-    expect(pathForOverlay({ type: "add-media" })).toBe("/library/add")
+    expect(overlayFromLocation("/library/add")).toBeNull()
     expect(overlayFromLocation("/library/add/downloads")).toBeNull()
     expect(overlayFromLocation("/library/add/unknown")).toBeNull()
     expect(overlayFromLocation("/settings/models/cloud.groq.whisper-large-v3")).toEqual({
@@ -67,9 +67,16 @@ describe("overlay routes", () => {
       type: "library",
       view: "list",
     })
+    expect(overlayFromLocation("/library/subtitle-style")).toEqual({
+      type: "library",
+      view: "subtitle-style",
+    })
     expect(
       pathForOverlay({ type: "library", view: "grid" }),
     ).toBe("/library/grid")
+    expect(
+      pathForOverlay({ type: "library", view: "subtitle-style" }),
+    ).toBe("/library/subtitle-style")
   })
 
   test("preserves standard job detail tabs", () => {
@@ -88,6 +95,22 @@ describe("overlay routes", () => {
       tab: "quality",
     })
     expect(pathForOverlay(quality!)).toBe("/jobs/video%20id/quality")
+
+    const status = overlayFromLocation("/jobs/video%20id/status")
+    expect(status).toMatchObject({
+      type: "detail",
+      videoId: "video id",
+      tab: "status",
+    })
+    expect(pathForOverlay(status!)).toBe("/jobs/video%20id/status")
+
+    const outline = overlayFromLocation("/jobs/video%20id/outline")
+    expect(outline).toMatchObject({
+      type: "detail",
+      videoId: "video id",
+      tab: "outline",
+    })
+    expect(pathForOverlay(outline!)).toBe("/jobs/video%20id/outline")
   })
 
   test("round trips nested subtitle views and the selected artifact", () => {
@@ -141,14 +164,18 @@ describe("overlay routes", () => {
   })
 
   test("round trips player captions through the query string", () => {
-    const overlay = overlayFromLocation("/player/demo-video", "?caption=zh-TW")
+    const overlay = overlayFromLocation(
+      "/player/demo-video",
+      "?caption=zh-TW&caption2=en",
+    )
     expect(overlay).toEqual({
       type: "player",
       videoId: "demo-video",
       caption: "zh-TW",
+      secondaryCaption: "en",
     })
     expect(pathForOverlay(overlay!)).toBe(
-      "/player/demo-video?caption=zh-TW",
+      "/player/demo-video?caption=zh-TW&caption2=en",
     )
   })
 
@@ -191,6 +218,7 @@ describe("overlay routes", () => {
     expect(overlayFromLocation("/guide/supported-sites")).toBeNull()
     expect(overlayFromLocation("/jobs/demo-video/unknown")).toBeNull()
     expect(overlayFromLocation("/jobs/demo-video/subtitle")).toBeNull()
+    expect(overlayFromLocation("/jobs/demo-video/notes")).toBeNull()
     expect(overlayFromLocation("/not-a-route")).toBeNull()
   })
 })

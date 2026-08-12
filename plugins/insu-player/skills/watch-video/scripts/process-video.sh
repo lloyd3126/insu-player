@@ -55,9 +55,7 @@ elif [ "$translation_mode" = "proofread" ]; then
   download_args+=(--proofread)
 fi
 if [ "$allow_low_quality" -eq 1 ]; then download_args+=(--allow-low-quality); fi
-"$SCRIPT_DIR/download-video.sh" "${download_args[@]}"
-
-video_id=$(caption_job_state find --workspace "$CAPTION_WORKSPACE" --source-url "$video_url")
+video_id=$("$SCRIPT_DIR/download-video.sh" "${download_args[@]}" --print-video-id)
 [ -n "$video_id" ] || caption_die "download completed but its job record could not be found"
 
 current_state=$(caption_job_state show --job-dir "$CAPTION_JOBS/$video_id" --field state)

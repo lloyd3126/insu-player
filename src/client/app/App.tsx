@@ -4,47 +4,59 @@ import {
   LibraryBigIcon,
   ListPlusIcon,
 } from "lucide-react"
-import { useEffect } from "react"
-import { useLocation } from "react-router-dom"
+import { memo, useEffect } from "react"
+import { Link, useLocation } from "react-router-dom"
 
 import birdImage from "@library-assets/taiwan-whistling-thrush.png"
 
 import { OverlayCoordinator } from "@/app/OverlayCoordinator"
-import {
-  useOverlayActions,
-  type OverlayState,
-} from "@/app/overlay-context"
-import { Button } from "@/components/ui/button"
+import { useOverlayActions } from "@/app/overlay-context"
+import { buttonVariants } from "@/components/ui/button"
 import { POLICY_KEY } from "@/features/policy/constants"
 import { useLibraryQuery } from "@/hooks/use-library-query"
 import { BrowserLibraryPage } from "@/features/library/BrowserLibraryPage"
-import { ExtensionConnectionBridge } from "@/features/home/ExtensionConnectionBridge"
 
 const NAV_ITEMS: Array<{
   label: string
-  state: Exclude<OverlayState, null>
+  to: string
 }> = [
   {
     label: "開始說明",
-    state: { type: "usage-guide", tab: "initialize" },
+    to: "/guide/initialize",
   },
   {
     label: "我的提示",
-    state: { type: "my-prompts" },
+    to: "/prompts",
   },
   {
     label: "轉錄設定",
-    state: { type: "transcription-settings" },
+    to: "/settings",
   },
   {
     label: "支援網站",
-    state: { type: "supported-sites" },
+    to: "/supported-sites",
   },
   {
     label: "擴充功能",
-    state: { type: "chrome-extension", tab: "install" },
+    to: "/extension/download",
   },
 ]
+
+function RequiredPolicyGate() {
+  const { open } = useOverlayActions()
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(POLICY_KEY) !== "accepted") {
+        open({ type: "policy", required: true })
+      }
+    } catch {
+      open({ type: "policy", required: true })
+    }
+  }, [open])
+
+  return null
+}
 
 function LocalServiceStatus() {
   const health = useQuery({
@@ -74,23 +86,11 @@ function LocalServiceStatus() {
   )
 }
 
-function HomeApp() {
-  const { open: openOverlay } = useOverlayActions()
+const HomeShell = memo(function HomeShell() {
   const library = useLibraryQuery()
-
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(POLICY_KEY) !== "accepted") {
-        openOverlay({ type: "policy", required: true })
-      }
-    } catch {
-      openOverlay({ type: "policy", required: true })
-    }
-  }, [openOverlay])
 
   return (
     <div className="app-shell">
-      <ExtensionConnectionBridge />
       <header className="site-header">
         <a className="brand" href="/" aria-label="回到 INSU Player 首頁">
           <img src={birdImage} alt="" />
@@ -98,28 +98,22 @@ function HomeApp() {
         </a>
         <nav className="primary-nav" aria-label="主要導覽">
           {NAV_ITEMS.map((item) => (
-            <Button
+            <Link
               key={item.label}
-              variant="ghost"
-              onClick={() => openOverlay(item.state)}
+              className={buttonVariants({ variant: "ghost" })}
+              to={item.to}
             >
               {item.label}
-            </Button>
+            </Link>
           ))}
-          <Button
-            className="nav-library"
-            variant="outline"
-            onClick={() =>
-              openOverlay({
-                type: "library",
-                view: library.data?.items.length ? "grid" : "list",
-              })
-            }
+          <Link
+            className={buttonVariants({ variant: "outline", className: "nav-library" })}
+            to={library.data?.items.length ? "/library/grid" : "/library/list"}
           >
             <LibraryBigIcon data-icon="inline-start" />
             影片中心
             <strong>{library.data?.items.length ?? "—"}</strong>
-          </Button>
+          </Link>
         </nav>
       </header>
 
@@ -137,29 +131,20 @@ function HomeApp() {
               INSU 讓你觀看。
             </p>
             <div className="hero-actions">
-              <Button
-                className="hero-direction"
-                size="lg"
-                onClick={() =>
-                  openOverlay({
-                    type: "usage-guide",
-                    tab: "initialize",
-                  })
-                }
+              <Link
+                className={buttonVariants({ size: "lg", className: "hero-direction" })}
+                to="/guide/initialize"
               >
                 開始說明
                 <ArrowUpRightIcon data-icon="inline-end" />
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() =>
-                  openOverlay({ type: "add-media" })
-                }
+              </Link>
+              <Link
+                className={buttonVariants({ variant: "outline", size: "lg" })}
+                to="/library/list"
               >
                 <ListPlusIcon data-icon="inline-start" />
                 加入影音
-              </Button>
+              </Link>
             </div>
           </div>
           <div className="hero-artwork">
@@ -171,19 +156,23 @@ function HomeApp() {
           <LocalServiceStatus />
           <span className="footer-middle">
             <span>© {new Date().getFullYear()} INSU</span>
-            <Button
-              variant="link"
-              onClick={() =>
-                openOverlay({ type: "policy", required: false })
-              }
-            >
+            <Link className={buttonVariants({ variant: "link" })} to="/policy">
               使用規範
-            </Button>
+            </Link>
           </span>
         </footer>
       </main>
-      <OverlayCoordinator />
     </div>
+  )
+})
+
+function HomeApp() {
+  return (
+    <>
+      <RequiredPolicyGate />
+      <HomeShell />
+      <OverlayCoordinator />
+    </>
   )
 }
 

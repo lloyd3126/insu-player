@@ -19,14 +19,21 @@ function service() {
 
 function hlsRequest() {
   return {
-    candidate: {
-      kind: "network-media" as const,
-      pageUrl: "https://media.example/watch/one",
-      frameUrl: "https://embed.example/player/one",
-      mediaUrl: "https://cdn.example/vod.m3u8?token=ephemeral",
-      protocol: "hls" as const,
-      candidateFingerprint: "a".repeat(64),
-    },
+    candidates: [
+      {
+        kind: "page" as const,
+        pageUrl: "https://media.example/watch/one",
+        candidateFingerprint: "a".repeat(64),
+      },
+      {
+        kind: "network-media" as const,
+        pageUrl: "https://media.example/watch/one",
+        frameUrl: "https://embed.example/player/one",
+        mediaUrl: "https://cdn.example/vod.m3u8?token=ephemeral",
+        protocol: "hls" as const,
+        candidateFingerprint: "b".repeat(64),
+      },
+    ],
     cookies: [
       {
         name: "session",
@@ -57,15 +64,18 @@ describe("browser media sessions", () => {
     const sessions = service()
     const created = await sessions.create(hlsRequest())
     const claimed = sessions.claim(created.sessionId)
-    expect(claimed.sourceKind).toBe("network-media")
-    expect(claimed.sourceUrl).toContain("vod.m3u8")
+    expect(claimed.sourceKind).toBe("page")
+    expect(claimed.sourceUrls).toEqual([
+      "https://media.example/watch/one",
+      "https://cdn.example/vod.m3u8?token=ephemeral",
+    ])
     expect(claimed.cookieFile).not.toBeNull()
     expect(statSync(claimed.cookieFile!).mode & 0o777).toBe(0o600)
     expect(readFileSync(claimed.cookieFile!, "utf8")).toContain("secret-cookie")
     claimed.dispose()
     expect(existsSync(claimed.cookieFile!)).toBe(false)
     expect(() => sessions.claim(created.sessionId)).toThrow(
-      "瀏覽器媒體工作階段已失效",
+      "本次來源資料已失效",
     )
   })
 

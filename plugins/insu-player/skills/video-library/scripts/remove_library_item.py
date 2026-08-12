@@ -563,8 +563,8 @@ class SubtitleArtifactRemovalHandler:
         return directory
 
     def artifacts(self, job_directory: Path, status: dict[str, Any]) -> list[dict[str, Any]]:
-        if status.get("schemaVersion") != 2:
-            raise RemovalError("subtitle media record must use schemaVersion 2")
+        if status.get("schemaVersion") != 3:
+            raise RemovalError("subtitle media record must use schemaVersion 3")
         raw = status.get("subtitleArtifacts")
         if not isinstance(raw, list) or not all(isinstance(artifact, dict) for artifact in raw):
             raise RemovalError("subtitle status must contain subtitleArtifacts")
