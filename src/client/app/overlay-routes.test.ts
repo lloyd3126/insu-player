@@ -41,6 +41,19 @@ describe("overlay routes", () => {
     })).toBe("/extension/usage")
     expect(overlayFromLocation("/extension/library")).toBeNull()
     expect(overlayFromLocation("/extension/unknown")).toBeNull()
+    expect(overlayFromLocation("/report/review")).toEqual({
+      type: "issue-report",
+      tab: "review",
+    })
+    expect(overlayFromLocation("/report")).toEqual({
+      type: "issue-report",
+      tab: "diagnose",
+    })
+    expect(pathForOverlay({
+      type: "issue-report",
+      tab: "submit",
+    })).toBe("/report/submit")
+    expect(overlayFromLocation("/report/unknown")).toBeNull()
     expect(overlayFromLocation("/library/add")).toBeNull()
     expect(overlayFromLocation("/library/add/downloads")).toBeNull()
     expect(overlayFromLocation("/library/add/unknown")).toBeNull()

@@ -12,7 +12,7 @@ http://127.0.0.1:8000/
 
 未封裝 Chrome Extension 固定放在 `plugins/insu-player/chrome-extension/`，只能由目前開啟的首頁分頁主動連接目前 workspace 的精確 localhost origin，並共用相同下載佇列。不得掃描或猜測 port。使用者只看到一次「連接目前的 INSU Player」，challenge、Extension origin、protocol、build、data schema 與 token 驗證留在背景。頁面、embed、直接 MP4 與已結束的 M3U8 使用同一 clean source contract。Cookie 只有在使用者當下同意後才進入短期記憶體工作階段與權限 `0600` 的 cookie jar，禁止寫入 SQLite、log、metadata 或回覆，下載結束與服務啟動時都要刪除。直播、DRM HLS 與沒有可還原網路來源的 blob 必須直接拒絕。`/extension/library` 只提供卡片、搜尋、播放與字幕選擇，不顯示 Agent 提示或轉錄設定。
 
-首頁仍是單一 React 應用程式，但使用 React Router 將開始說明、我的提示、支援網站、Chrome 擴充功能、轉錄設定、影片中心、影音詳情、播放器及其 tab 狀態映射到 localhost URL。重新整理或直接開啟該 URL 必須恢復同一個 modal 與 tab。Hono/Bun 服務要對這些 allowlist 前端路徑回傳同一份 React `index.html`。
+首頁仍是單一 React 應用程式，但使用 React Router 將開始說明、我的提示、支援網站、Chrome 擴充功能、轉錄設定、異常回報、影片中心、影音詳情、播放器及其 tab 狀態映射到 localhost URL。重新整理或直接開啟該 URL 必須恢復同一個 modal 與 tab。Hono/Bun 服務要對這些 allowlist 前端路徑回傳同一份 React `index.html`。
 
 支援網站在搜尋列上方提供單一「詢問 Agent 是否支援」提示卡。提示會先檢查目前解析器，必要時安全更新 workspace 內的 yt-dlp，仍不支援才研究平台。
 

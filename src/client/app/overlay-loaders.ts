@@ -4,6 +4,9 @@ export const loadUsageGuideDialog = () =>
 export const loadChromeExtensionDialog = () =>
   import("@/features/home/ChromeExtensionDialog")
 
+export const loadIssueReportDialog = () =>
+  import("@/features/home/IssueReportDialog")
+
 export const loadMyPromptsDialog = () =>
   import("@/features/home/MyPromptsDialog")
 

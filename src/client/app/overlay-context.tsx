@@ -16,6 +16,7 @@ export type UsageGuideTab =
   | "add-media"
   | "handoff"
 export type ChromeExtensionTab = "download" | "connect" | "usage"
+export type IssueReportTab = "diagnose" | "review" | "submit"
 export type LibraryView = "grid" | "list" | "subtitle-style"
 export type JobDetailTab =
   | "about"
@@ -44,6 +45,7 @@ export type OverlayDestination =
   | { type: "my-prompts" }
   | { type: "supported-sites" }
   | { type: "chrome-extension"; tab: ChromeExtensionTab }
+  | { type: "issue-report"; tab: IssueReportTab }
   | { type: "transcription-settings"; modelId?: string }
   | {
       type: "library"

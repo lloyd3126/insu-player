@@ -1,5 +1,6 @@
 import type {
   ChromeExtensionTab,
+  IssueReportTab,
   JobDetailTab,
   OverlayDestination,
   OverlayState,
@@ -12,6 +13,7 @@ const USAGE_GUIDE_TABS = new Set([
   "handoff",
 ])
 const CHROME_EXTENSION_TABS = new Set(["download", "connect", "usage"])
+const ISSUE_REPORT_TABS = new Set(["diagnose", "review", "submit"])
 const LIBRARY_VIEWS = new Set(["grid", "list", "subtitle-style"])
 const LIBRARY_STATUSES = new Set(["all", "active", "attention", "watchable", "ready"])
 const JOB_DETAIL_TABS = new Set([
@@ -88,6 +90,12 @@ function overlayDestinationFromLocation(
       setValue<ChromeExtensionTab>(CHROME_EXTENSION_TABS, segments[1]) ??
       (segments.length === 1 ? "download" : null)
     return tab ? { type: "chrome-extension", tab } : null
+  }
+  if (segments[0] === "report" && segments.length <= 2) {
+    const tab =
+      setValue<IssueReportTab>(ISSUE_REPORT_TABS, segments[1]) ??
+      (segments.length === 1 ? "diagnose" : null)
+    return tab ? { type: "issue-report", tab } : null
   }
   if (segments[0] === "settings") {
     if (segments.length === 1) return { type: "transcription-settings" }
@@ -215,6 +223,9 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
       break
     case "chrome-extension":
       path = `/extension/${overlay.tab}`
+      break
+    case "issue-report":
+      path = `/report/${overlay.tab}`
       break
     case "transcription-settings":
       path = overlay.modelId

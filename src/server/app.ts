@@ -529,6 +529,8 @@ export function createApplication(options: ApplicationOptions) {
       "/extension/connect",
       "/extension/usage",
       "/extension/library",
+      "/report",
+      "/report/*",
     ],
     (context) =>
       serveFile(context.req.raw, path.join(options.libraryAppRoot, "index.html")),

@@ -40,6 +40,10 @@ const NAV_ITEMS: Array<{
     label: "擴充功能",
     to: "/extension/download",
   },
+  {
+    label: "異常回報",
+    to: "/report/diagnose",
+  },
 ]
 
 function RequiredPolicyGate() {

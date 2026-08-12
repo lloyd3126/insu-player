@@ -11,7 +11,7 @@ import {
 } from "../../../src/shared/contracts/browser-extension"
 
 test.describe("INSU Player home @smoke", () => {
-  test("shows six ordered text-only navigation destinations", async ({ page }) => {
+  test("shows seven ordered text-only navigation destinations", async ({ page }) => {
     const home = new HomePage(page)
     await home.goto()
 
@@ -37,13 +37,14 @@ test.describe("INSU Player home @smoke", () => {
     ).toBeGreaterThan(1)
 
     const navigationLinks = home.navigation.getByRole("link")
-    await expect(navigationLinks).toHaveCount(6)
+    await expect(navigationLinks).toHaveCount(7)
     await expect(navigationLinks).toHaveText([
       "開始說明",
       "我的提示",
       "轉錄設定",
       "支援網站",
       "擴充功能",
+      "異常回報",
       /影片中心/,
     ])
     await expect(home.navigation.locator("svg")).toHaveCount(1)
@@ -63,6 +64,41 @@ test.describe("INSU Player home @smoke", () => {
       home.navigation.getByRole("link", { name: "介面設定" }),
     ).toHaveCount(0)
     await expect(page).toHaveURL(/\/$/)
+  })
+
+  test("guides a privacy-safe issue report from diagnosis to GitHub", async ({ page }) => {
+    const home = new HomePage(page)
+    await home.goto()
+    await page.context().grantPermissions([
+      "clipboard-read",
+      "clipboard-write",
+    ])
+
+    const report = await home.openNavigationDialog("異常回報", "異常回報")
+    await expect(report.getByRole("tab")).toHaveText([
+      "1 偵查問題",
+      "2 檢查回報",
+      "3 建立 Issue",
+    ])
+    await report.getByRole("button", { name: "複製偵查提示" }).click()
+    const copiedPrompt = await page.evaluate(() => navigator.clipboard.readText())
+    expect(copiedPrompt).toContain("只進行唯讀偵查")
+    expect(copiedPrompt).toContain("不得讀取、顯示或回報 API Key")
+
+    await report.getByRole("button", { name: "前往檢查回報" }).click()
+    await expect(page).toHaveURL(/\/report\/review$/)
+    await expect(
+      report.getByRole("heading", { name: "檢查 Agent 整理的回報" }),
+    ).toBeVisible()
+
+    await report.getByRole("button", { name: "前往建立 Issue" }).click()
+    await expect(page).toHaveURL(/\/report\/submit$/)
+    await expect(
+      report.getByRole("link", { name: "前往 GitHub 建立 Issue" }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/lloyd3126/insu-player/issues/new",
+    )
   })
 
   test("adds media from the homepage and shows it directly in the library", async ({ page }) => {

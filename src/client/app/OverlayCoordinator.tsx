@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useRef } from "react"
 import { useOverlayState } from "@/app/overlay-context"
 import {
   loadChromeExtensionDialog,
+  loadIssueReportDialog,
   loadJobDetailDialog,
   loadLibraryDialog,
   loadMyPromptsDialog,
@@ -21,6 +22,11 @@ const UsageGuideDialog = lazy(() =>
 const ChromeExtensionDialog = lazy(() =>
   loadChromeExtensionDialog().then((module) => ({
     default: module.ChromeExtensionDialog,
+  })),
+)
+const IssueReportDialog = lazy(() =>
+  loadIssueReportDialog().then((module) => ({
+    default: module.IssueReportDialog,
   })),
 )
 const MyPromptsDialog = lazy(() =>
@@ -64,6 +70,7 @@ const DIALOG_LABELS = {
   "my-prompts": "我的提示",
   "supported-sites": "支援網站",
   "chrome-extension": "Chrome 擴充功能",
+  "issue-report": "異常回報",
   "transcription-settings": "轉錄設定",
   library: "影片中心",
   player: "影音播放器",
@@ -119,6 +126,8 @@ export function OverlayCoordinator() {
         return <SupportedSitesDialog />
       case "chrome-extension":
         return <ChromeExtensionDialog />
+      case "issue-report":
+        return <IssueReportDialog />
       case "transcription-settings":
         return <TranscriptionSettingsDialog />
       case "library":

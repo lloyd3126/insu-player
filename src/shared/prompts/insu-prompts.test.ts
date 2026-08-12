@@ -4,6 +4,7 @@ import {
   BUILT_IN_PROMPTS,
   CHECK_SOURCE_SUPPORT_PROMPT,
   CREATE_PROMPT_WITH_AGENT,
+  DIAGNOSE_PLAYER_ISSUE_PROMPT,
   buildAddVideoConversationPrompt,
   buildAddVideoPrompt,
   buildCreateProofreadSubtitlePrompt,
@@ -18,6 +19,15 @@ import {
 } from "./insu-prompts"
 
 describe("INSU prompt contract", () => {
+  test("builds a read-only and privacy-safe issue diagnostic prompt", () => {
+    expect(DIAGNOSE_PLAYER_ISSUE_PROMPT).toContain("只進行唯讀偵查")
+    expect(DIAGNOSE_PLAYER_ISSUE_PROMPT).toContain("不得修改程式碼、資料庫")
+    expect(DIAGNOSE_PLAYER_ISSUE_PROMPT).toContain("不得讀取、顯示或回報 API Key")
+    expect(DIAGNOSE_PLAYER_ISSUE_PROMPT).toContain("區分已驗證事實、合理推論")
+    expect(DIAGNOSE_PLAYER_ISSUE_PROMPT).toContain("可直接貼到 GitHub")
+    expect(DIAGNOSE_PLAYER_ISSUE_PROMPT).not.toContain("\uFF1B")
+  })
+
   test("builds one novice-first prompt from a validated media URL", () => {
     const prompt = buildAddVideoPrompt("https://example.test/video?q=1")
 

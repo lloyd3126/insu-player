@@ -1,0 +1,7 @@
+interface:
+  display_name: "Resolve INSU Player Issue"
+  short_description: "讀取 GitHub Issue，修正、驗證、回覆並安全關閉"
+  default_prompt: "Use $resolve-player-issue to diagnose and fix an INSU Player GitHub Issue, publish the verified fix, reply with evidence, and close it only after success."
+
+policy:
+  allow_implicit_invocation: true

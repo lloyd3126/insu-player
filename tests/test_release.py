@@ -45,6 +45,10 @@ class PortableReleaseTests(unittest.TestCase):
                     prefix + ".agents/skills/migrate-player-library/SKILL.md",
                     names,
                 )
+                self.assertIn(
+                    prefix + ".agents/skills/resolve-player-issue/SKILL.md",
+                    names,
+                )
                 self.assertIn(prefix + "plugins/insu-player/.codex-plugin/plugin.json", names)
                 self.assertIn(
                     prefix + "plugins/insu-player/skills/migrate-player-library/SKILL.md",
@@ -53,6 +57,10 @@ class PortableReleaseTests(unittest.TestCase):
                 self.assertIn(
                     prefix
                     + "plugins/insu-player/skills/migrate-player-library/scripts/migrate_library.py",
+                    names,
+                )
+                self.assertIn(
+                    prefix + "plugins/insu-player/skills/resolve-player-issue/SKILL.md",
                     names,
                 )
                 self.assertIn(
