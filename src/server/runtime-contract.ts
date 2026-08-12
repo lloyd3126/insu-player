@@ -1,4 +1,4 @@
-export const SERVER_BUILD_ID = "insu-player-extension-bootstrap-v1"
+export const SERVER_BUILD_ID = "insu-player-download-task-controls-v1"
 export const DATA_SCHEMA_VERSION = 9
 export const MEDIA_RECORD_SCHEMA_VERSION = 3
 

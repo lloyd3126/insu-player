@@ -535,7 +535,7 @@ describe("Hono application", () => {
       status: "ok",
       runtime: "bun",
       framework: "hono",
-      buildId: "insu-player-extension-bootstrap-v1",
+      buildId: "insu-player-download-task-controls-v1",
       dataSchemaVersion: 9,
       extensionProtocolVersion: EXTENSION_CONNECTION_PROTOCOL_VERSION,
       database: "sqlite",
@@ -1613,7 +1613,7 @@ describe("Hono application", () => {
         .get("operation-published-demo"),
     ).toEqual({ state: "downloaded", stage: "complete" })
 
-    expect(downloadQueueService.retry("library-published-demo")).toMatchObject({
+    expect(downloadQueueService.start("library-published-demo")).toMatchObject({
       items: [{ id: "library-published-demo", kind: "media" }],
     })
   })
@@ -1791,6 +1791,89 @@ describe("Hono application", () => {
     expect(
       (await app.request("http://127.0.0.1:4178/api/health")).status,
     ).toBe(200)
+  })
+
+  test("pauses, resumes, and removes an unfinished download with its partial files", async () => {
+    const fakeDownload = path.join(workspace, "fake-pausable-download.sh")
+    writeFileSync(
+      fakeDownload,
+      "#!/bin/sh\ntrap 'exit 143' TERM INT\nwhile :; do sleep 1; done\n",
+    )
+    chmodSync(fakeDownload, 0o700)
+    const downloads = new DownloadQueueService(
+      workspace,
+      database,
+      jobRepository,
+      fakeDownload,
+      mediaSessionService,
+      1,
+    )
+    const created = downloads.create(
+      [{ kind: "page", pageUrl: "https://example.test/pausable-download" }],
+      true,
+    )
+    const itemId = created.itemIds[0]!
+
+    expect(downloads.list().items.find((item) => item.id === itemId)).toMatchObject({
+      kind: "download",
+      state: "checking",
+    })
+    expect(await downloads.pauseItem(itemId)).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ id: itemId, kind: "download", state: "paused" }),
+      ]),
+    })
+
+    downloads.start(itemId)
+    expect(downloads.list().items.find((item) => item.id === itemId)).toMatchObject({
+      kind: "download",
+      state: "checking",
+    })
+    const operation = sqlite
+      .query("select operation_id from download_queue_items where id = ?")
+      .get(itemId) as { operation_id: string }
+    const operationInputs = sqlite
+      .query("select inputs_json from operations where id = ?")
+      .get(operation.operation_id) as { inputs_json: string }
+    expect(JSON.parse(operationInputs.inputs_json)).toMatchObject({
+      resumePartial: true,
+    })
+
+    const published = jobRepository.listDownloadProjections().find(
+      (job) => job.videoId === "demo-video",
+    )!
+    const inputs = {
+      ...JSON.parse(operationInputs.inputs_json),
+      redownloadBaselineUpdatedAt: published.updatedAt,
+    }
+    sqlite
+      .query("update download_queue_items set video_id = ? where id = ?")
+      .run("demo-video", itemId)
+    sqlite
+      .query("update operations set video_id = ?, inputs_json = ? where id = ?")
+      .run("demo-video", JSON.stringify(inputs), operation.operation_id)
+    const partialDirectory = path.join(
+      workspace,
+      "jobs",
+      "demo-video",
+      "source",
+      ".video-download-test",
+    )
+    mkdirSync(partialDirectory, { recursive: true })
+    writeFileSync(path.join(partialDirectory, "video.mp4.part"), "partial")
+
+    const removed = await downloads.remove(itemId)
+    expect(removed.items).toEqual([
+      expect.objectContaining({ kind: "media", job: expect.objectContaining({ videoId: "demo-video" }) }),
+    ])
+    expect(existsSync(partialDirectory)).toBe(false)
+    expect(existsSync(path.join(workspace, "jobs", "demo-video"))).toBe(true)
+    expect(
+      sqlite.query("select count(*) as count from download_queue_items where id = ?").get(itemId),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite.query("select count(*) as count from operations where id = ?").get(operation.operation_id),
+    ).toEqual({ count: 0 })
   })
 
   test("imports immutable text and mind-map summary revisions with exact dependencies", async () => {

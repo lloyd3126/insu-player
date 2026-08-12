@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import {
-  BanIcon,
   DownloadIcon,
   ExternalLinkIcon,
   HardDriveIcon,
-  RotateCcwIcon,
+  PauseIcon,
+  PlayIcon,
   SearchIcon,
   SettingsIcon,
   Trash2Icon,
@@ -46,17 +46,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import {
-  VideoCardRemovalDialog,
-} from "@/features/job-detail/VideoRemovalDialog"
+import { VideoCardRemovalDialog } from "@/features/job-detail/VideoRemovalDialog"
 import { MediaCard } from "@/features/library/MediaCard"
 import { ImportMediaCard } from "@/features/library/ImportMediaCard"
 import { LocalMediaImportDialog } from "@/features/library/LocalMediaImportDialog"
 import { SubtitleStylePanel } from "@/features/library/SubtitleStylePanel"
-import {
-  DownloadProgressValue,
-  DownloadMediaCard,
-} from "@/features/library/DownloadMediaCard"
+import { DownloadProgressValue } from "@/features/library/DownloadProgressValue"
 import { useLibraryQuery } from "@/hooks/use-library-query"
 import { getJobPreferredCaption, NO_CAPTION } from "@/lib/captions"
 import { cn } from "@/lib/utils"
@@ -71,7 +66,6 @@ import { formatBytes } from "@shared/domain/format"
 type Filter = "all" | "active" | "attention" | "watchable" | "ready"
 const ACTIVE_DOWNLOAD_STATES = new Set([
   "checking",
-  "queued",
   "downloading",
   "verifying",
 ])
@@ -179,11 +173,11 @@ function DownloadQueueForm() {
 function DownloadItemActions({ item }: { item: DownloadLibraryItem }) {
   const queryClient = useQueryClient()
   const mutation = useMutation({
-    mutationFn: (action: "cancel" | "retry" | "approve" | "remove") => {
-      if (action === "cancel") return api.cancelLibraryDownload(item.id)
+    mutationFn: (action: "start" | "pause" | "approve" | "remove") => {
+      if (action === "pause") return api.pauseLibraryDownload(item.id)
       if (action === "approve") return api.approveLowQualityDownload(item.id)
       if (action === "remove") return api.removeLibraryDownload(item.id)
-      return api.retryLibraryDownload(item.id)
+      return api.startLibraryDownload(item.id)
     },
     onSuccess: (response) => {
       queryClient.setQueryData<LibraryResponse>(["library"], response)
@@ -219,62 +213,85 @@ function DownloadItemActions({ item }: { item: DownloadLibraryItem }) {
           disabled={mutation.isPending}
           onClick={() => mutation.mutate("approve")}
         >
-          {mutation.isPending ? <Spinner data-icon="inline-start" /> : null}
+          {mutation.isPending && mutation.variables === "approve" ? (
+            <Spinner data-icon="inline-start" />
+          ) : null}
           同意低於 720p
         </Button>
-        {mutation.isError ? <small role="alert">{mutation.error.message}</small> : null}
-      </div>
-    )
-  }
-  const retryable = item.state === "failed" || item.state === "cancelled"
-  const cancellable = ACTIVE_DOWNLOAD_STATES.has(item.state)
-  const action = retryable ? "retry" : "cancel"
-  const label = retryable ? `重新下載 ${item.title}` : `取消下載 ${item.title}`
-  return (
-    <div className="library-download-actions">
-      {sourceAction}
-      {retryable || cancellable ? (
         <Tooltip>
           <TooltipTrigger
             render={(
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={label}
-                disabled={mutation.isPending}
-                onClick={() => mutation.mutate(action)}
-              />
-            )}
-          >
-            {mutation.isPending ? (
-              <Spinner />
-            ) : retryable ? (
-              <RotateCcwIcon />
-            ) : (
-              <BanIcon />
-            )}
-          </TooltipTrigger>
-          <TooltipContent>{retryable ? "重新下載" : "取消下載"}</TooltipContent>
-        </Tooltip>
-      ) : null}
-      {item.state === "failed" ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={(
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label={`刪除下載失敗項目 ${item.title}`}
+                aria-label={`移除任務 ${item.title}`}
                 disabled={mutation.isPending}
                 onClick={() => mutation.mutate("remove")}
               />
             )}
           >
-            <Trash2Icon />
+            {mutation.isPending && mutation.variables === "remove" ? (
+              <Spinner />
+            ) : (
+              <Trash2Icon />
+            )}
           </TooltipTrigger>
-          <TooltipContent>刪除</TooltipContent>
+          <TooltipContent>移除任務</TooltipContent>
         </Tooltip>
-      ) : null}
+        {mutation.isError ? <small role="alert">{mutation.error.message}</small> : null}
+      </div>
+    )
+  }
+  const downloading = ACTIVE_DOWNLOAD_STATES.has(item.state)
+  const action = downloading ? "pause" : "start"
+  const label = downloading
+    ? `暫停下載 ${item.title}`
+    : `開始下載 ${item.title}`
+  return (
+    <div className="library-download-actions">
+      {sourceAction}
+      <Tooltip>
+        <TooltipTrigger
+          render={(
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={label}
+              disabled={mutation.isPending}
+              onClick={() => mutation.mutate(action)}
+            />
+          )}
+        >
+          {mutation.isPending && mutation.variables === action ? (
+            <Spinner />
+          ) : downloading ? (
+            <PauseIcon />
+          ) : (
+            <PlayIcon />
+          )}
+        </TooltipTrigger>
+        <TooltipContent>{downloading ? "暫停下載" : "開始下載"}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={(
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={`移除任務 ${item.title}`}
+              disabled={mutation.isPending}
+              onClick={() => mutation.mutate("remove")}
+            />
+          )}
+        >
+          {mutation.isPending && mutation.variables === "remove" ? (
+            <Spinner />
+          ) : (
+            <Trash2Icon />
+          )}
+        </TooltipTrigger>
+        <TooltipContent>移除任務</TooltipContent>
+      </Tooltip>
       {mutation.isError ? <small role="alert">{mutation.error.message}</small> : null}
     </div>
   )
@@ -351,14 +368,6 @@ function MediaGridCard({ item }: { item: MediaLibraryItem }) {
   )
 }
 
-function DownloadGridCard({ item }: { item: DownloadLibraryItem }) {
-  return (
-    <DownloadMediaCard item={item}>
-      <DownloadItemActions item={item} />
-    </DownloadMediaCard>
-  )
-}
-
 export function LibraryDialog() {
   const overlay = useOverlay()
   const active = overlay.state?.type === "library" ? overlay.state : null
@@ -366,7 +375,11 @@ export function LibraryDialog() {
   const items = query.data?.items ?? EMPTY_LIBRARY_ITEMS
   const search = active?.query ?? ""
   const filter = (active?.status ?? "all") as Filter
-  const selectedView = active?.view ?? (items.length > 0 ? "grid" : "list")
+  const gridItems = useMemo(
+    () => items.filter((item) => item.kind !== "download"),
+    [items],
+  )
+  const selectedView = active?.view ?? (gridItems.length > 0 ? "grid" : "list")
   const updateLibrary = (patch: {
     view?: LibraryView
     query?: string
@@ -385,14 +398,12 @@ export function LibraryDialog() {
   }
   const searched = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase("zh-TW")
-    return items.filter((item) => {
+    return gridItems.filter((item) => {
       const videoId = itemVideoId(item)
       const sourceUrl =
         item.kind === "media"
           ? item.job.sourceUrl
-          : item.kind === "download"
-            ? item.pageUrl
-            : item.originalName
+          : item.originalName
       return (
         !normalized ||
         itemTitle(item).toLocaleLowerCase("zh-TW").includes(normalized) ||
@@ -400,7 +411,7 @@ export function LibraryDialog() {
         Boolean(sourceUrl?.toLocaleLowerCase("en").includes(normalized))
       )
     })
-  }, [items, search])
+  }, [gridItems, search])
   const downloadItems = useMemo(
     () => items.filter((item): item is DownloadLibraryItem => item.kind === "download"),
     [items],
@@ -418,13 +429,13 @@ export function LibraryDialog() {
     <>
       {query.isPending ? <LoadingState label="正在讀取影片中心" /> : null}
       {query.isError ? <ErrorState message={query.error.message} /> : null}
-      {query.isSuccess && items.length === 0 ? (
+      {query.isSuccess && gridItems.length === 0 ? (
         <EmptyState
           title="目前還沒有影音"
           description="可從下載佇列貼上網址，或使用上方匯入按鈕選取本機影音。"
         />
       ) : null}
-      {query.isSuccess && items.length > 0 && visibleCount === 0 ? (
+      {query.isSuccess && gridItems.length > 0 && visibleCount === 0 ? (
         <EmptyState
           title="找不到符合條件的影音"
           description="調整搜尋字詞或狀態篩選。"
@@ -496,8 +507,6 @@ export function LibraryDialog() {
                 {searched.map((item) =>
                   item.kind === "media" ? (
                     <MediaGridCard key={item.id} item={item} />
-                  ) : item.kind === "download" ? (
-                    <DownloadGridCard key={item.id} item={item} />
                   ) : (
                     <ImportMediaCard key={item.id} item={item} removable />
                   ),

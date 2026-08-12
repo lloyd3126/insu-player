@@ -148,6 +148,12 @@ test.describe("INSU Player home @smoke", () => {
     await expect(
       library.getByRole("link", { name: "開啟來源 youtube.com" }),
     ).toHaveAttribute("href", "https://www.youtube.com/watch?v=demo-video")
+    await expect(
+      library.getByRole("button", { name: "開始下載 youtube.com" }),
+    ).toBeVisible()
+    await expect(
+      library.getByRole("button", { name: "移除任務 youtube.com" }),
+    ).toBeVisible()
     await expect(library.getByText("等待下載", { exact: true })).toHaveCount(0)
     await expect(library.getByText("下一個開始下載")).toHaveCount(0)
     await expect(library.getByText(pendingItem.pageUrl, { exact: true })).toHaveCount(0)
@@ -243,7 +249,7 @@ test.describe("INSU Player home @smoke", () => {
     await expect(page).toHaveURL(/\/library\/list$/)
   })
 
-  test("offers retry and deletion for a failed download", async ({ page }) => {
+  test("keeps failed work in the queue with start and removal actions", async ({ page }) => {
     const failedItem = {
       kind: "download",
       id: "library-failed",
@@ -298,16 +304,18 @@ test.describe("INSU Player home @smoke", () => {
     const home = new HomePage(page)
     await home.goto()
     const library = await home.openLibrary()
-    const card = library.locator(".video-grid-card").filter({
-      has: page.getByRole("heading", { name: "Failed Video" }),
-    })
+    await expect(library.getByRole("tab", { name: "下載佇列" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    )
+    const row = library.getByRole("row").filter({ hasText: "Failed Video" })
     await expect(
-      card.getByRole("button", { name: "重新下載 Failed Video" }),
+      row.getByRole("button", { name: "開始下載 Failed Video" }),
     ).toBeVisible()
-    await card
-      .getByRole("button", { name: "刪除下載失敗項目 Failed Video" })
+    await row
+      .getByRole("button", { name: "移除任務 Failed Video" })
       .click()
-    await expect(library.getByText("目前還沒有影音")).toBeVisible()
+    await expect(library.getByText("目前沒有下載工作")).toBeVisible()
   })
 
   test("keeps each getting-started section in its own tab", async ({ page }) => {

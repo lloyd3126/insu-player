@@ -1,7 +1,7 @@
 export const CONNECTION_PROTOCOL_VERSION = 4
 export const BOOTSTRAP_KIND = "insu-player-extension-bootstrap"
 export const BOOTSTRAP_SCHEMA_VERSION = 1
-export const EXPECTED_SERVER_BUILD_ID = "insu-player-extension-bootstrap-v1"
+export const EXPECTED_SERVER_BUILD_ID = "insu-player-download-task-controls-v1"
 export const EXPECTED_DATA_SCHEMA_VERSION = 9
 
 function isRecord(value) {

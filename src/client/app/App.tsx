@@ -88,6 +88,9 @@ function LocalServiceStatus() {
 
 const HomeShell = memo(function HomeShell() {
   const library = useLibraryQuery()
+  const libraryCardCount = library.data
+    ? library.data.items.filter((item) => item.kind !== "download").length
+    : null
 
   return (
     <div className="app-shell">
@@ -108,11 +111,11 @@ const HomeShell = memo(function HomeShell() {
           ))}
           <Link
             className={buttonVariants({ variant: "outline", className: "nav-library" })}
-            to={library.data?.items.length ? "/library/grid" : "/library/list"}
+            to={libraryCardCount ? "/library/grid" : "/library/list"}
           >
             <LibraryBigIcon data-icon="inline-start" />
             影片中心
-            <strong>{library.data?.items.length ?? "—"}</strong>
+            <strong>{libraryCardCount ?? "—"}</strong>
           </Link>
         </nav>
       </header>

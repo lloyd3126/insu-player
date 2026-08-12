@@ -46,6 +46,54 @@ test.describe("library and details @critical", () => {
     await expect(page).toHaveURL(/\/extension\/library$/)
   })
 
+  test("keeps unfinished downloads out of the browser card library", async ({ page }) => {
+    await page.route("**/api/library", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              kind: "download",
+              id: "library-active-browser",
+              sourceKind: "page",
+              pageUrl: "https://example.test/active",
+              sourceUrl: "https://example.test/active",
+              videoId: "active-browser",
+              title: "尚未完成的下載",
+              thumbnailUrl: null,
+              state: "downloading",
+              stage: "media_download",
+              progress: 45,
+              message: "正在下載",
+              errorCode: null,
+              queueAhead: null,
+              lowQualityApproved: false,
+              authentication: "none",
+              authenticationConsentAt: null,
+              createdAt: "2026-08-11T00:00:00Z",
+              updatedAt: "2026-08-11T00:01:00Z",
+              completedAt: null,
+            },
+          ],
+          queue: {
+            paused: false,
+            concurrency: 2,
+            queuedCount: 0,
+            activeCount: 1,
+            attentionCount: 0,
+          },
+          serverTime: "2026-08-11T00:01:00Z",
+        }),
+      }),
+    )
+
+    await page.goto("/extension/library")
+    await expect(page.locator(".video-grid-card")).toHaveCount(0)
+    await expect(page.getByText("尚未完成的下載")).toHaveCount(0)
+    await expect(page.getByText("目前還沒有影音")).toBeVisible()
+  })
+
   test("keeps keyboard focus inside the lazy dialog loading state", async ({
     page,
   }) => {
@@ -880,8 +928,13 @@ test.describe("library and details @critical", () => {
     expect(actionsBox?.width ?? 0).toBeLessThanOrEqual(actionCellBox?.width ?? 0)
     expect(videoCellBox?.width).toBeGreaterThan(actionCellBox?.width ?? 0)
     await expect(row.getByRole("link", { name: "開啟來源 Active Video" })).toBeVisible()
-    await expect(row.getByRole("button", { name: "取消下載 Active Video" })).toBeVisible()
+    await expect(row.getByRole("button", { name: "暫停下載 Active Video" })).toBeVisible()
+    await expect(row.getByRole("button", { name: "移除任務 Active Video" })).toBeVisible()
     await expect(library.getByText("雙語測試影音")).toHaveCount(0)
+
+    await library.getByRole("tab", { name: "我的影音" }).click()
+    await expect(library.locator(".video-grid-card")).toHaveCount(0)
+    await expect(library.getByText("目前還沒有影音")).toBeVisible()
   })
 
   test("separates media facts subtitles segmentation and processing records", async ({

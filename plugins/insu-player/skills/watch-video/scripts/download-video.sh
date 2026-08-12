@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'exit 143' TERM INT
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 . "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: download-video.sh <workspace> <video-url> [--fallback-url URL]... [--download-only | --language SOURCE_BCP47 [--translate TARGET_BCP47 | --proofread]] [--allow-low-quality] [--library-source-url URL] [--source-kind page|embed|network-media] [--queue-item-id ID] [--referer URL] [--cookie-file PATH]\n'
+  printf 'usage: download-video.sh <workspace> <video-url> [--fallback-url URL]... [--download-only | --language SOURCE_BCP47 [--translate TARGET_BCP47 | --proofread]] [--allow-low-quality] [--resume-partial] [--library-source-url URL] [--source-kind page|embed|network-media] [--queue-item-id ID] [--referer URL] [--cookie-file PATH]\n'
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then usage; exit 0; fi
@@ -18,6 +19,7 @@ translation_mode=""
 translation_target=""
 source_language=""
 allow_low_quality=0
+resume_partial=0
 download_only=0
 library_source_url="$video_url"
 source_kind="page"
@@ -48,6 +50,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --allow-low-quality)
       allow_low_quality=1
+      shift
+      ;;
+    --resume-partial)
+      resume_partial=1
       shift
       ;;
     --download-only)
@@ -389,7 +395,7 @@ json.dump(data, sys.stdout)
       retry=1
       while [ "$retry" -le 2 ]; do
         attempt_dir="$source_dir/.video-download-${height}p-${retry}"
-        cleanup_attempt_dir "$attempt_dir"
+        if [ "$resume_partial" -ne 1 ]; then cleanup_attempt_dir "$attempt_dir"; fi
         mkdir -p "$attempt_dir"
         caption_note "Checking a fresh ${height}p stream URL (attempt ${retry}/2)..."
         if ! probe_video_format "$format_selector"; then

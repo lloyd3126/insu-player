@@ -1,4 +1,5 @@
-import { existsSync, lstatSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, rmSync } from "node:fs"
+import path from "node:path"
 
 import { asc, desc, eq } from "drizzle-orm"
 
@@ -6,6 +7,7 @@ import type { AppDatabase } from "@server/db/client"
 import {
   downloadQueueItems,
   downloadQueueSettings,
+  jobs,
   operationEvents,
   operations,
 } from "@server/db/schema"
@@ -42,7 +44,7 @@ function libraryItemPriority(item: LibraryItem) {
   if (item.kind === "media") return 4
   if (item.kind === "import") return 4
   if (PROCESS_ITEM_STATES.has(item.state)) return 0
-  if (item.state === "queued") return 1
+  if (["queued", "paused"].includes(item.state)) return 1
   if (["needs_confirmation", "failed"].includes(item.state)) return 2
   return 3
 }
@@ -75,6 +77,14 @@ function processIsAlive(pid: unknown) {
     return true
   } catch {
     return false
+  }
+}
+
+function stopProcess(child: ReturnType<typeof Bun.spawn>) {
+  try {
+    process.kill(-child.pid, "SIGTERM")
+  } catch {
+    child.kill("SIGTERM")
   }
 }
 
@@ -135,9 +145,14 @@ export class DownloadQueueOperationError extends Error {
 export class DownloadQueueService {
   private readonly active = new Map<
     string,
-    { child: ReturnType<typeof Bun.spawn>; dispose: () => void }
+    {
+      child: ReturnType<typeof Bun.spawn>
+      session: ClaimedMediaSession | null
+      completion: Promise<void>
+    }
   >()
-  private readonly cancelled = new Set<string>()
+  private readonly pausedSessions = new Map<string, ClaimedMediaSession>()
+  private readonly termination = new Map<string, "pause" | "remove">()
 
   constructor(
     private readonly workspace: string,
@@ -328,7 +343,13 @@ export class DownloadQueueService {
       authenticationConsentAt: source.authenticationConsentAt,
     })
     if (
-      !["downloaded", "failed", "cancelled", "needs_confirmation"].includes(
+      ![
+        "downloaded",
+        "failed",
+        "cancelled",
+        "paused",
+        "needs_confirmation",
+      ].includes(
         operation.state,
       )
     ) return
@@ -390,6 +411,16 @@ export class DownloadQueueService {
       .orderBy(asc(downloadQueueItems.createdAt))
       .all()
     const jobsById = new Map(summaries.map((job) => [job.videoId, job]))
+    const associatedVideoIds = new Set(
+      rows
+        .map((item) =>
+          typeof this.operation(item.operationId).inputsJson
+            .redownloadBaselineUpdatedAt === "string"
+            ? null
+            : item.videoId,
+        )
+        .filter((videoId): videoId is string => Boolean(videoId)),
+    )
     const queuedIds: string[] = []
     for (const item of rows) {
       const operation = this.operation(item.operationId)
@@ -418,7 +449,10 @@ export class DownloadQueueService {
       )
     })
     for (const job of summaries) {
-      if (!linkedVideoIds.has(job.videoId)) {
+      if (
+        !linkedVideoIds.has(job.videoId) &&
+        !associatedVideoIds.has(job.videoId)
+      ) {
         items.push({ kind: "media", id: `media:${job.videoId}`, job })
       }
     }
@@ -691,9 +725,11 @@ export class DownloadQueueService {
   }
 
   private launch(item: typeof downloadQueueItems.$inferSelect) {
-    let session: ClaimedMediaSession | null = null
+    const operation = this.operation(item.operationId)
+    let session = this.pausedSessions.get(item.id) ?? null
+    this.pausedSessions.delete(item.id)
     try {
-      session = item.sessionId ? this.mediaSessions.claim(item.sessionId) : null
+      session ??= item.sessionId ? this.mediaSessions.claim(item.sessionId) : null
     } catch (error) {
       const code =
         error instanceof MediaSessionOperationError
@@ -755,10 +791,12 @@ export class DownloadQueueService {
     }
     if (session?.cookieFile) args.push("--cookie-file", session.cookieFile)
     if (item.lowQualityApproved) args.push("--allow-low-quality")
+    if (operation.inputsJson.resumePartial === true) args.push("--resume-partial")
     let child: ReturnType<typeof Bun.spawn>
     try {
       child = Bun.spawn(args, {
         cwd: this.workspace,
+        detached: true,
         stdout: "ignore",
         stderr: "pipe",
       })
@@ -773,10 +811,12 @@ export class DownloadQueueService {
       )
       return
     }
-    this.active.set(item.id, {
+    const active = {
       child,
-      dispose: session?.dispose ?? (() => undefined),
-    })
+      session,
+      completion: Promise.resolve(),
+    }
+    this.active.set(item.id, active)
     this.updateOperation(item.operationId, {
       state: "checking",
       stage: "source-resolution",
@@ -788,7 +828,9 @@ export class DownloadQueueService {
       startedAt: now(),
       completedAt: null,
     })
-    void this.finish(item, child).catch(() => this.settleUnexpectedFailure(item))
+    active.completion = this.finish(item, child).catch(() =>
+      this.settleUnexpectedFailure(item),
+    )
   }
 
   private failItem(
@@ -816,9 +858,34 @@ export class DownloadQueueService {
   private settleUnexpectedFailure(item: typeof downloadQueueItems.$inferSelect) {
     try {
       const active = this.active.get(item.id)
-      active?.dispose()
+      const termination = this.termination.get(item.id)
+      this.termination.delete(item.id)
+      if (termination === "pause" && active?.session) {
+        this.pausedSessions.set(item.id, active.session)
+      } else {
+        active?.session?.dispose()
+      }
       this.active.delete(item.id)
-      this.cancelled.delete(item.id)
+      if (termination === "pause") {
+        this.updateOperation(item.operationId, {
+          state: "paused",
+          stage: "paused",
+          message: "下載已暫停",
+          pid: null,
+          completedAt: null,
+        })
+        return
+      }
+      if (termination === "remove") {
+        this.updateOperation(item.operationId, {
+          state: "cancelled",
+          stage: "cancelled",
+          message: "下載已停止",
+          pid: null,
+          completedAt: now(),
+        })
+        return
+      }
       this.failItem(
         item,
         "internal-error",
@@ -828,7 +895,7 @@ export class DownloadQueueService {
       )
     } catch {
       this.active.delete(item.id)
-      this.cancelled.delete(item.id)
+      this.termination.delete(item.id)
     }
   }
 
@@ -842,9 +909,14 @@ export class DownloadQueueService {
         : new Response(child.stderr).text()
     const [exitCode, stderr] = await Promise.all([child.exited, stderrPromise])
     const active = this.active.get(item.id)
-    active?.dispose()
+    const termination = this.termination.get(item.id)
+    this.termination.delete(item.id)
+    if (termination === "pause" && active?.session) {
+      this.pausedSessions.set(item.id, active.session)
+    } else {
+      active?.session?.dispose()
+    }
     this.active.delete(item.id)
-    const cancelled = this.cancelled.delete(item.id)
     const refreshedItem = this.item(item.id)
     const job = refreshedItem.videoId
       ? this.jobs
@@ -859,11 +931,22 @@ export class DownloadQueueService {
       this.attemptHasPublishedMedia(operation, job)
     ) {
       this.reconcilePublishedMedia(refreshedItem, job)
-    } else if (cancelled) {
+    } else if (termination === "pause") {
+      this.updateOperation(item.operationId, {
+        state: "paused",
+        stage: "paused",
+        message: "下載已暫停",
+        errorCode: null,
+        errorMessage: null,
+        pid: null,
+        completedAt: null,
+      })
+      this.updateItem(item.id, { completedAt: null })
+    } else if (termination === "remove") {
       this.updateOperation(item.operationId, {
         state: "cancelled",
         stage: "cancelled",
-        message: "下載已取消",
+        message: "下載已停止",
         errorCode: null,
         errorMessage: null,
         pid: null,
@@ -951,7 +1034,7 @@ export class DownloadQueueService {
     this.schedule()
   }
 
-  retry(itemId: string, lowQualityApproved = false) {
+  start(itemId: string, lowQualityApproved = false) {
     const item = this.item(itemId)
     const operation = this.operation(item.operationId)
     const published = this.jobs
@@ -961,15 +1044,24 @@ export class DownloadQueueService {
       this.reconcilePublishedMedia(item, published)
       return this.list()
     }
-    if (!["failed", "cancelled", "needs_confirmation"].includes(operation.state)) {
+    if (
+      ![
+        "queued",
+        "paused",
+        "failed",
+        "cancelled",
+        "needs_confirmation",
+      ].includes(operation.state)
+    ) {
       throw new DownloadQueueOperationError(
-        "目前狀態不能重新下載",
-        "retry-not-allowed",
+        "目前狀態不能開始下載",
+        "start-not-allowed",
         409,
       )
     }
     if (
       !operation.resumable &&
+      !this.pausedSessions.has(item.id) &&
       (!item.sessionId || !this.mediaSessions.has(item.sessionId))
     ) {
       throw new DownloadQueueOperationError(
@@ -978,22 +1070,36 @@ export class DownloadQueueService {
         409,
       )
     }
-    this.updateOperation(item.operationId, {
-      state: "queued",
-      stage: "awaiting-download",
-      message: "等待下載",
-      progress: 0,
-      errorCode: null,
-      errorMessage: null,
-      pid: null,
-      attempt: operation.attempt + 1,
-      completedAt: null,
-    })
+    const wasPaused = operation.state === "paused"
+    if (operation.state !== "queued" || lowQualityApproved) {
+      this.updateOperation(item.operationId, {
+        state: "queued",
+        stage: "awaiting-download",
+        message: wasPaused ? "等待繼續下載" : "等待下載",
+        progress: wasPaused ? operation.progress : 0,
+        inputsJson: {
+          ...operation.inputsJson,
+          resumePartial: wasPaused,
+        },
+        errorCode: null,
+        errorMessage: null,
+        pid: null,
+        attempt: operation.state === "queued"
+          ? operation.attempt
+          : operation.attempt + 1,
+        completedAt: null,
+      })
+    }
     this.updateItem(item.id, {
       lowQualityApproved: lowQualityApproved || item.lowQualityApproved,
       completedAt: null,
     })
-    this.schedule()
+    const settings = this.ensureSettings()
+    if (settings.paused && this.active.size < settings.concurrency) {
+      this.launch(this.item(item.id))
+    } else {
+      this.schedule()
+    }
     return this.list()
   }
 
@@ -1006,7 +1112,7 @@ export class DownloadQueueService {
         409,
       )
     }
-    return this.retry(itemId, true)
+    return this.start(itemId, true)
   }
 
   pause() {
@@ -1044,19 +1150,61 @@ export class DownloadQueueService {
     return this.list()
   }
 
-  cancel(itemId: string) {
+  async pauseItem(itemId: string) {
     const item = this.item(itemId)
     const operation = this.operation(item.operationId)
-    if (operation.state === "queued") {
-      const timestamp = now()
-      this.updateOperation(item.operationId, {
-        state: "cancelled",
-        stage: "cancelled",
-        message: "下載已取消",
-        completedAt: timestamp,
-      })
-      this.updateItem(item.id, { completedAt: timestamp })
-    } else if (PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState)) {
+    if (!PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState)) {
+      throw new DownloadQueueOperationError(
+        "目前狀態不能暫停下載",
+        "pause-item-not-allowed",
+        409,
+      )
+    }
+    const active = this.active.get(item.id)
+    if (!active) {
+      throw new DownloadQueueOperationError(
+        "下載程序不屬於目前服務，請等待狀態更新",
+        "process-not-owned",
+        409,
+      )
+    }
+    this.termination.set(item.id, "pause")
+    stopProcess(active.child)
+    await active.completion
+    return this.list()
+  }
+
+  private removeUnfinishedFiles(
+    item: typeof downloadQueueItems.$inferSelect,
+    preservePublishedMedia: boolean,
+  ) {
+    if (!item.videoId) return
+    const jobDirectory = this.jobs.jobDirectory(item.videoId)
+    if (!existsSync(jobDirectory)) return
+    if (!preservePublishedMedia) {
+      rmSync(jobDirectory, { recursive: true, force: true })
+      return
+    }
+    const sourceDirectory = path.join(jobDirectory, "source")
+    if (!existsSync(sourceDirectory)) return
+    for (const name of readdirSync(sourceDirectory)) {
+      if (name.startsWith(".video-download-")) {
+        rmSync(path.join(sourceDirectory, name), { recursive: true, force: true })
+      }
+    }
+  }
+
+  async remove(itemId: string) {
+    let item = this.item(itemId)
+    let operation = this.operation(item.operationId)
+    if (operation.state === "downloaded") {
+      throw new DownloadQueueOperationError(
+        "已完成影音請從影片卡片刪除",
+        "remove-not-allowed",
+        409,
+      )
+    }
+    if (PROCESS_ITEM_STATES.has(operation.state as DownloadQueueItemState)) {
       const active = this.active.get(item.id)
       if (!active) {
         throw new DownloadQueueOperationError(
@@ -1065,36 +1213,39 @@ export class DownloadQueueService {
           409,
         )
       }
-      this.cancelled.add(item.id)
-      active.child.kill("SIGTERM")
-    } else {
-      throw new DownloadQueueOperationError(
-        "目前狀態不能取消",
-        "cancel-not-allowed",
-        409,
-      )
+      this.termination.set(item.id, "remove")
+      stopProcess(active.child)
+      await active.completion
+      item = this.item(itemId)
+      operation = this.operation(item.operationId)
+      if (operation.state === "downloaded") {
+        throw new DownloadQueueOperationError(
+          "影音已在停止前完成，請從影片卡片刪除",
+          "remove-not-allowed",
+          409,
+        )
+      }
     }
-    this.schedule()
-    return this.list()
-  }
-
-  remove(itemId: string) {
-    const item = this.item(itemId)
-    const operation = this.operation(item.operationId)
-    if (!["failed", "cancelled"].includes(operation.state)) {
-      throw new DownloadQueueOperationError(
-        "只有下載失敗或已取消的項目可以刪除",
-        "remove-not-allowed",
-        409,
-      )
-    }
+    this.pausedSessions.get(item.id)?.dispose()
+    this.pausedSessions.delete(item.id)
+    const job = item.videoId
+      ? this.jobs
+          .listDownloadProjections()
+          .find((candidate) => candidate.videoId === item.videoId)
+      : undefined
+    const preservePublishedMedia = Boolean(job?.watchable)
     this.db.transaction((transaction) => {
       transaction
         .delete(downloadQueueItems)
         .where(eq(downloadQueueItems.id, item.id))
         .run()
       transaction.delete(operations).where(eq(operations.id, item.operationId)).run()
+      if (item.videoId && !preservePublishedMedia) {
+        transaction.delete(jobs).where(eq(jobs.videoId, item.videoId)).run()
+      }
     })
+    this.removeUnfinishedFiles(item, preservePublishedMedia)
+    this.schedule()
     return this.list()
   }
 }

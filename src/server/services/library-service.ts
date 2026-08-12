@@ -11,7 +11,7 @@ function priority(item: LibraryItem) {
     return item.state === "failed" ? 2 : 3
   }
   if (["checking", "downloading", "verifying"].includes(item.state)) return 0
-  if (item.state === "queued") return 1
+  if (["queued", "paused"].includes(item.state)) return 1
   if (["needs_confirmation", "failed"].includes(item.state)) return 2
   return 3
 }

@@ -15,7 +15,7 @@
 - `GET /api/library`：以一份 library item 清單回傳等待下載、下載中與已完成影音，以及全域佇列摘要
 - `POST /api/library/items`：確認權利後加入最多 50 個單支影音來源
 - `POST /api/download-queue/pause`、`POST /api/download-queue/resume`：暫停或繼續全域下載排程，不中止正在執行的項目
-- `POST /api/library/items/<item-id>/retry`、`POST /api/library/items/<item-id>/approve-low-quality`、`DELETE /api/library/items/<item-id>/download`：重試、確認低畫質或取消一個下載項目
+- `POST /api/library/items/<item-id>/start`、`POST /api/library/items/<item-id>/pause`、`POST /api/library/items/<item-id>/approve-low-quality`、`DELETE /api/library/items/<item-id>`：開始或繼續、暫停、確認低畫質或移除一個下載任務
 - `GET /api/jobs/<video-id>/media`：來源可用畫質、已下載 rendition、active rendition 與 operation
 - `POST /api/jobs/<video-id>/media/refresh`：重新取得來源畫質 metadata
 - `POST /api/jobs/<video-id>/media/renditions`：建立 exact-height 背景下載工作

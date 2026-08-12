@@ -5,6 +5,7 @@ export const DOWNLOAD_QUEUE_ITEM_STATES = [
   "queued",
   "downloading",
   "verifying",
+  "paused",
   "downloaded",
   "needs_confirmation",
   "cancelled",

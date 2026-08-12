@@ -192,12 +192,6 @@ const browserMediaSessionSchema = z
   })
   .strict()
 
-const retryDownloadItemSchema = z
-  .object({
-    lowQualityApproved: z.boolean().optional().default(false),
-  })
-  .strict()
-
 const modelIdSchema = z.string().regex(/^[a-z0-9][a-z0-9.-]{0,159}$/)
 const providerIdSchema = z.enum([
   "openai",
@@ -844,15 +838,11 @@ export function createApplication(options: ApplicationOptions) {
     })
   }
   app.post(
-    "/api/library/items/:itemId/retry",
-    zValidator("json", retryDownloadItemSchema),
-    (context) => {
+    "/api/library/items/:itemId/start",
+    async (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
-        options.downloads.retry(
-          context.req.param("itemId"),
-          context.req.valid("json").lowQualityApproved,
-        )
+        options.downloads.start(context.req.param("itemId"))
         return context.json(options.library.list())
       } catch (error) {
         return operationErrorResponse(context, error, DownloadQueueOperationError)
@@ -871,22 +861,22 @@ export function createApplication(options: ApplicationOptions) {
       }
     },
   )
-  app.delete(
-    "/api/library/items/:itemId/download",
-    (context) => {
+  app.post(
+    "/api/library/items/:itemId/pause",
+    async (context) => {
       if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
       try {
-        options.downloads.cancel(context.req.param("itemId"))
+        await options.downloads.pauseItem(context.req.param("itemId"))
         return context.json(options.library.list())
       } catch (error) {
         return operationErrorResponse(context, error, DownloadQueueOperationError)
       }
     },
   )
-  app.delete("/api/library/items/:itemId", (context) => {
+  app.delete("/api/library/items/:itemId", async (context) => {
     if (!sameOrigin(context.req.raw)) return context.json({ error: "forbidden" }, 403)
     try {
-      options.downloads.remove(context.req.param("itemId"))
+      await options.downloads.remove(context.req.param("itemId"))
       return context.json(options.library.list())
     } catch (error) {
       return operationErrorResponse(context, error, DownloadQueueOperationError)

@@ -269,24 +269,20 @@ export const api = {
     fetchJson<{ paired: false }>("/api/extension/pairing", {
       method: "DELETE",
     }),
-  retryLibraryDownload: (itemId: string, lowQualityApproved = false) =>
+  startLibraryDownload: (itemId: string) =>
     fetchJson<LibraryResponse>(
-      `/api/library/items/${encodeURIComponent(itemId)}/retry`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lowQualityApproved }),
-      },
+      `/api/library/items/${encodeURIComponent(itemId)}/start`,
+      { method: "POST" },
     ),
   approveLowQualityDownload: (itemId: string) =>
     fetchJson<LibraryResponse>(
       `/api/library/items/${encodeURIComponent(itemId)}/approve-low-quality`,
       { method: "POST" },
     ),
-  cancelLibraryDownload: (itemId: string) =>
+  pauseLibraryDownload: (itemId: string) =>
     fetchJson<LibraryResponse>(
-      `/api/library/items/${encodeURIComponent(itemId)}/download`,
-      { method: "DELETE" },
+      `/api/library/items/${encodeURIComponent(itemId)}/pause`,
+      { method: "POST" },
     ),
   removeLibraryDownload: (itemId: string) =>
     fetchJson<LibraryResponse>(
