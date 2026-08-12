@@ -227,7 +227,7 @@ plugins/insu-player/skills/watch-video/scripts/process-video.sh \
 3. 下載瀏覽器相容 MP4 與縮圖。
 4. 固定準備音訊，並讀取 `app.db` 中「轉錄設定」目前選用的精確 `model_id` 建立細粒度來源時間軸。該次工作開始後 processor identity 固定，人工 CC 只作文字參考。
 5. 即時更新狀態、進度、PID 與 log。
-6. 翻譯路徑停在 `needs_translation`，校正路徑停在 `needs_proofreading`。完整句 revision 驗證後即可播放，再由 `$segment-subtitles` 建立獨立的切分 revision。
+6. 所有路徑先停在 `needs_proofreading`。校正完成後，翻譯路徑才進入 `needs_translation`，原語路徑直接進入 `needs_segmentation`。完整句 revision 驗證後即可播放，但仍須由 `$segment-subtitles` 建立獨立切分 revision 才算完成。
 
 影片畫質採獨立的播放品質契約：預設先選擇不超過 1080p 的最高瀏覽器相容 MP4。每個候選畫質在下載前都重新解析串流 URL 並做小段 HTTP Range probe。一次 403 不能判定該畫質不可用，同一畫質必須以新 URL 再驗證一次。只有兩次都失敗才往下一個實際存在的畫質嘗試。720p 以上可以自動降級並完整記錄。低於 720p 時停止，要求使用者明確同意後才可加入 `--allow-low-quality`。轉錄固定使用另外準備的音訊，影片畫質不參與 Whisper 速度判斷。
 
@@ -313,9 +313,9 @@ plugins/insu-player/skills/watch-video/scripts/transcribe.sh \
 `transcribe.sh` 先建立 schema-version 3 model transcript，保存 canonical `language`、實際 `engineLanguage`、精確 provider／service／model identity、chunk checksums 與 word timing，再建立 schema-version 5 content manifest，保存 `mode`、`sourceLanguage`、`outputLanguage`、`timingProcessor`、獨立的 `contentProcessor`、`sourceContentArtifactId`、`sourceContentKind` 與人工 CC text references。來源可以是任意已確認 timing 模型支援的 BCP 47 語言。SQLite media record 固定使用 schema version 3，segmentation plan 固定使用 schema version 4。一般 runtime 對舊 media record、transcript、content manifest 或 segmentation plan 不遷移、不轉換、不走 legacy reader。
 
 - `mode=proofread`：使用 `$proofread-subtitles`，來源與輸出語言相同，完成同語校正與潤色。
-- `mode=translate`：使用 `$translate-subtitles`，先對完整句初譯，再完成自然目標語潤色。
+- `mode=translate`：仍先使用 `$proofread-subtitles` 完成原語校正，再以該校正稿使用 `$translate-subtitles` 完成自然目標語翻譯。
 
-使用者先做校正、後來新增翻譯時，不重新下載影音或重跑 timing 模型。翻譯的 `sourceContentArtifactId` 指向選定的有效校正 artifact，`sourceContentKind` 是 `proofread`，每句 `sourceText` 取自該校正 manifest 的最終 `outputText`。`timingSourceArtifactId` 仍指向原始模型轉錄。若有多個有效校正版本，字幕管理提示卡讓使用者用一般名稱選擇。只有沒有有效校正版本時，翻譯才直接使用模型轉錄文字。
+使用者新增翻譯時，不重新下載影音或重跑 timing 模型。翻譯的 `sourceContentArtifactId` 必須指向選定的有效校正 artifact，`sourceContentKind` 是 `proofread`，每句 `sourceText` 取自該校正 manifest 的最終 `outputText`。`timingSourceArtifactId` 仍指向原始模型轉錄。若有多個有效校正版本，字幕管理提示卡讓使用者用一般名稱選擇。沒有有效校正版本時必須先完成校正，不得直接翻譯模型轉錄文字。
 
 兩者都必須先由目前 Agent 閱讀細粒度 timed units，寫出完整句 boundary 檔並執行 `record-sentence-review`。之後才可把初稿寫入 `draftOutputText`、定稿寫入 `outputText`。保存 source timed-unit ranges、raw punctuation、專有名詞、數字、邏輯關係、required terms 與 processor metadata。不要在這一步依 cue 或字數切分。雲端 API 只能用於前一階段的音訊轉錄，不得處理字幕文字。
 

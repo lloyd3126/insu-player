@@ -528,6 +528,8 @@ def manifest_view(payload: object) -> ManifestView:
             raise ValueError("subtitle revision manifest has an invalid content source kind")
         if mode == "proofread" and source_content_kind != "model-transcript":
             raise ValueError("proofread content must come from the model transcript")
+        if mode == "translate" and source_content_kind != "proofread":
+            raise ValueError("translation content must come from validated proofreading")
         if (
             source_content_kind == "model-transcript"
             and source_content_artifact != timing_source_artifact
@@ -652,6 +654,8 @@ def prepare(args: argparse.Namespace) -> int:
         raise ValueError("proofread mode requires matching source and output languages")
     if args.mode == "translate" and source_language == output_language:
         raise ValueError("translate mode requires different source and output languages")
+    if args.mode == "translate" and args.source_content_manifest is None:
+        raise ValueError("translation requires a validated proofread content source")
     segments = sentence_segments(units)
     source_content_artifact = args.source_content_artifact or args.timing_source_artifact
     source_content_kind = "model-transcript"

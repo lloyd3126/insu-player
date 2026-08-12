@@ -34,12 +34,17 @@ export function SubtitleExportDialog({
   videoId,
   artifact,
   label,
+  languageCode,
 }: {
   videoId: string
   artifact: SubtitleArtifact
   label: string
+  languageCode: string
 }) {
   const available = artifact.lifecycleState === "ready" && artifact.validationState !== "invalid"
+  const tracks = artifact.tracks.filter(
+    (track) => track.languageCode === languageCode,
+  )
   return (
     <Dialog>
       <Tooltip>
@@ -51,7 +56,7 @@ export function SubtitleExportDialog({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={`下載${label} r${artifact.revision}`}
+                  aria-label={`下載${label} r${artifact.revision}（${languageCode}）`}
                   disabled={!available}
                 />
               )}
@@ -64,7 +69,7 @@ export function SubtitleExportDialog({
       </Tooltip>
       <DialogContent className="subtitle-export-dialog" overlayEmphasis="strong">
         <DialogHeader>
-          <DialogTitle>下載{label} r{artifact.revision}</DialogTitle>
+          <DialogTitle>下載{label} r{artifact.revision}（{languageCode}）</DialogTitle>
           <DialogDescription>
             SRT 保留每段時間，TXT 會用半形空格銜接所有字幕句子。
           </DialogDescription>
@@ -77,7 +82,7 @@ export function SubtitleExportDialog({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {artifact.tracks.map((track) => (
+            {tracks.map((track) => (
               <TableRow key={track.id}>
                 <TableCell><LanguageCodeList codes={[track.languageCode]} /></TableCell>
                 <TableCell>

@@ -34,7 +34,7 @@ Require all of the following:
 - the completed proofread or translation artifact ID;
 - glossary and required terms when supplied.
 
-Also preserve the content manifest's distinct `sourceContentArtifactId` and `sourceContentKind`. A translation may use a proofread artifact for words while continuing to use the original model transcript for timing. Segmentation must not collapse these roles or reinterpret the uncorrected transcript as translation content.
+Also preserve the content manifest's distinct `sourceContentArtifactId` and `sourceContentKind`. A translation must use a proofread artifact for words while continuing to use the original model transcript for timing. Segmentation must not collapse these roles or reinterpret the uncorrected transcript as translation content.
 
 Manual CC may be inherited as text-reference provenance through the content artifact. Never use platform cue timing for precise alignment, and never accept platform automatic captions.
 

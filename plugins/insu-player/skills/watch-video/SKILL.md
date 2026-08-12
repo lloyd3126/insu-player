@@ -87,7 +87,7 @@ The homepage prefers "http://127.0.0.1:8000/". When that port is occupied, use t
 
 The source layer accepts only creator-provided manual CC or a model transcript. Manual CC is playable and may guide spelling and terminology. Its cue boundaries never supply precise alignment. Automatic platform captions are forbidden in every path.
 
-For same-language correction, follow `$proofread-subtitles`. For translation, follow `$translate-subtitles`. Both paths transcribe the original audio with the internally resolved local or explicitly authorized cloud timing provider, preserve normalized fine-grained timed units, reconstruct complete source sentences, and produce a complete polished output before display cuts. Import the validated complete revision as `proofread` or `translation` respectively:
+Every path first follows `$proofread-subtitles` to correct the source language. Translation is optional and follows `$translate-subtitles` only from a ready, validated proofread artifact. Both paths preserve the original model transcript as the fine-grained timing source and produce complete polished sentences before display cuts. Import each validated complete revision as `proofread` or `translation` respectively:
 
 ~~~bash
 plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
@@ -95,11 +95,11 @@ plugins/insu-player/skills/watch-video/scripts/import-subtitle-revision.sh \
   --source-language SOURCE_BCP47 --output-language OUTPUT_BCP47 \
   --artifact-kind proofread_or_translation --revision REVISION \
   --manifest MANIFEST --timing-source-artifact MODEL_SOURCE_ARTIFACT_ID \
-  --content-source-artifact MODEL_OR_PROOFREAD_ARTIFACT_ID \
+  --content-source-artifact MODEL_OR_REQUIRED_PROOFREAD_ARTIFACT_ID \
   --text-reference-artifact MANUAL_CC_ARTIFACT_ID
 ~~~
 
-Each complete proofread or translation revision is playable before segmentation. A later translation should use the latest valid proofread artifact as its content source while retaining the original model transcript as timing source. Only fall back to direct model-transcript content when no valid proofread exists. Then follow `$segment-subtitles` to create a separate downstream artifact: decide finalized output-language pieces first, freeze them, align continuous source timed-unit spans, validate, render, and import with the timing-source and content-parent artifact IDs. A processing or invalid new artifact must never hide the last valid active track.
+Each complete proofread or translation revision is playable before segmentation. Translation must use a valid proofread artifact as its content source while retaining the original model transcript as timing source. Every output then follows `$segment-subtitles` to create a required downstream artifact: decide finalized output-language pieces first, freeze them, align continuous source timed-unit spans, validate, render, and import with the timing-source and content-parent artifact IDs. A processing or invalid new artifact must never hide the last valid active track.
 
 Keep complete corrected or translated sentences separate from derived display segmentation. Final segmented tracks must have identical cue IDs and intervals derived from continuous source timed units. Apply punctuation normalization only through the selected language/output profile. Do not claim that a processor supports an arbitrary language unless that exact capability was verified and recorded. The player exposes only ready validated tracks; artifact kind, provenance, revisions, processor, validation, active-version switching, and deletion belong in 字幕管理.
 

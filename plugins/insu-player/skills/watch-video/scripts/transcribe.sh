@@ -162,7 +162,13 @@ IFS=$'\t' read -r language_code engine_language < <(
 )
 [ -n "$language_code" ] || caption_die "transcript did not resolve a source language"
 [ -n "$engine_language" ] || caption_die "transcript did not record the model language parameter"
-if [ "$content_mode" = "proofread" ]; then output_language="$language_code"; fi
+requested_content_mode="$content_mode"
+requested_output_language="$output_language"
+if [ "$requested_content_mode" = "proofread" ]; then
+  requested_output_language="$language_code"
+fi
+content_mode="proofread"
+output_language="$language_code"
 transcription_args=(--job-dir "$job_dir" --provider "$provider_name" --service "$provider_service" --language-tag "$language_code" --engine-language "$engine_language")
 if [ -n "$model_name" ]; then transcription_args+=(--model "$model_name"); fi
 caption_job_state transcription "${transcription_args[@]}" >/dev/null
@@ -203,18 +209,14 @@ case "$output_language" in zh|zh-*) prepare_args+=(--punctuation-policy remove-c
 caption_validate_vtt "$source_sentence_vtt"
 caption_job_state asset --job-dir "$job_dir" --name wordTranscript --path "$transcript_json" >/dev/null
 caption_job_state asset --job-dir "$job_dir" --name contentPlan --path "$subtitle_manifest" >/dev/null
-pipeline_args=(--job-dir "$job_dir" --mode "$content_mode" --stage content_revision --source-language "$language_code" --output-language "$output_language" "${pipeline_timing_args[@]}")
+pipeline_args=(--job-dir "$job_dir" --mode "$requested_content_mode" --stage content_revision --source-language "$language_code" --output-language "$requested_output_language" "${pipeline_timing_args[@]}")
 if [ "$manual_reference_count" -gt 0 ]; then
   for reference_artifact in "${manual_reference_artifacts[@]}"; do
     pipeline_args+=(--manual-reference-artifact "$reference_artifact")
   done
 fi
 caption_job_state subtitle-pipeline "${pipeline_args[@]}" >/dev/null
-if [ "$content_mode" = "proofread" ]; then
-  caption_job_state update --job-dir "$job_dir" --state needs_proofreading --stage content_revision --message "模型時間軸已完成，等待 Agent 重建完整句並校正" --progress 0 --clear-error --record-history >/dev/null
-else
-  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage content_revision --message "模型時間軸已完成，等待 Agent 重建完整句並翻譯成 $output_language" --progress 0 --clear-error --record-history >/dev/null
-fi
+caption_job_state update --job-dir "$job_dir" --state needs_proofreading --stage content_revision --message "模型時間軸已完成，等待 Agent 先重建完整句並校正" --progress 0 --clear-error --record-history >/dev/null
 
 trap - ERR
 caption_note "Transcription complete: $provider_output/transcript.json"

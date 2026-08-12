@@ -1372,11 +1372,6 @@ def set_subtitle_artifact(
                     raise ValueError(
                         "proofread content source must be its model transcript"
                     )
-            elif content_source.get("kind") == "source":
-                if content_source.get("id") != timing_sources[0].get("id"):
-                    raise ValueError(
-                        "direct translation content source must be its model transcript"
-                    )
             elif (
                 content_source.get("kind") != "proofread"
                 or content_source.get("sourceLanguage") != source_language
@@ -1385,7 +1380,7 @@ def set_subtitle_artifact(
                 raise ValueError(
                     "translation content source must be a matching proofread artifact"
                 )
-            if content_source.get("kind") == "proofread" and references:
+            if kind == "translation" and references:
                 raise ValueError(
                     "translation inherits text references from its proofread content source"
                 )

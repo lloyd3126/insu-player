@@ -47,15 +47,32 @@ describe("job next action", () => {
   })
 
   test("continues the exact missing subtitle stage", () => {
-    expect(
-      nextActionForJob(
-        job({
-          state: "needs_segmentation",
-          effectiveState: "needs_segmentation",
-          activeSubtitleKinds: { "zh-TW": "translation" },
-        }),
-      ),
-    ).toMatchObject({ kind: "segment", prompt: "subtitle" })
+    const action = nextActionForJob(
+      job({
+        state: "needs_segmentation",
+        effectiveState: "needs_segmentation",
+        activeSubtitleKinds: { "zh-TW": "translation" },
+      }),
+    )
+    expect(action).toMatchObject({ kind: "segment", prompt: "subtitle" })
+    expect(action.description).toContain("每種字幕都必須完成切分")
+  })
+
+  test("describes proofreading and segmentation as required and translation as optional", () => {
+    const start = nextActionForJob(job({ watchable: false }))
+    expect(start).toMatchObject({ kind: "start", prompt: "subtitle" })
+    expect(start.description).toContain("先校正再切分")
+    expect(start.description).toContain("翻譯是選擇性步驟")
+
+    const content = nextActionForJob(
+      job({
+        state: "needs_proofreading",
+        effectiveState: "needs_proofreading",
+      }),
+    )
+    expect(content).toMatchObject({ kind: "content", prompt: "subtitle" })
+    expect(content.description).toContain("先校正再切分")
+    expect(content.description).toContain("翻譯是選擇性步驟")
   })
 
   test("reports completion only after segmentation is available", () => {

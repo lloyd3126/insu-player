@@ -57,7 +57,7 @@ const CAPTION_SOURCE_POLICY =
   "創作者人工 CC 可以立即播放並作為文字與術語參考，但不能提供細粒度 timing。平台自動字幕一律不得檢查、下載、匯入或參考。校正、翻譯與切分都必須從原始音訊以模型建立 word、token 或 grapheme-group 細粒度來源時間軸。"
 
 const CONTENT_IMPORT_ORDER =
-  "校正路徑使用 $proofread-subtitles，翻譯路徑使用 $translate-subtitles。完整句內容驗證後先匯入可播放的 proofread 或 translation artifact，再使用獨立的 $segment-subtitles 做 output-first 或 target-first 切分、連續 Source Alignment 與驗證。切分失敗不得隱藏上一個有效完整句版本。"
+  "每種字幕都必須先使用 $proofread-subtitles 完成原語校正。需要其他語言時，才以已驗證的校正字幕使用 $translate-subtitles 翻譯。原語或翻譯的完整句內容驗證後，都必須再使用獨立的 $segment-subtitles 做切分、連續 Source Alignment 與驗證。校正與切分是必要步驟，翻譯才是選擇性步驟。"
 
 const QUALITY_POLICY =
   "影音播放畫質與轉錄音訊分開處理。優先取得已驗證且不超過 1080p 的最高瀏覽器相容 MP4，不得為了加快轉錄而降低影音畫質。低於 720p 前先取得我的明確同意。"
@@ -354,15 +354,14 @@ export function buildCreateProofreadSubtitlePrompt(
 export function buildCreateTranslationSubtitlePrompt(
   context: SubtitleCreationPromptContext,
 ) {
-  const sourceInstruction =
-    context.sourceKind === "proofread"
-      ? "把指定校正字幕的完整句輸出當成唯一翻譯文字來源，原始模型轉錄只提供既有細粒度時間軸。不要退回未校正文字重新翻譯。"
-      : "把指定模型轉錄的完整句文字當成翻譯內容來源，並沿用同一產物的既有細粒度時間軸。"
+  if (context.sourceKind !== "proofread") {
+    throw new Error("translation requires a validated proofread source")
+  }
   return [
     "請為目前專案 INSU Player 中指定影音新增一種翻譯字幕。先唯讀檢查 current-schema 字幕 catalog 與指定來源，不要讀取其他 workspace。",
     subtitleCreationContext(context),
     "先只問我想翻譯成哪一種語言，接受台灣繁中、日文或英文這類一般名稱。不要要求我回答語言碼、模型、provider、processor、timing、artifact 或其他技術參數。你要依語言名稱與實際模型能力自行解析並保存正確語言碼。",
-    sourceInstruction,
+    "把指定校正字幕的完整句輸出當成唯一翻譯文字來源，原始模型轉錄只提供既有細粒度時間軸。不要退回未校正文字重新翻譯。",
     "不要重新下載影音，也不要重跑語音辨識。使用 $translate-subtitles 完成自然的完整句翻譯與驗證，先匯入可播放的新翻譯字幕，再使用獨立的 $segment-subtitles 做 target-first 切分、連續 Source Alignment 與驗證。切分失敗時保留已通過驗證的完整句翻譯字幕。",
     "完整句重建、翻譯、切分與 Source Alignment 都固定由目前 Agent 完成。不得另外呼叫任何雲端 API 處理字幕文字。",
     "不要刪除任何既有字幕，也不要切換目前播放版本。完成後告訴我到「影片中心 → 詳細資訊 → 字幕管理」查看新增語言。",

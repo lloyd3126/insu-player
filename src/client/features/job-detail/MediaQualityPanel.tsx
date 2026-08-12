@@ -334,24 +334,28 @@ export function MediaQualityPanel({ job }: { job: JobDetail }) {
       ) : null}
 
       {rows.length > 0 ? (
-        <div className="media-quality-table-frame">
-          <Table className="media-quality-table">
-            <TableHeader>
-              <TableRow>
-                <TableHead>畫質</TableHead>
-                <TableHead>容量</TableHead>
-                <TableHead>狀態</TableHead>
-                <TableHead className="media-quality-table__actions">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map(({ height, format, rendition }) => {
-                const downloading = Boolean(
-                  catalog.data.operation?.requestedHeight === height &&
-                    ACTIVE_STATES.has(catalog.data.operation.state),
-                )
-                return (
-                  <TableRow key={height}>
+        <Table
+          className="detail-table media-quality-table"
+          containerClassName="detail-table-frame media-quality-table-frame"
+        >
+          <TableHeader>
+            <TableRow>
+              <TableHead>畫質</TableHead>
+              <TableHead>容量</TableHead>
+              <TableHead>狀態</TableHead>
+              <TableHead className="detail-table__action-cell media-quality-table__actions">
+                操作
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map(({ height, format, rendition }) => {
+              const downloading = Boolean(
+                catalog.data.operation?.requestedHeight === height &&
+                  ACTIVE_STATES.has(catalog.data.operation.state),
+              )
+              return (
+                <TableRow key={height}>
                   <TableCell>
                     <div className="media-quality-name">
                       <strong>{qualityLabel(height)}</strong>
@@ -378,8 +382,8 @@ export function MediaQualityPanel({ job }: { job: JobDetail }) {
                       height={height}
                     />
                   </TableCell>
-                  <TableCell>
-                    <div className="media-quality-actions">
+                  <TableCell className="detail-table__action-cell media-quality-table__actions">
+                    <div className="detail-table__action-group media-quality-actions">
                       {rendition && !rendition.active ? (
                         <Button
                           variant="outline"
@@ -423,12 +427,11 @@ export function MediaQualityPanel({ job }: { job: JobDetail }) {
                       ) : null}
                     </div>
                   </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </div>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
       ) : (
         <Empty>
           <EmptyHeader>

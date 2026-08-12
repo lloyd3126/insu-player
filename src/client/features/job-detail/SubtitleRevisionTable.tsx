@@ -1,6 +1,5 @@
 import { EyeIcon, Trash2Icon } from "lucide-react"
 
-import { LanguageCodeList } from "@/components/shared/LanguageCodeList"
 import { ResourceRemovalDialog } from "@/components/shared/removal/ResourceRemovalDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,7 +17,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
-  artifactLanguageCodes,
   artifactProvider,
   lifecycleLabel,
   SUBTITLE_KIND_COPY,
@@ -28,7 +26,6 @@ import { SubtitleExportDialog } from "@/features/job-detail/SubtitleExportDialog
 import type {
   ActiveSubtitleTrack,
   SubtitleArtifact,
-  SubtitleArtifactKind,
 } from "@shared/contracts/subtitle-catalog"
 import { formatDate } from "@shared/domain/format"
 
@@ -76,35 +73,35 @@ function RevisionValidation({ artifact }: { artifact: SubtitleArtifact }) {
 
 export function SubtitleRevisionTable({
   videoId,
-  kind,
   artifacts,
   activeTracks,
   onPreview,
   onRemoved,
 }: {
   videoId: string
-  kind: SubtitleArtifactKind
   artifacts: SubtitleArtifact[]
   activeTracks: ActiveSubtitleTrack[]
   onPreview: (artifactId: string, trigger: HTMLButtonElement) => void
   onRemoved: (artifactId: string) => void
 }) {
-  const copy = SUBTITLE_KIND_COPY[kind]
-  const activeLanguagesByArtifact = new Map<string, string[]>()
-  for (const track of activeTracks) {
-    const languages = activeLanguagesByArtifact.get(track.artifactId) ?? []
-    languages.push(track.languageCode)
-    activeLanguagesByArtifact.set(track.artifactId, languages)
-  }
+  const activeTrackKeys = new Set(
+    activeTracks.map((track) => `${track.artifactId}:${track.languageCode}`),
+  )
+  const rows = artifacts.flatMap((artifact) =>
+    [...new Set(artifact.tracks.map((track) => track.languageCode))]
+      .sort((left, right) => left.localeCompare(right))
+      .map((languageCode) => ({ artifact, languageCode })),
+  )
 
   return (
     <Table
-      aria-label={`${copy.label}版本`}
+      aria-label="字幕版本"
       className="subtitle-revision-table"
       containerClassName="subtitle-revision-table-frame"
     >
       <TableHeader>
         <TableRow>
+          <TableHead>類型</TableHead>
           <TableHead>版本</TableHead>
           <TableHead>語言</TableHead>
           <TableHead>處理者</TableHead>
@@ -118,15 +115,19 @@ export function SubtitleRevisionTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {artifacts.map((artifact) => {
-          const activeLanguageCodes = activeLanguagesByArtifact.get(artifact.id) ?? []
+        {rows.map(({ artifact, languageCode }) => {
+          const copy = SUBTITLE_KIND_COPY[artifact.kind]
+          const active = activeTrackKeys.has(`${artifact.id}:${languageCode}`)
           return (
-            <TableRow key={artifact.id}>
+            <TableRow key={`${artifact.id}:${languageCode}`}>
               <TableCell>
-                <strong>r{artifact.revision}</strong>
+                <Badge variant="outline">{copy.label}</Badge>
               </TableCell>
               <TableCell>
-                <LanguageCodeList codes={artifactLanguageCodes(artifact)} />
+                <Badge variant="secondary">r{artifact.revision}</Badge>
+              </TableCell>
+              <TableCell>
+                <Badge variant="outline">{languageCode}</Badge>
               </TableCell>
               <TableCell>{artifactProvider(artifact)}</TableCell>
               <TableCell>
@@ -136,7 +137,7 @@ export function SubtitleRevisionTable({
                 <RevisionValidation artifact={artifact} />
               </TableCell>
               <TableCell>
-                <LanguageCodeList codes={activeLanguageCodes} />
+                {active ? <Badge>目前播放</Badge> : "—"}
               </TableCell>
               <TableCell>
                 <time dateTime={artifact.completedAt ?? undefined}>
@@ -151,7 +152,7 @@ export function SubtitleRevisionTable({
                         <Button
                           variant="ghost"
                           size="icon"
-                          aria-label={`預覽${copy.label} r${artifact.revision}`}
+                          aria-label={`預覽${copy.label} r${artifact.revision}（${languageCode}）`}
                           onClick={(event) =>
                             onPreview(artifact.id, event.currentTarget)
                           }
@@ -166,6 +167,7 @@ export function SubtitleRevisionTable({
                     videoId={videoId}
                     artifact={artifact}
                     label={copy.label}
+                    languageCode={languageCode}
                   />
                   <ResourceRemovalDialog
                     target={{
@@ -181,7 +183,7 @@ export function SubtitleRevisionTable({
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`移除${copy.label} r${artifact.revision}`}
+                      aria-label={`移除${copy.label} r${artifact.revision}（${languageCode}，整個版本）`}
                     >
                       <Trash2Icon data-icon="inline-start" />
                     </Button>

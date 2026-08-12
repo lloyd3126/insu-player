@@ -4,7 +4,6 @@ import type {
   JobDetailTab,
   OverlayDestination,
   OverlayState,
-  SubtitleManagementView,
 } from "@/app/overlay-context"
 
 const USAGE_GUIDE_TABS = new Set([
@@ -24,12 +23,6 @@ const JOB_DETAIL_TABS = new Set([
   "summary",
   "outline",
   "activity",
-])
-const SUBTITLE_MANAGEMENT_VIEWS = new Set([
-  "source",
-  "proofread",
-  "translation",
-  "segmentation",
 ])
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,159}$/
@@ -52,10 +45,6 @@ function setValue<T extends string>(values: Set<string>, value: string | undefin
 
 function jobDetailTab(value: string | undefined) {
   return setValue<JobDetailTab>(JOB_DETAIL_TABS, value)
-}
-
-function subtitleManagementView(value: string | undefined) {
-  return setValue<SubtitleManagementView>(SUBTITLE_MANAGEMENT_VIEWS, value)
 }
 
 function artifactIdFromSearch(search: string) {
@@ -127,21 +116,15 @@ function overlayDestinationFromLocation(
       ...(status && status !== "all" ? { status } : {}),
     }
   }
-  if (segments[0] === "jobs" && segments[1] && segments.length <= 4) {
+  if (segments[0] === "jobs" && segments[1] && segments.length <= 3) {
     const tab = segments.length === 2 ? "about" : jobDetailTab(segments[2])
     if (!tab) return null
     if (tab === "subtitles") {
-      const subtitleView =
-        segments.length === 3
-          ? "source"
-          : subtitleManagementView(segments[3])
-      if (!subtitleView) return null
       const artifactId = artifactIdFromSearch(search)
       return {
         type: "detail",
         videoId: segments[1],
         tab,
-        subtitleView,
         ...(artifactId ? { artifactId } : {}),
       }
     }
@@ -242,7 +225,7 @@ export function pathForOverlay(overlay: Exclude<OverlayState, null>) {
     case "detail":
       path =
         overlay.tab === "subtitles"
-          ? `/jobs/${encodeURIComponent(overlay.videoId)}/subtitles/${overlay.subtitleView}`
+          ? `/jobs/${encodeURIComponent(overlay.videoId)}/subtitles`
           : `/jobs/${encodeURIComponent(overlay.videoId)}/${overlay.tab}`
       if (overlay.tab === "subtitles" && overlay.artifactId) {
         search.set("artifact", overlay.artifactId)

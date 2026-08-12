@@ -408,6 +408,8 @@ def prepare(args: argparse.Namespace) -> int:
         raise PlanError("content manifest has an invalid content source kind")
     if mode == "proofread" and source_content_kind != "model-transcript":
         raise PlanError("proofread content must come from the model transcript")
+    if mode == "translate" and source_content_kind != "proofread":
+        raise PlanError("translated content must come from validated proofreading")
     if (
         source_content_kind == "model-transcript"
         and source_content_artifact != timing_source_artifact

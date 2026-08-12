@@ -153,28 +153,40 @@ function seedJob(videoId = "demo-video") {
     })}\n`,
   )
   const sourceId = `artifact-${videoId}-source-model-transcript-en-r1`
+  const proofreadId = `artifact-${videoId}-proofread-en-en-r1`
   const translationId = `artifact-${videoId}-translation-en-zh-TW-r1`
   const sourceRoot = path.join(job, "subtitle-work", "artifacts", sourceId)
+  const proofreadRoot = path.join(job, "subtitle-work", "artifacts", proofreadId)
   const translationRoot = path.join(job, "subtitle-work", "artifacts", translationId)
   mkdirSync(sourceRoot, { recursive: true })
+  mkdirSync(proofreadRoot, { recursive: true })
   mkdirSync(translationRoot, { recursive: true })
   const english = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nComplete sentence\n"
   const chinese = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n完整句子\n"
   writeFileSync(path.join(sourceRoot, "source.vtt"), english)
+  writeFileSync(path.join(proofreadRoot, "input.vtt"), english)
+  writeFileSync(path.join(proofreadRoot, "output.vtt"), english)
   writeFileSync(path.join(translationRoot, "input.vtt"), english)
   writeFileSync(path.join(translationRoot, "output.vtt"), chinese)
-  const translationManifestContents = `${JSON.stringify({
+  const contentManifest = (
+    mode: "proofread" | "translate",
+    outputLanguage: string,
+    sourceContentArtifactId: string,
+    sourceContentKind: "model-transcript" | "proofread",
+    sourceContentManifest: string | null,
+    sourceContentChecksum: string | null,
+  ) => `${JSON.stringify({
     schemaVersion: 5,
-    mode: "translate",
+    mode,
     sourceFormat: "model-timed-units",
     sourceLanguage: "en",
-    outputLanguage: "zh-TW",
+    outputLanguage,
     sourceTranscript: "transcript.json",
     timingSourceArtifactId: sourceId,
-    sourceContentArtifactId: sourceId,
-    sourceContentKind: "model-transcript",
-    sourceContentManifest: null,
-    sourceContentChecksum: null,
+    sourceContentArtifactId,
+    sourceContentKind,
+    sourceContentManifest,
+    sourceContentChecksum,
     referenceArtifactIds: [],
     timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
     contentProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-08T01:00:00.000Z" },
@@ -183,6 +195,27 @@ function seedJob(videoId = "demo-video") {
     rules: {},
     segments: [],
   })}\n`
+  const proofreadManifestContents = contentManifest(
+    "proofread",
+    "en",
+    sourceId,
+    "model-transcript",
+    null,
+    null,
+  )
+  const proofreadManifestPath = `subtitle-work/artifacts/${proofreadId}/manifest.json`
+  const translationManifestContents = contentManifest(
+    "translate",
+    "zh-TW",
+    proofreadId,
+    "proofread",
+    proofreadManifestPath,
+    createHash("sha256").update(proofreadManifestContents).digest("hex"),
+  )
+  writeFileSync(
+    path.join(proofreadRoot, "manifest.json"),
+    proofreadManifestContents,
+  )
   writeFileSync(
     path.join(translationRoot, "manifest.json"),
     translationManifestContents,
@@ -204,12 +237,15 @@ function seedJob(videoId = "demo-video") {
   }
   const artifact = (
     id: string,
-    kind: "source" | "translation",
+    kind: "source" | "proofread" | "translation",
     tracks: Array<Record<string, unknown>>,
     overrides: Record<string, unknown> = {},
   ) => {
-    const manifestContents =
-      kind === "source" ? undefined : translationManifestContents
+    const manifestContents = kind === "source"
+      ? undefined
+      : kind === "proofread"
+        ? proofreadManifestContents
+        : translationManifestContents
     const currentTracks = tracks.map((track) => ({
       updatedAt: "2026-08-08T01:00:00.000Z",
       ...track,
@@ -279,6 +315,24 @@ function seedJob(videoId = "demo-video") {
           id: `${sourceId}-source_raw`, languageCode: "en", role: "source_raw", state: "ready",
           path: `subtitle-work/artifacts/${sourceId}/source.vtt`, checksum: digest(english),
         }]),
+        artifact(proofreadId, "proofread", [
+          {
+            id: `${proofreadId}-input_sentence`, languageCode: "en", role: "input_sentence", state: "ready",
+            path: `subtitle-work/artifacts/${proofreadId}/input.vtt`, checksum: digest(english),
+          },
+          {
+            id: `${proofreadId}-output_sentence`, languageCode: "en", role: "output_sentence", state: "ready",
+            path: `subtitle-work/artifacts/${proofreadId}/output.vtt`, checksum: digest(english),
+          },
+        ], {
+          outputLanguage: "en",
+          processor: { provider: "agent", service: "codex" },
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
+          manifestPath: proofreadManifestPath,
+        }),
         artifact(translationId, "translation", [
           {
             id: `${translationId}-input_sentence`, languageCode: "en", role: "input_sentence", state: "ready",
@@ -293,7 +347,7 @@ function seedJob(videoId = "demo-video") {
           processor: { provider: "agent", service: "codex" },
           dependencies: [
             { artifactId: sourceId, relation: "timing-source" },
-            { artifactId: sourceId, relation: "content-source" },
+            { artifactId: proofreadId, relation: "content-source" },
           ],
           manifestPath: `subtitle-work/artifacts/${translationId}/manifest.json`,
         }),
@@ -590,7 +644,7 @@ describe("Hono application", () => {
     const artifactCountAfterDetail = sqlite
       .query("select count(*) as count from subtitle_artifacts")
       .get() as { count: number }
-    expect(artifactCountAfterDetail.count).toBe(2)
+    expect(artifactCountAfterDetail.count).toBe(3)
     const activeTrackCountAfterDetail = sqlite
       .query("select count(*) as count from active_subtitle_tracks")
       .get() as { count: number }
@@ -1024,13 +1078,14 @@ describe("Hono application", () => {
     }
     expect(catalog.artifacts.map(({ kind }) => kind)).toEqual([
       "source",
+      "proofread",
       "translation",
     ])
     expect(catalog.activeTracks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           languageCode: "en",
-          artifactKind: "source",
+          artifactKind: "proofread",
         }),
         expect.objectContaining({
           languageCode: "zh-TW",
@@ -1085,10 +1140,10 @@ describe("Hono application", () => {
       rows: Array<{ cues: Record<string, string> }>
     }
     expect(comparison.baselineTrackId).toBe(
-      "artifact-demo-video-source-model-transcript-en-r1-source_raw",
+      "artifact-demo-video-proofread-en-en-r1-output_sentence",
     )
     expect(comparison.rows[0].cues).toEqual({
-      "artifact-demo-video-source-model-transcript-en-r1-source_raw": "Complete sentence",
+      "artifact-demo-video-proofread-en-en-r1-output_sentence": "Complete sentence",
       "artifact-demo-video-translation-en-zh-TW-r1-output_sentence": "完整句子",
     })
 
@@ -1312,7 +1367,7 @@ describe("Hono application", () => {
       ["zh-TW", "zh-TW"],
     ])
     expect(config.captions.map(({ artifactKind }) => artifactKind)).toEqual([
-      "source",
+      "proofread",
       "translation",
     ])
     expect(config.captions.every(({ src }) => src.includes("?revision="))).toBe(true)

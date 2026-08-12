@@ -67,7 +67,7 @@
 
 Use BCP 47 language codes. `contentMode` is `proofread` or `translate`. `timedUnits.kind` is `word`, `token`, or `grapheme-group`; do not infer whitespace-delimited words for every writing system.
 
-`sourceContentKind` is `model-transcript` or `proofread`. Proofreading always uses its model transcript as both content and timing source. Translation may use either the model transcript directly or a validated proofread artifact as its content source. `timingProcessor` and timed units always remain tied to the original model transcript.
+`sourceContentKind` is `model-transcript` or `proofread`. Proofreading always uses its model transcript as both content and timing source. Translation must use a validated proofread artifact as its content source. `timingProcessor` and timed units always remain tied to the original model transcript.
 
 `timingProcessor` must exactly match one current word-timing contract: local Whisper, OpenAI `whisper-1`, Groq `whisper-large-v3` or `whisper-large-v3-turbo`, ElevenLabs `scribe_v2`, xAI `/v1/stt`, or OpenRouter `openai/whisper-large-v3`. Every identity records `provider`, `service`, and nullable `model`. `contentProcessor` and `segmentationProcessor` must both record exactly `provider: agent`, `service: codex`, and their own `updatedAt` timestamp. `sentenceReview` records the Agent review of complete-sentence boundaries. `alignmentMethod` must be `agent-semantic`, and `alignmentReview` plus `alignmentFingerprint` prove the finalized source spans and anchors were reviewed after editing. Never infer or copy one processor to fill another role.
 

@@ -98,6 +98,19 @@ class SubtitleRevisionTests(unittest.TestCase):
             "--source-output",
             str(input_vtt),
         ]
+        if mode == "translate" and script == REFLOW:
+            proofread, _ = self.prepare("proofread", "en", PROOFREAD)
+            self.finish_content(proofread, ["Hello, world.", "Next sentence!"])
+            reference_index = arguments.index("--reference-artifact")
+            del arguments[reference_index : reference_index + 2]
+            arguments.extend(
+                [
+                    "--source-content-artifact",
+                    "proofread-en-r1",
+                    "--source-content-manifest",
+                    str(proofread),
+                ]
+            )
         if script == PROOFREAD:
             arguments = [
                 "prepare",
@@ -131,14 +144,15 @@ class SubtitleRevisionTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.run_script(
-            REFLOW,
-            "record-sentence-review",
-            "--manifest",
-            str(manifest),
-            "--boundaries",
-            str(boundaries),
-        )
+        if payload.get("sentenceReview") is None:
+            self.run_script(
+                REFLOW,
+                "record-sentence-review",
+                "--manifest",
+                str(manifest),
+                "--boundaries",
+                str(boundaries),
+            )
         self.run_script(
             REFLOW,
             "record-content-processor",
@@ -160,8 +174,8 @@ class SubtitleRevisionTests(unittest.TestCase):
         self.assertEqual(payload["sourceLanguage"], "en")
         self.assertEqual(payload["outputLanguage"], "zh-TW")
         self.assertEqual(payload["timingSourceArtifactId"], "source-model-en-r1")
-        self.assertEqual(payload["sourceContentArtifactId"], "source-model-en-r1")
-        self.assertEqual(payload["sourceContentKind"], "model-transcript")
+        self.assertEqual(payload["sourceContentArtifactId"], "proofread-en-r1")
+        self.assertEqual(payload["sourceContentKind"], "proofread")
         self.assertEqual(payload["referenceArtifactIds"], ["source-manual-en-r1"])
         self.assertEqual(
             payload["timingProcessor"],
@@ -226,6 +240,27 @@ class SubtitleRevisionTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("different source and output languages", result.stdout)
 
+    def test_translate_mode_rejects_direct_model_transcript_content(self):
+        result = self.run_script(
+            REFLOW,
+            "prepare",
+            "--source-transcript",
+            str(self.transcript),
+            "--manifest",
+            str(self.root / "direct-translation.json"),
+            "--mode",
+            "translate",
+            "--source-language",
+            "en",
+            "--output-language",
+            "zh-TW",
+            "--timing-source-artifact",
+            "source-model-en-r1",
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("validated proofread", result.stdout)
+
     def test_render_rejects_schema_four_without_compatibility(self):
         manifest = self.root / "old.json"
         manifest.write_text('{"schemaVersion": 4}', encoding="utf-8")
@@ -285,7 +320,7 @@ class SubtitleRevisionTests(unittest.TestCase):
         self.assertNotIn("model", payload["contentProcessor"])
 
     def test_content_processor_requires_agent_reviewed_sentence_boundaries(self):
-        manifest, _ = self.prepare()
+        manifest, _ = self.prepare("proofread", "en", PROOFREAD)
         result = self.run_script(
             REFLOW,
             "record-content-processor",

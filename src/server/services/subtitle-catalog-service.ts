@@ -758,20 +758,13 @@ function validateDependencies(
     }
     if (artifact.kind === "translation") {
       if (
-        contentSource?.kind === "source" &&
-        contentSource.id !== timingSources[0]?.id
-      ) {
-        throw new Error(`${artifact.id} direct translation must use its model transcript`)
-      }
-      if (
-        contentSource?.kind !== "source" &&
-        (contentSource?.kind !== "proofread" ||
+        contentSource?.kind !== "proofread" ||
           contentSource.sourceLanguage !== artifact.sourceLanguage ||
-          contentSource.outputLanguage !== artifact.sourceLanguage)
+          contentSource.outputLanguage !== artifact.sourceLanguage
       ) {
-        throw new Error(`${artifact.id} translation content source is invalid`)
+        throw new Error(`${artifact.id} translation requires matching proofread content`)
       }
-      if (contentSource.kind === "proofread" && references.length !== 0) {
+      if (references.length !== 0) {
         throw new Error(`${artifact.id} inherits references from proofreading`)
       }
     }

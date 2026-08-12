@@ -166,6 +166,18 @@ describe("INSU prompt contract", () => {
     expect(prompt).toContain("固定由目前 Agent 完成")
   })
 
+  test("translation creation rejects a direct model transcript source", () => {
+    expect(() =>
+      buildCreateTranslationSubtitlePrompt({
+        videoId: "safe-id",
+        sourceLanguage: "en",
+        sourceArtifactId: "source-en-r1",
+        timingArtifactId: "source-en-r1",
+        sourceKind: "model-transcript",
+      }),
+    ).toThrow("validated proofread source")
+  })
+
   test("all website prompt sources reject full-width semicolons", () => {
     const prompts = [
       CREATE_PROMPT_WITH_AGENT,

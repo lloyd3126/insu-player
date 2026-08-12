@@ -524,28 +524,25 @@
         }
 
         function parseVtt(source) {
-          const lines = source.replace(/^\uFEFF/, "").replace(/\r/g, "").split("\n");
           const cues = [];
+          const blocks = source
+            .replace(/^\uFEFF/, "")
+            .replace(/\r\n?/g, "\n")
+            .split(/\n[\t ]*\n+/);
 
-          for (let index = 0; index < lines.length; index += 1) {
-            const timing = lines[index].match(/^(\S+)\s+-->\s+(\S+)/);
+          for (const block of blocks) {
+            const lines = block.split("\n");
+            const timingIndex = lines.findIndex((line) => /^(\S+)\s+-->\s+(\S+)/.test(line));
+            if (timingIndex < 0) continue;
+            const timing = lines[timingIndex].match(/^(\S+)\s+-->\s+(\S+)/);
             if (!timing) continue;
-
-            const textLines = [];
-            let nextIndex = index + 1;
-            while (nextIndex < lines.length && !/^\S+\s+-->\s+\S+/.test(lines[nextIndex])) {
-              const line = lines[nextIndex].trim();
-              if (line && !line.startsWith("NOTE")) textLines.push(lines[nextIndex]);
-              nextIndex += 1;
-            }
 
             const start = parseTimecode(timing[1]);
             const end = parseTimecode(timing[2]);
-            const text = cleanCueText(textLines.join("\n"));
+            const text = cleanCueText(lines.slice(timingIndex + 1).join("\n"));
             if (text && Number.isFinite(start) && Number.isFinite(end) && end > start) {
               cues.push({ start, end, text });
             }
-            index = nextIndex - 1;
           }
 
           return cues.sort((a, b) => a.start - b.start);

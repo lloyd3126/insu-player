@@ -1,45 +1,25 @@
 import { useQueryClient } from "@tanstack/react-query"
-import {
-  createContext,
-  use,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-} from "react"
+import { createContext, use, useCallback, useMemo, useRef } from "react"
 
-import type { SubtitleManagementView } from "@/app/overlay-context"
 import {
   EmptyState,
   ErrorState,
   LoadingState,
 } from "@/components/shared/AsyncState"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SubtitleRevisionPreviewDialog } from "@/features/job-detail/SubtitleRevisionPreviewDialog"
 import { SubtitleRevisionTable } from "@/features/job-detail/SubtitleRevisionTable"
-import { SubtitleCreationCard } from "@/features/job-detail/SubtitleCreationCard"
 import { JobNextActionCard } from "@/features/job-detail/JobNextActionCard"
-import {
-  SUBTITLE_KIND_COPY,
-  SUBTITLE_VIEWS,
-} from "@/features/job-detail/subtitle-artifact-ui"
 import { useSubtitleCatalog } from "@/hooks/use-job-detail"
 import type { JobDetail } from "@shared/contracts/job"
-import type {
-  SubtitleArtifactKind,
-  SubtitleCatalogResponse,
-} from "@shared/contracts/subtitle-catalog"
-
-interface SubtitleManagementState {
-  catalog: SubtitleCatalogResponse
-  view: SubtitleManagementView
-  previewArtifactId?: string
-}
+import type { SubtitleCatalogResponse } from "@shared/contracts/subtitle-catalog"
+import { nextActionForJob } from "@shared/domain/job-next-action"
 
 interface SubtitleManagementContextValue {
-  state: SubtitleManagementState
+  state: {
+    catalog: SubtitleCatalogResponse
+    previewArtifactId?: string
+  }
   actions: {
-    selectView: (view: SubtitleManagementView) => void
     openPreview: (artifactId: string, trigger: HTMLButtonElement) => void
     closePreview: () => void
     artifactRemoved: (artifactId: string) => void
@@ -62,16 +42,12 @@ function useSubtitleManagement() {
 
 function SubtitleManagementProvider({
   job,
-  view,
   previewArtifactId,
-  onViewChange,
   onPreviewArtifactChange,
   children,
 }: {
   job: JobDetail
-  view: SubtitleManagementView
   previewArtifactId?: string
-  onViewChange: (view: SubtitleManagementView) => void
   onPreviewArtifactChange: (artifactId?: string) => void
   children: React.ReactNode
 }) {
@@ -107,9 +83,8 @@ function SubtitleManagementProvider({
     () =>
       catalog.data
         ? {
-            state: { catalog: catalog.data, view, previewArtifactId },
+            state: { catalog: catalog.data, previewArtifactId },
             actions: {
-              selectView: onViewChange,
               openPreview,
               closePreview,
               artifactRemoved,
@@ -122,10 +97,8 @@ function SubtitleManagementProvider({
       catalog.data,
       closePreview,
       job,
-      onViewChange,
       openPreview,
       previewArtifactId,
-      view,
     ],
   )
 
@@ -140,46 +113,43 @@ function SubtitleManagementProvider({
   )
 }
 
-function SubtitleArtifactWorkspace({ kind }: { kind: SubtitleArtifactKind }) {
+function SubtitleManagementContent() {
   const { state, actions, meta } = useSubtitleManagement()
   const artifacts = useMemo(
     () =>
-      state.catalog.artifacts
-        .filter((artifact) => artifact.kind === kind)
-        .sort((left, right) => right.revision - left.revision),
-    [kind, state.catalog.artifacts],
+      [...state.catalog.artifacts].sort(
+        (left, right) =>
+          right.revision - left.revision ||
+          ["source", "proofread", "translation", "segmentation"].indexOf(
+            left.kind,
+          ) -
+            ["source", "proofread", "translation", "segmentation"].indexOf(
+              right.kind,
+            ),
+      ),
+    [state.catalog.artifacts],
   )
   const previewArtifact =
-    artifacts.find((candidate) => candidate.id === state.previewArtifactId) ??
-    null
-  const copy = SUBTITLE_KIND_COPY[kind]
-
-  useEffect(() => {
-    if (state.previewArtifactId && !previewArtifact) {
-      actions.closePreview()
-    }
-  }, [actions, previewArtifact, state.previewArtifactId])
+    artifacts.find((artifact) => artifact.id === state.previewArtifactId) ?? null
+  const showStart =
+    artifacts.length === 0 && nextActionForJob(meta.job).kind === "start"
 
   return (
-    <div className="subtitle-artifact-workspace">
-      {kind !== "source" ? (
-        <SubtitleCreationCard
-          videoId={meta.job.videoId}
-          kind={kind}
-          catalog={state.catalog}
-        />
-      ) : null}
+    <div className="subtitle-management-layout">
+      {showStart ? <JobNextActionCard job={meta.job} /> : null}
       {artifacts.length > 0 ? (
         <SubtitleRevisionTable
           videoId={meta.job.videoId}
-          kind={kind}
           artifacts={artifacts}
           activeTracks={state.catalog.activeTracks}
           onPreview={actions.openPreview}
           onRemoved={actions.artifactRemoved}
         />
-      ) : (
-        <EmptyState title={`尚無${copy.label}`} description={copy.empty} />
+      ) : showStart ? null : (
+        <EmptyState
+          title="尚無字幕"
+          description="字幕準備完成後會顯示在這裡。"
+        />
       )}
       <SubtitleRevisionPreviewDialog
         videoId={meta.job.videoId}
@@ -190,65 +160,19 @@ function SubtitleArtifactWorkspace({ kind }: { kind: SubtitleArtifactKind }) {
   )
 }
 
-function SubtitleManagementTabs() {
-  const { state, actions } = useSubtitleManagement()
-  return (
-    <Tabs
-      value={state.view}
-      onValueChange={(value) =>
-        actions.selectView(value as SubtitleManagementView)
-      }
-      className="subtitle-management-tabs"
-    >
-      <TabsList variant="line" aria-label="字幕類型">
-        {SUBTITLE_VIEWS.map((kind) => (
-          <TabsTrigger key={kind} value={kind}>
-            {SUBTITLE_KIND_COPY[kind].label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      {SUBTITLE_VIEWS.map((kind) => (
-        <TabsContent
-          key={kind}
-          value={kind}
-          className="subtitle-management-panel"
-        >
-          {state.view === kind ? <SubtitleArtifactWorkspace kind={kind} /> : null}
-        </TabsContent>
-      ))}
-    </Tabs>
-  )
-}
-
-function SubtitleManagementContent() {
-  const { meta } = useSubtitleManagement()
-  return (
-    <div className="subtitle-management-layout">
-      <JobNextActionCard job={meta.job} />
-      <SubtitleManagementTabs />
-    </div>
-  )
-}
-
 export function SubtitleManagementPanel({
   job,
-  view,
   previewArtifactId,
-  onViewChange,
   onPreviewArtifactChange,
 }: {
   job: JobDetail
-  view: SubtitleManagementView
   previewArtifactId?: string
-  onViewChange: (view: SubtitleManagementView) => void
   onPreviewArtifactChange: (artifactId?: string) => void
 }) {
   return (
     <SubtitleManagementProvider
       job={job}
-      view={view}
       previewArtifactId={previewArtifactId}
-      onViewChange={onViewChange}
       onPreviewArtifactChange={onPreviewArtifactChange}
     >
       <SubtitleManagementContent />

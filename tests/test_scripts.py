@@ -1183,7 +1183,7 @@ printf '%s\n' '{"language":"ja","segments":[{"start":0.0,"end":2.0,"text":"ãƒ†ã‚
         self.assertEqual(repaired["progress"], 0)
         self.assertIsNone(repaired["lastError"])
 
-    def test_bilingual_import_registers_an_immutable_revisioned_artifact(self) -> None:
+    def test_bilingual_import_rejects_translation_that_bypasses_proofreading(self) -> None:
         self.run_script(
             "download-video.sh",
             str(self.workspace),
@@ -1315,149 +1315,45 @@ printf '%s\n' '{"language":"ja","segments":[{"start":0.0,"end":2.0,"text":"ãƒ†ã‚
             encoding="utf-8",
         )
 
-        self.run_script(
-            "import-subtitle-revision.sh",
-            str(self.workspace),
-            "test-video",
-            str(source),
-            str(target),
-            "--source-language",
-            "en",
-            "--output-language",
-            "fr",
-            "--artifact-kind",
-            "translation",
-            "--revision",
-            "2",
-            "--timing-source-artifact",
-            "artifact-test-video-source-model-transcript-en-r1",
-            "--text-reference-artifact",
-            "artifact-test-video-source-manual-cc-en-r1",
-            "--manifest",
-            str(manifest),
-        )
-
-        status = self.read_status()
-        artifact = next(
-            item
-            for item in status["subtitleArtifacts"]
-            if item["kind"] == "translation"
-        )
-        self.assertEqual(artifact["revision"], 2)
-        self.assertEqual(artifact["sourceLanguage"], "en")
-        self.assertEqual(artifact["outputLanguage"], "fr")
-        self.assertEqual(
-            artifact["processor"],
-            {"provider": "agent", "service": "codex"},
-        )
-        self.assertEqual(
-            artifact["dependencies"],
+        result = subprocess.run(
             [
-                {"relation": "timing-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
-                {"relation": "content-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
-                {"relation": "text-reference", "artifactId": "artifact-test-video-source-manual-cc-en-r1"},
+                str(SCRIPTS / "import-subtitle-revision.sh"),
+                str(self.workspace),
+                "test-video",
+                str(source),
+                str(target),
+                "--source-language",
+                "en",
+                "--output-language",
+                "fr",
+                "--artifact-kind",
+                "translation",
+                "--revision",
+                "2",
+                "--timing-source-artifact",
+                "artifact-test-video-source-model-transcript-en-r1",
+                "--text-reference-artifact",
+                "artifact-test-video-source-manual-cc-en-r1",
+                "--manifest",
+                str(manifest),
             ],
+            cwd=REPO_ROOT,
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
         )
-        self.assertEqual(
-            artifact["manifestPath"],
-            "subtitle-work/artifacts/artifact-test-video-translation-en-fr-r2/manifest.json",
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "translation requires a validated proofread content source",
+            result.stdout,
         )
-        self.assertEqual(
-            (job_dir / artifact["manifestPath"]).read_text(encoding="utf-8"),
-            json.dumps(
-                {
-                    "schemaVersion": 5,
-                    "mode": "translate",
-                    "sourceFormat": "model-timed-units",
-                    "sourceLanguage": "en",
-                    "outputLanguage": "fr",
-                    "sourceTranscript": str(transcript),
-                    "timingSourceArtifactId": "artifact-test-video-source-model-transcript-en-r1",
-                    "sourceContentArtifactId": "artifact-test-video-source-model-transcript-en-r1",
-                    "sourceContentKind": "model-transcript",
-                    "sourceContentManifest": None,
-                    "sourceContentChecksum": None,
-                    "referenceArtifactIds": ["artifact-test-video-source-manual-cc-en-r1"],
-                    "timingProcessor": {
-                        "provider": "local",
-                        "service": "openai-whisper",
-                        "model": "medium",
-                    },
-                    "contentProcessor": {
-                        "provider": "agent",
-                        "service": "codex",
-                        "updatedAt": "2026-08-10T00:00:00Z",
-                    },
-                    "sentenceReview": {
-                        "provider": "agent",
-                        "service": "codex",
-                        "reviewedAt": "2026-08-10T00:00:00Z",
-                    },
-                    "outputProfile": {"punctuationPolicy": "preserve"},
-                    "rules": {
-                        "contentUnit": "complete source sentence",
-                        "outputSegmentation": "owned by segment-subtitles",
-                    },
-                    "segments": [
-                        {
-                            "id": "S0001",
-                            "start": "00:00:00.000",
-                            "end": "00:00:02.000",
-                            "sourceUnitStart": "U000001",
-                            "sourceUnitEnd": "U000001",
-                            "sourceText": "Sample caption",
-                            "draftOutputText": "Exemple de sous-titre",
-                            "outputText": "Exemple de sous-titre",
-                            "requiredTerms": [],
-                        }
-                    ],
-                }
-            ) + "\n",
-        )
-        self.assertEqual(
-            [track["role"] for track in artifact["tracks"]],
-            ["input_sentence", "output_sentence"],
-        )
-        for track in artifact["tracks"]:
-            self.assertTrue((job_dir / track["path"]).is_file())
-
-        no_reference_manifest = job_dir / "subtitle-work" / "content-manifest-no-reference.json"
-        no_reference_payload = json.loads(manifest.read_text(encoding="utf-8"))
-        no_reference_payload["referenceArtifactIds"] = []
-        no_reference_manifest.write_text(
-            json.dumps(no_reference_payload) + "\n",
-            encoding="utf-8",
-        )
-        self.run_script(
-            "import-subtitle-revision.sh",
-            str(self.workspace),
-            "test-video",
-            str(source),
-            str(target),
-            "--source-language",
-            "en",
-            "--output-language",
-            "fr",
-            "--artifact-kind",
-            "translation",
-            "--revision",
-            "3",
-            "--timing-source-artifact",
-            "artifact-test-video-source-model-transcript-en-r1",
-            "--manifest",
-            str(no_reference_manifest),
-        )
-        no_reference = next(
-            item
-            for item in self.read_status()["subtitleArtifacts"]
-            if item["kind"] == "translation" and item["revision"] == 3
-        )
-        self.assertEqual(
-            no_reference["dependencies"],
-            [
-                {"relation": "timing-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
-                {"relation": "content-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
-            ],
+        self.assertFalse(
+            any(
+                item["kind"] == "translation"
+                for item in self.read_status()["subtitleArtifacts"]
+            )
         )
 
     def test_complete_job_cleanup_delegates_to_confirmed_removal_plan(self) -> None:

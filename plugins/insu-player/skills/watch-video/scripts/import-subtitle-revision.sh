@@ -58,6 +58,9 @@ else
   [ -z "$content_parent_artifact" ] || caption_die "only segmentation accepts --content-parent-artifact"
   content_source_artifact="${content_source_artifact:-$timing_source_artifact}"
 fi
+if [ "$artifact_kind" = "translation" ] && [ "$content_source_artifact" = "$timing_source_artifact" ]; then
+  caption_die "translation requires a validated proofread content source"
+fi
 
 caption_set_paths "$workspace_input"
 caption_assert_safe_workspace
@@ -85,6 +88,9 @@ else
   [ "$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("sourceContentArtifactId", ""))' "$artifact_manifest")" = "$content_source_artifact" ] || caption_die "content manifest source artifact does not match the import request"
   source_content_kind=$("$CAPTION_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("sourceContentKind", ""))' "$artifact_manifest")
   case "$source_content_kind" in model-transcript|proofread) ;; *) caption_die "content manifest has an invalid source kind" ;; esac
+  if [ "$artifact_kind" = "translation" ] && [ "$source_content_kind" != "proofread" ]; then
+    caption_die "translation requires a validated proofread content source"
+  fi
   if [ "$source_content_kind" = "proofread" ]; then
     [ "${#text_reference_artifacts[@]}" -eq 0 ] || caption_die "translation inherits text references from proofreading"
   else
@@ -165,8 +171,15 @@ else
 fi
 caption_job_state subtitle-artifact "${artifact_args[@]}" >/dev/null
 
+existing_pipeline_mode=$(caption_job_state show --job-dir "$job_dir" | "$CAPTION_PYTHON" -c 'import json,sys; value=json.load(sys.stdin).get("subtitlePipeline") or {}; print(value.get("mode", ""))')
+existing_pipeline_output=$(caption_job_state show --job-dir "$job_dir" | "$CAPTION_PYTHON" -c 'import json,sys; value=json.load(sys.stdin).get("subtitlePipeline") or {}; print(value.get("outputLanguage", ""))')
 pipeline_mode="$artifact_kind"
+pipeline_output_language="$output_language"
 if [ "$artifact_kind" = "translation" ]; then pipeline_mode="translate"; fi
+if [ "$artifact_kind" = "proofread" ] && [ "$existing_pipeline_mode" = "translate" ]; then
+  pipeline_mode="translate"
+  pipeline_output_language="$existing_pipeline_output"
+fi
 if [ "$artifact_kind" = "segmentation" ]; then
   pipeline_mode=$("$CAPTION_PYTHON" -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")).get("contentMode"); print(value if value in {"proofread", "translate"} else "")' "$artifact_manifest_archive")
   [ -n "$pipeline_mode" ] || caption_die "segmentation manifest must record contentMode"
@@ -178,7 +191,7 @@ pipeline_args=(
   --mode "$pipeline_mode"
   --stage "$pipeline_stage"
   --source-language "$source_language"
-  --output-language "$output_language"
+  --output-language "$pipeline_output_language"
 )
 if [ -n "$timing_processor_provider" ]; then pipeline_args+=(--timing-processor-provider "$timing_processor_provider"); fi
 if [ -n "$timing_processor_service" ]; then pipeline_args+=(--timing-processor-service "$timing_processor_service"); fi
@@ -200,6 +213,8 @@ caption_job_state subtitle-pipeline "${pipeline_args[@]}" >/dev/null
 
 if [ "$artifact_kind" = "segmentation" ]; then
   caption_job_state update --job-dir "$job_dir" --state ready --stage complete --message "影音與切分字幕已可觀看" --progress 100 --clear-error --record-history >/dev/null
+elif [ "$artifact_kind" = "proofread" ] && [ "$pipeline_mode" = "translate" ]; then
+  caption_job_state update --job-dir "$job_dir" --state needs_translation --stage content_revision --message "原語校正已完成，等待 Agent 翻譯成 $pipeline_output_language" --progress 0 --clear-error --record-history >/dev/null
 else
   caption_job_state update --job-dir "$job_dir" --state needs_segmentation --stage target_segmentation --message "完整句字幕已完成，等待 target-first 切分與來源時間對齊" --progress 0 --clear-error --record-history >/dev/null
 fi

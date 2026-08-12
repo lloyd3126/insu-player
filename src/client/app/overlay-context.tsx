@@ -9,7 +9,6 @@ import {
 import { useLocation, useNavigate } from "react-router-dom"
 
 import { overlayFromLocation, pathForOverlay } from "@/app/overlay-routes"
-import type { SubtitleArtifactKind } from "@shared/contracts/subtitle-catalog"
 
 export type UsageGuideTab =
   | "initialize"
@@ -26,8 +25,6 @@ export type JobDetailTab =
   | "summary"
   | "outline"
   | "activity"
-export type SubtitleManagementView = SubtitleArtifactKind
-
 type StandardJobDetailTab = Exclude<JobDetailTab, "subtitles">
 
 export type JobDetailDestination =
@@ -36,7 +33,6 @@ export type JobDetailDestination =
       type: "detail"
       videoId: string
       tab: "subtitles"
-      subtitleView: SubtitleManagementView
       artifactId?: string
     }
 

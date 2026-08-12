@@ -36,7 +36,7 @@ python3 scripts/reflow_subtitles.py prepare \
 
 Omit `--reference-artifact` when no manual CC exists. The manifest records complete source sentences, immutable source timed-unit ranges, `draftOutputText`, `outputText`, required terms, timing provenance, and optional text-reference provenance.
 
-When a ready, validated proofread artifact exists, use its immutable manifest as the translation content source instead of translating the uncorrected transcript:
+Require a ready, validated proofread artifact and use its immutable manifest as the translation content source:
 
 ```bash
 python3 scripts/reflow_subtitles.py prepare \
@@ -53,13 +53,7 @@ python3 scripts/reflow_subtitles.py prepare \
 
 The proofread manifest must match the transcript sentence IDs, timed-unit ranges, language, and timing artifact exactly. Its final `outputText` becomes each translation segment's `sourceText`. Inherit its manual CC references and do not pass new `--reference-artifact` values in this path.
 
-When translating directly from a model transcript, read the fine-grained timed units and create a reviewed sentence-boundary file before writing translation text:
-
-```json
-{"schemaVersion":1,"boundaryAfterUnitIds":["U000021","U000047"]}
-```
-
-The final ID must be the final timed unit. Record the Agent-reviewed sentence boundaries first. When translating from a proofread artifact, this review is inherited and this command must not be used again.
+Direct translation from a model transcript is invalid. Sentence review is inherited from the required proofread artifact and must not be recreated by this skill.
 
 ```bash
 python3 scripts/reflow_subtitles.py record-sentence-review \

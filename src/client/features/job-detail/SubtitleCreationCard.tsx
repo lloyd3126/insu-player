@@ -102,9 +102,7 @@ function creationSources(
     else translations.push(source)
   }
   if (kind === "proofread") return modelSources
-  if (kind === "translation") {
-    return proofreads.length > 0 ? proofreads : modelSources
-  }
+  if (kind === "translation") return proofreads
   return [...translations, ...proofreads]
 }
 
@@ -121,7 +119,7 @@ const COPY: Record<CreationKind, {
   translation: {
     kicker: "NEW / TRANSLATION",
     title: "新增翻譯字幕",
-    unavailable: "需要先有通過驗證的校正字幕或模型轉錄。",
+    unavailable: "需要先有通過驗證的校正字幕。每種字幕都必須先完成校正。",
   },
   segmentation: {
     kicker: "NEW / SEGMENTATION",

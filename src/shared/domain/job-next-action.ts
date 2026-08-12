@@ -72,7 +72,7 @@ export function nextActionForJob(job: JobSummary): JobNextAction {
       kicker: "NEXT / SEGMENT",
       title: "完成字幕切分",
       description:
-        "完整句字幕已經存在。複製提示後，Agent 只會接續字幕切分、時間同步與驗證。",
+        "每種字幕都必須完成切分。完整句字幕已經存在，Agent 只會接續切分、時間同步與驗證。",
       prompt: "subtitle",
     }
   }
@@ -87,7 +87,7 @@ export function nextActionForJob(job: JobSummary): JobNextAction {
       kicker: "NEXT / SUBTITLES",
       title: "完成字幕內容",
       description:
-        "原始字幕已經存在。複製提示後，只要用一般語言說明要保留原語，或想翻譯成哪種語言。",
+        "每種字幕都會先校正再切分。若需要其他語言，校正後才會翻譯，翻譯是選擇性步驟。",
       prompt: "subtitle",
     }
   }
@@ -97,7 +97,7 @@ export function nextActionForJob(job: JobSummary): JobNextAction {
     kicker: "NEXT / SUBTITLES",
     title: "開始製作字幕",
     description:
-      "複製提示後，只要用一般語言說明想保留原語，或想翻譯成哪種語言。",
+      "每種字幕都會先校正再切分。若需要其他語言，校正後才會翻譯，翻譯是選擇性步驟。",
     prompt: "subtitle",
   }
 }

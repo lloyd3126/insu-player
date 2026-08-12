@@ -85,6 +85,17 @@ class SubtitleSegmentationTests(unittest.TestCase):
 
     def content_manifest(self, mode="translate", output_language="zh-TW"):
         manifest = self.root / f"content-{mode}.json"
+        proofread = None
+        if mode == "translate":
+            proofread = self.content_manifest("proofread", "en")
+        source_arguments = []
+        if proofread is not None:
+            source_arguments = [
+                "--source-content-artifact",
+                "proofread-en-r1",
+                "--source-content-manifest",
+                proofread,
+            ]
         self.run_script(
             REFLOW,
             "prepare",
@@ -100,15 +111,17 @@ class SubtitleSegmentationTests(unittest.TestCase):
             output_language,
             "--timing-source-artifact",
             "source-model-en-r1",
+            *source_arguments,
         )
-        self.run_script(
-            REFLOW,
-            "record-sentence-review",
-            "--manifest",
-            manifest,
-            "--boundaries",
-            self.sentence_boundaries(),
-        )
+        if mode == "proofread":
+            self.run_script(
+                REFLOW,
+                "record-sentence-review",
+                "--manifest",
+                manifest,
+                "--boundaries",
+                self.sentence_boundaries(),
+            )
         self.run_script(
             REFLOW,
             "record-content-processor",
@@ -166,8 +179,8 @@ class SubtitleSegmentationTests(unittest.TestCase):
         payload = json.loads(plan.read_text(encoding="utf-8"))
         self.assertEqual(payload["contentMode"], "translate")
         self.assertEqual(payload["schemaVersion"], 4)
-        self.assertEqual(payload["sourceContentArtifactId"], "source-model-en-r1")
-        self.assertEqual(payload["sourceContentKind"], "model-transcript")
+        self.assertEqual(payload["sourceContentArtifactId"], "proofread-en-r1")
+        self.assertEqual(payload["sourceContentKind"], "proofread")
         self.assertEqual(payload["contentProcessor"]["provider"], "agent")
         self.assertEqual(payload["segmentationProcessor"]["service"], "codex")
         self.assertFalse(payload["targetFrozen"])

@@ -3,13 +3,6 @@ import type {
   SubtitleArtifactKind,
 } from "@shared/contracts/subtitle-catalog"
 
-export const SUBTITLE_VIEWS: SubtitleArtifactKind[] = [
-  "source",
-  "proofread",
-  "translation",
-  "segmentation",
-]
-
 export const SUBTITLE_KIND_COPY: Record<
   SubtitleArtifactKind,
   { kicker: string; label: string; empty: string }

@@ -75,13 +75,40 @@ writeFileSync(
     operation: null,
   })}\n`,
 )
-const english = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nFor the last month I have been experimenting with vibe coding and collecting the practices that produce measurably better results\n\n00:00:03.000 --> 00:00:06.000\nThe second English sentence\n"
-const chinese = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\n過去一個月我一直在嘗試 Vibe Coding 並整理能帶來明顯更好成果的實作方式\n\n00:00:03.000 --> 00:00:06.000\n第二個繁體中文句子\n"
+const english = `WEBVTT
+
+00:00:00.000 --> 00:00:03.000
+For the last month I have been experimenting with vibe coding and collecting the practices that produce measurably better results
+
+00:00:03.000 --> 00:00:06.000
+The second English sentence
+`
+const chinese = `WEBVTT
+
+S0001
+00:00:00.000 --> 00:00:03.000
+<c.zh-TW>過去一個月我一直在嘗試 Vibe Coding</c>
+並整理能帶來明顯更好成果的實作方式
+
+NOTE player parser regression fixture
+這行註解不應顯示
+
+S0002
+00:00:03.000 --> 00:00:06.000
+第二個繁體中文句子
+`
 const sourceId = "artifact-demo-video-source-model-transcript-en-r1"
 const proofreadId = "artifact-demo-video-proofread-en-en-r1"
 const translationId = "artifact-demo-video-translation-en-zh-TW-r1"
 const segmentationId = "artifact-demo-video-segmentation-en-zh-TW-r1"
-function contentManifest(mode: "proofread" | "translate", outputLanguage: string) {
+function contentManifest(
+  mode: "proofread" | "translate",
+  outputLanguage: string,
+  sourceContentArtifactId = sourceId,
+  sourceContentKind: "model-transcript" | "proofread" = "model-transcript",
+  sourceContentManifest: string | null = null,
+  sourceContentChecksum: string | null = null,
+) {
   return `${JSON.stringify({
   schemaVersion: 5,
   mode,
@@ -90,10 +117,10 @@ function contentManifest(mode: "proofread" | "translate", outputLanguage: string
   outputLanguage,
   sourceTranscript: "transcript.json",
   timingSourceArtifactId: sourceId,
-  sourceContentArtifactId: sourceId,
-  sourceContentKind: "model-transcript",
-  sourceContentManifest: null,
-  sourceContentChecksum: null,
+  sourceContentArtifactId,
+  sourceContentKind,
+  sourceContentManifest,
+  sourceContentChecksum,
   referenceArtifactIds: [],
   timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
   contentProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-08T01:00:00.000Z" },
@@ -104,7 +131,18 @@ function contentManifest(mode: "proofread" | "translate", outputLanguage: string
   })}\n`
 }
 const proofreadArtifactManifest = contentManifest("proofread", "en")
-const contentArtifactManifest = contentManifest("translate", "zh-TW")
+const proofreadManifestPath = `subtitle-work/artifacts/${proofreadId}/manifest.json`
+const proofreadManifestChecksum = createHash("sha256")
+  .update(proofreadArtifactManifest)
+  .digest("hex")
+const contentArtifactManifest = contentManifest(
+  "translate",
+  "zh-TW",
+  proofreadId,
+  "proofread",
+  proofreadManifestPath,
+  proofreadManifestChecksum,
+)
 const segmentationArtifactManifest = `${JSON.stringify({
   schemaVersion: 4,
   contentMode: "translate",
@@ -112,8 +150,8 @@ const segmentationArtifactManifest = `${JSON.stringify({
   outputLanguage: "zh-TW",
   sourceTranscript: "transcript.json",
   contentManifest: "content.json",
-  sourceContentArtifactId: sourceId,
-  sourceContentKind: "model-transcript",
+  sourceContentArtifactId: proofreadId,
+  sourceContentKind: "proofread",
   timingProcessor: { provider: "local", service: "openai-whisper", model: "medium" },
   contentProcessor: { provider: "agent", service: "codex", updatedAt: "2026-08-08T01:00:00.000Z" },
   sentenceReview: { provider: "agent", service: "codex", reviewedAt: "2026-08-08T01:00:00.000Z" },
@@ -314,7 +352,7 @@ const mediaRecord = {
         hardDefectCount: 0,
         dependencies: [
           { artifactId: sourceId, relation: "timing-source" },
-          { artifactId: sourceId, relation: "content-source" },
+          { artifactId: proofreadId, relation: "content-source" },
         ],
         createdAt: "2026-08-08T01:00:00.000Z",
         completedAt: "2026-08-08T01:30:00.000Z",

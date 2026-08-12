@@ -126,35 +126,26 @@ describe("overlay routes", () => {
     expect(pathForOverlay(outline!)).toBe("/jobs/video%20id/outline")
   })
 
-  test("round trips nested subtitle views and the selected artifact", () => {
+  test("round trips the unified subtitle catalog and selected artifact", () => {
     expect(overlayFromLocation("/jobs/video%20id/subtitles")).toEqual({
       type: "detail",
       videoId: "video id",
       tab: "subtitles",
-      subtitleView: "source",
     })
 
-    const translation = overlayFromLocation(
-      "/jobs/video%20id/subtitles/translation",
+    const catalog = overlayFromLocation(
+      "/jobs/video%20id/subtitles",
       "?artifact=translation-en-zh-TW-r2&returnTo=%2Flibrary%2Flist",
     )
-    expect(translation).toEqual({
+    expect(catalog).toEqual({
       type: "detail",
       videoId: "video id",
       tab: "subtitles",
-      subtitleView: "translation",
       artifactId: "translation-en-zh-TW-r2",
       returnTo: "/library/list",
     })
-    expect(pathForOverlay(translation!)).toBe(
-      "/jobs/video%20id/subtitles/translation?artifact=translation-en-zh-TW-r2&returnTo=%2Flibrary%2Flist",
-    )
-
-    const segmentation = overlayFromLocation(
-      "/jobs/video%20id/subtitles/segmentation",
-    )
-    expect(pathForOverlay(segmentation!)).toBe(
-      "/jobs/video%20id/subtitles/segmentation",
+    expect(pathForOverlay(catalog!)).toBe(
+      "/jobs/video%20id/subtitles?artifact=translation-en-zh-TW-r2&returnTo=%2Flibrary%2Flist",
     )
   })
 
@@ -162,17 +153,17 @@ describe("overlay routes", () => {
     expect(overlayFromLocation("/jobs/demo-video/source-subtitle")).toBeNull()
     expect(overlayFromLocation("/jobs/demo-video/translated-subtitle")).toBeNull()
     expect(overlayFromLocation("/jobs/demo-video/segmentation")).toBeNull()
+    expect(overlayFromLocation("/jobs/demo-video/subtitles/source")).toBeNull()
     expect(overlayFromLocation("/jobs/demo-video/subtitles/unknown")).toBeNull()
     expect(
       overlayFromLocation(
-        "/jobs/demo-video/subtitles/source",
+        "/jobs/demo-video/subtitles",
         "?artifact=%2Fnot-safe",
       ),
     ).toEqual({
       type: "detail",
       videoId: "demo-video",
       tab: "subtitles",
-      subtitleView: "source",
     })
   })
 

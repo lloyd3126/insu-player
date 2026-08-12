@@ -186,6 +186,7 @@ describe("subtitle catalog resolver", () => {
   test("selects validated segmentation output for arbitrary languages", () => {
     const directory = workspace()
     const sourceId = "source-r1"
+    const proofreadId = "proofread-r1"
     const translationId = "translation-r1"
     const segmentationId = "segmentation-r1"
     const catalog = resolveSubtitleCatalog({
@@ -197,6 +198,17 @@ describe("subtitle catalog resolver", () => {
         ], {
           timingUnitKind: "grapheme-group",
         }),
+        artifact(directory, "proofread", proofreadId, 1, [
+          track(directory, proofreadId, "ar", "input_sentence", "مرحبا بالعالم"),
+          track(directory, proofreadId, "ar", "output_sentence", "مرحبا بالعالم"),
+        ], {
+          sourceLanguage: "ar",
+          outputLanguage: "ar",
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
+        }),
         artifact(directory, "translation", translationId, 1, [
           track(directory, translationId, "ar", "input_sentence", "مرحبا بالعالم"),
           track(directory, translationId, "fr", "output_sentence", "Bonjour le monde"),
@@ -205,7 +217,7 @@ describe("subtitle catalog resolver", () => {
           outputLanguage: "fr",
           dependencies: [
             { artifactId: sourceId, relation: "timing-source" },
-            { artifactId: sourceId, relation: "content-source" },
+            { artifactId: proofreadId, relation: "content-source" },
           ],
         }),
         artifact(directory, "segmentation", segmentationId, 1, [
@@ -227,7 +239,7 @@ describe("subtitle catalog resolver", () => {
     expect(catalog.activeTracks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ languageCode: "fr", artifactKind: "segmentation" }),
-        expect.objectContaining({ languageCode: "ar", artifactKind: "source" }),
+        expect.objectContaining({ languageCode: "ar", artifactKind: "proofread" }),
       ]),
     )
     expect(
@@ -235,7 +247,7 @@ describe("subtitle catalog resolver", () => {
         language.options.map((option) => option.label),
       ),
     ).toEqual(
-      expect.arrayContaining(["ar · 模型轉錄 · r1", "fr · 切分字幕 · r1"]),
+      expect.arrayContaining(["ar · 校正字幕 · r1", "fr · 切分字幕 · r1"]),
     )
   })
 
@@ -313,6 +325,35 @@ describe("subtitle catalog resolver", () => {
     ).toMatchObject({ artifactKind: "translation", revision: 1 })
   })
 
+  test("rejects translation that bypasses required proofreading", () => {
+    const directory = workspace()
+    const sourceId = "source-en-r1"
+    const translationId = "translation-de-r1"
+    expect(() =>
+      resolveSubtitleCatalog({
+        videoId: "demo",
+        jobDirectory: directory,
+        rawArtifacts: [
+          artifact(directory, "source", sourceId, 1, [
+            track(directory, sourceId, "en", "source_raw", "raw words"),
+          ]),
+          artifact(directory, "translation", translationId, 1, [
+            track(directory, translationId, "en", "input_sentence", "raw words"),
+            track(directory, translationId, "de", "output_sentence", "Wörter"),
+          ], {
+            sourceLanguage: "en",
+            outputLanguage: "de",
+            dependencies: [
+              { artifactId: sourceId, relation: "timing-source" },
+              { artifactId: sourceId, relation: "content-source" },
+            ],
+          }),
+        ],
+        explicitActiveTracks: {},
+      }),
+    ).toThrow("translation requires matching proofread content")
+  })
+
   test("prefers manual CC to model raw captions but lets explicit choice win", () => {
     const directory = workspace()
     const modelId = "model-source"
@@ -353,6 +394,7 @@ describe("subtitle catalog resolver", () => {
   test("does not let unfinished or invalid newer output replace a valid version", () => {
     const directory = workspace()
     const sourceId = "source-r1"
+    const proofreadId = "proofread-r1"
     const oldId = "translation-r1"
     const newId = "translation-r2"
     const catalog = resolveSubtitleCatalog({
@@ -362,6 +404,16 @@ describe("subtitle catalog resolver", () => {
         artifact(directory, "source", sourceId, 1, [
           track(directory, sourceId, "en", "source_raw", "source"),
         ]),
+        artifact(directory, "proofread", proofreadId, 1, [
+          track(directory, proofreadId, "en", "input_sentence", "source"),
+          track(directory, proofreadId, "en", "output_sentence", "Corrected"),
+        ], {
+          outputLanguage: "en",
+          dependencies: [
+            { artifactId: sourceId, relation: "timing-source" },
+            { artifactId: sourceId, relation: "content-source" },
+          ],
+        }),
         artifact(directory, "translation", oldId, 1, [
           track(directory, oldId, "en", "input_sentence", "source"),
           track(directory, oldId, "de", "output_sentence", "Alt"),
@@ -370,7 +422,7 @@ describe("subtitle catalog resolver", () => {
           outputLanguage: "de",
           dependencies: [
             { artifactId: sourceId, relation: "timing-source" },
-            { artifactId: sourceId, relation: "content-source" },
+            { artifactId: proofreadId, relation: "content-source" },
           ],
         }),
         artifact(directory, "translation", newId, 2, [
@@ -383,7 +435,7 @@ describe("subtitle catalog resolver", () => {
           hardDefectCount: 1,
           dependencies: [
             { artifactId: sourceId, relation: "timing-source" },
-            { artifactId: sourceId, relation: "content-source" },
+            { artifactId: proofreadId, relation: "content-source" },
           ],
         }),
       ],
@@ -398,12 +450,23 @@ describe("subtitle catalog resolver", () => {
   test("isolates an invalid superseded manifest without blocking the current revision", () => {
     const directory = workspace()
     const sourceId = "source-r1"
+    const proofreadId = "proofread-r1"
     const translationId = "translation-r1"
     const oldId = "segmentation-r1"
     const currentId = "segmentation-r2"
     const source = artifact(directory, "source", sourceId, 1, [
       track(directory, sourceId, "en", "source_raw", "source"),
     ])
+    const proofread = artifact(directory, "proofread", proofreadId, 1, [
+      track(directory, proofreadId, "en", "input_sentence", "source"),
+      track(directory, proofreadId, "en", "output_sentence", "Corrected"),
+    ], {
+      outputLanguage: "en",
+      dependencies: [
+        { artifactId: sourceId, relation: "timing-source" },
+        { artifactId: sourceId, relation: "content-source" },
+      ],
+    })
     const translation = artifact(directory, "translation", translationId, 1, [
       track(directory, translationId, "en", "input_sentence", "source"),
       track(directory, translationId, "fr", "output_sentence", "cible"),
@@ -412,7 +475,7 @@ describe("subtitle catalog resolver", () => {
       outputLanguage: "fr",
       dependencies: [
         { artifactId: sourceId, relation: "timing-source" },
-        { artifactId: sourceId, relation: "content-source" },
+        { artifactId: proofreadId, relation: "content-source" },
       ],
     })
     const segmentationDependencies = [
@@ -443,7 +506,7 @@ describe("subtitle catalog resolver", () => {
     const catalog = resolveSubtitleCatalog({
       videoId: "demo",
       jobDirectory: directory,
-      rawArtifacts: [source, translation, oldRevision, currentRevision],
+      rawArtifacts: [source, proofread, translation, oldRevision, currentRevision],
       explicitActiveTracks: {},
     })
 
