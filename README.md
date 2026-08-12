@@ -23,6 +23,27 @@ codex plugin add insu-player@insu-player
 
 每個專案都有自己的 `.local/insu-player/` workspace。Plugin 不會因為同一台電腦上有其他 INSU Player 服務，就改用別的專案資料。
 
+### 更新已安裝的 Plugin
+
+GitHub repository、Codex marketplace snapshot 與已安裝的 Plugin bundle 是三個不同階段。GitHub 有新版時，不需要刪除 marketplace 或重新輸入 repository 網址。請明確更新既有 Git marketplace：
+
+```bash
+codex plugin marketplace upgrade insu-player
+```
+
+完成後開啟新的 Codex task，讓新版 skills、工具與預設提示重新載入。不要用舊 task 是否出現新行為判斷更新是否成功。
+
+只有 marketplace 來源遺失、名稱指向錯誤位置，或 `codex plugin marketplace upgrade insu-player` 明確失敗時，才需要做一次性重新註冊：
+
+```bash
+codex plugin marketplace remove insu-player
+codex plugin marketplace add https://github.com/lloyd3126/insu-player.git
+codex plugin remove insu-player@insu-player
+codex plugin add insu-player@insu-player
+```
+
+每個 GitHub 發布版本都會更新 `plugins/insu-player/.codex-plugin/plugin.json` 的版本。Codex 內顯示的 Plugin 版本應與 repository 版本一致。
+
 ## 實際工作流程
 
 Agent 處理一支影音時會：
@@ -222,6 +243,14 @@ python3 -m unittest discover -s tests -v
 ## 更新與移除
 
 請交給 `$player-manager` 先檢查安裝模式與資料邊界，再預覽更新或移除範圍。程式更新本身不會就地修改 `.local/`。如果新版本的資料契約不同，要保留既有影音庫時使用 `$migrate-player-library`，不需要保留時使用完整重建。移除產生資料前必須另行取得使用者確認。
+
+更新 Codex plugin 不需要先移除 marketplace：
+
+```bash
+codex plugin marketplace upgrade insu-player
+```
+
+更新完成後請開啟新的 Codex task。只有 marketplace 來源錯誤或已失效時，才使用安裝章節的一次性重新註冊流程。
 
 移除 Codex plugin：
 
