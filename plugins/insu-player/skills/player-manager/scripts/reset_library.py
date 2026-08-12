@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 DATA_TABLES = (
     "agent_intents",
     "active_subtitle_tracks",
@@ -54,6 +54,7 @@ DATA_TABLES = (
 BOOTSTRAP_TABLES = {
     "download_queue_settings",
     "runtime_capabilities",
+    "subtitle_style_settings",
     "transcription_settings",
 }
 DATABASE_FILES = ("app.db", "app.db-wal", "app.db-shm")

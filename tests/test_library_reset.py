@@ -194,8 +194,17 @@ class LibraryResetTests(unittest.TestCase):
         verified = json.loads(self.run_reset("verify", check=False).stdout.split("\nerror:", 1)[0])
         self.assertFalse(verified["valid"])
         create_current_database(self.workspace)
+        database = sqlite3.connect(self.workspace / "app.db")
+        database.execute(
+            """INSERT INTO subtitle_style_settings (
+              id, active_styles_json, active_preset_id, updated_at
+            ) VALUES ('global', '{}', NULL, '2026-08-08T00:00:00Z')"""
+        )
+        database.commit()
+        database.close()
         verified = json.loads(self.run_reset("verify").stdout)
         self.assertTrue(verified["valid"])
+        self.assertEqual(verified["schemaVersion"], 9)
         self.assertEqual(verified["jobCount"], 0)
         self.assertTrue(verified["apiKeys"]["cleared"])
 
