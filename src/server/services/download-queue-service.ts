@@ -177,6 +177,10 @@ export class DownloadQueueService {
       })
       .onConflictDoNothing()
       .run()
+    return this.readSettings()
+  }
+
+  private readSettings() {
     const settings = this.db
       .select()
       .from(downloadQueueSettings)
@@ -334,7 +338,7 @@ export class DownloadQueueService {
     const operation = this.operation(item.operationId)
     const job = item.videoId
       ? this.jobs
-          .listDownloadProjections()
+          .list()
           .find((candidate) => candidate.videoId === item.videoId)
       : undefined
     this.updateItem(item.id, {
@@ -404,7 +408,7 @@ export class DownloadQueueService {
   list(): LibraryResponse {
     const summaries = this.jobs.list()
     this.synchronize(summaries)
-    const settings = this.ensureSettings()
+    const settings = this.readSettings()
     const rows = this.db
       .select()
       .from(downloadQueueItems)
@@ -667,7 +671,7 @@ export class DownloadQueueService {
 
   private reconcilePublishedMedia(
     item: typeof downloadQueueItems.$inferSelect,
-    job: ReturnType<JobRepository["listDownloadProjections"]>[number],
+    job: ReturnType<JobRepository["list"]>[number],
   ) {
     if (!job.watchable) return false
     const operation = this.operation(item.operationId)
@@ -697,7 +701,7 @@ export class DownloadQueueService {
   }
 
   private schedule() {
-    const settings = this.ensureSettings()
+    const settings = this.readSettings()
     if (settings.paused) return
     let occupied = this.active.size
     occupied += this.db
@@ -920,7 +924,7 @@ export class DownloadQueueService {
     const refreshedItem = this.item(item.id)
     const job = refreshedItem.videoId
       ? this.jobs
-          .listDownloadProjections()
+          .list()
           .find((candidate) => candidate.videoId === refreshedItem.videoId)
       : undefined
     const timestamp = now()
@@ -979,8 +983,7 @@ export class DownloadQueueService {
   }
 
   private synchronize(
-    jobs: ReturnType<JobRepository["listDownloadProjections"]> =
-      this.jobs.listDownloadProjections(),
+    jobs: ReturnType<JobRepository["list"]> = this.jobs.list(),
   ) {
     const byId = new Map(jobs.map((job) => [job.videoId, job]))
     for (const item of this.db.select().from(downloadQueueItems).all()) {
@@ -1038,7 +1041,7 @@ export class DownloadQueueService {
     const item = this.item(itemId)
     const operation = this.operation(item.operationId)
     const published = this.jobs
-      .listDownloadProjections()
+      .list()
       .find((job) => job.watchable && job.videoId === item.videoId)
     if (published && this.attemptHasPublishedMedia(operation, published)) {
       this.reconcilePublishedMedia(item, published)
@@ -1230,7 +1233,7 @@ export class DownloadQueueService {
     this.pausedSessions.delete(item.id)
     const job = item.videoId
       ? this.jobs
-          .listDownloadProjections()
+          .list()
           .find((candidate) => candidate.videoId === item.videoId)
       : undefined
     const preservePublishedMedia = Boolean(job?.watchable)

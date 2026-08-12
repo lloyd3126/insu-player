@@ -85,13 +85,12 @@ function issues(value: unknown): RemovalIssue[] {
 function targetArguments(target: RemovalTarget) {
   switch (target.kind) {
     case "video":
-      return ["--kind", "video", "--video-id", target.videoId]
+      return ["--kind", "video", `--video-id=${target.videoId}`]
     case "subtitle-artifact":
       return [
         "--kind",
         "subtitle-artifact",
-        "--video-id",
-        target.videoId,
+        `--video-id=${target.videoId}`,
         "--artifact-id",
         target.artifactId,
       ]
@@ -99,8 +98,7 @@ function targetArguments(target: RemovalTarget) {
       return [
         "--kind",
         "media-rendition",
-        "--video-id",
-        target.videoId,
+        `--video-id=${target.videoId}`,
         "--rendition-id",
         target.renditionId,
       ]
@@ -108,8 +106,7 @@ function targetArguments(target: RemovalTarget) {
       return [
         "--kind",
         "summary-artifact",
-        "--video-id",
-        target.videoId,
+        `--video-id=${target.videoId}`,
         "--artifact-id",
         target.artifactId,
       ]

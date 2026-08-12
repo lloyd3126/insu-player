@@ -75,7 +75,7 @@ discover() {
   local metadata
   metadata=$("$CAPTION_YTDLP" "${common_args[@]}" --skip-download --dump-single-json "$source_url")
   printf '%s' "$metadata" | "$CAPTION_PYTHON" "$media_catalog_script" discover \
-    --job-dir "$job_dir" --video-id "$video_id" >/dev/null
+    --job-dir "$job_dir" "--video-id=$video_id" >/dev/null
 }
 
 if [ "$command" = "discover" ]; then
@@ -126,7 +126,7 @@ update_run() {
   local arguments=(
     run-update
     --job-dir "$job_dir"
-    --video-id "$video_id"
+    "--video-id=$video_id"
     --run-id "$run_id"
     --requested-height "$requested_height"
     --state "$1"
@@ -221,7 +221,7 @@ while [ "$retry" -le 2 ]; do
     continue
   fi
   if "$CAPTION_PYTHON" "$progress_script" \
-    --job-dir "$job_dir" --video-id "$video_id" --run-id "$run_id" \
+    --job-dir "$job_dir" "--video-id=$video_id" --run-id "$run_id" \
     --requested-height "$requested_height" --catalog-script "$media_catalog_script" \
     --message "正在下載 ${requested_height}p 畫質" \
     --success-message "${requested_height}p 下載完成，正在驗證" -- \
@@ -254,7 +254,7 @@ media_info_file="$run_directory/media-info.txt"
   --minimum-height 1 --best-available-height "$requested_height" \
   --selected-height "$requested_height" --allow-low-quality >/dev/null
 "$CAPTION_PYTHON" "$media_catalog_script" publish \
-  --job-dir "$job_dir" --video-id "$video_id" \
+  --job-dir "$job_dir" "--video-id=$video_id" \
   --source-file "$selected_attempt_dir/video.mp4" --selection "$selection_file" \
   --requested-height "$requested_height" --run-id "$run_id" >/dev/null
 cleanup_attempt_dir "$selected_attempt_dir"

@@ -759,7 +759,11 @@ export class JobRepository {
     )
   }
 
-  summarize(videoId: string, includeHistory = false): JobSummary | JobDetail {
+  summarize(
+    videoId: string,
+    includeHistory = false,
+    projectSummary = true,
+  ): JobSummary | JobDetail {
     const directory = this.jobDirectory(videoId)
     if (!existsSync(directory) || !lstatSync(directory).isDirectory()) {
       throw new Error("job not found")
@@ -859,12 +863,14 @@ export class JobRepository {
       playback,
     }
 
-    this.project(
-      summary,
-      status,
-      subtitleCatalog,
-      statusModifiedAt,
-    )
+    if (projectSummary) {
+      this.project(
+        summary,
+        status,
+        subtitleCatalog,
+        statusModifiedAt,
+      )
+    }
 
     if (!includeHistory) return summary
     return {
@@ -882,7 +888,7 @@ export class JobRepository {
       .orderBy(desc(jobs.updatedAt))
       .all()
     for (const row of rows) {
-      summaries.push(this.summarize(row.videoId, false) as JobSummary)
+      summaries.push(this.summarize(row.videoId, false, false) as JobSummary)
     }
     return summaries.sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),

@@ -34,10 +34,10 @@ if [ "$remove_all" -eq 1 ]; then
   [ -f "$remover" ] || caption_die "resource removal script not found: $remover"
   [ -x "$CAPTION_PYTHON" ] || caption_die "workflow Python is required for complete removal"
   if [ "$confirmed" -eq 0 ]; then
-    exec "$CAPTION_PYTHON" "$remover" preview "$CAPTION_WORKSPACE" --kind video --video-id "$video_id"
+    exec "$CAPTION_PYTHON" "$remover" preview "$CAPTION_WORKSPACE" --kind video "--video-id=$video_id"
   fi
   [ -n "$plan_digest" ] || caption_die "complete removal requires the confirmed --plan-digest from a current preview"
-  exec "$CAPTION_PYTHON" "$remover" execute "$CAPTION_WORKSPACE" --kind video --video-id "$video_id" --plan-digest "$plan_digest" --yes
+  exec "$CAPTION_PYTHON" "$remover" execute "$CAPTION_WORKSPACE" --kind video "--video-id=$video_id" --plan-digest "$plan_digest" --yes
 fi
 
 if [ -f "$CAPTION_WORKSPACE/app.db" ] && [ -x "$CAPTION_PYTHON" ]; then

@@ -6,7 +6,8 @@ import json
 import re
 from pathlib import Path
 
-SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
+VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+ARTIFACT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
 LANGUAGE = re.compile(r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|und)$")
 CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -65,7 +66,7 @@ def main() -> int:
     parser.add_argument("--source-summary-artifact-id", required=True)
     parser.add_argument("--content-file", type=Path, required=True)
     args = parser.parse_args()
-    if not SAFE_ID.fullmatch(args.video_id) or not SAFE_ID.fullmatch(args.source_summary_artifact_id):
+    if not VIDEO_ID.fullmatch(args.video_id) or not ARTIFACT_ID.fullmatch(args.source_summary_artifact_id):
         raise ValueError("resource ID is invalid")
     language = safe_text(args.language, "language", 40)
     if not LANGUAGE.fullmatch(language):

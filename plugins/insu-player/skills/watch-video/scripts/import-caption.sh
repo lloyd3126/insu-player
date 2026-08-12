@@ -65,7 +65,7 @@ caption_validate_vtt "$source_file"
 
 job_dir="$CAPTION_JOBS/$video_id"
 [ -d "$job_dir" ] || caption_die "job not found: $job_dir"
-artifact_id="$video_id-source-$source_type-$language_code-r$artifact_revision"
+artifact_id="artifact-$video_id-source-$source_type-$language_code-r$artifact_revision"
 artifact_dir="$job_dir/subtitle-work/artifacts/$artifact_id"
 destination="$artifact_dir/source.vtt"
 if [ -d "$artifact_dir" ]; then

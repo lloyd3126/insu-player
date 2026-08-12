@@ -10,7 +10,7 @@
   "outputLanguage": "zh-TW",
   "sourceTranscript": "transcript.json",
   "contentManifest": "translate-en-zh-TW.json",
-  "sourceContentArtifactId": "video-proofread-en-en-r1",
+  "sourceContentArtifactId": "artifact-video-proofread-en-en-r1",
   "sourceContentKind": "proofread",
   "timingProcessor": {"provider": "local", "service": "openai-whisper", "model": "medium"},
   "contentProcessor": {"provider": "agent", "service": "codex"},

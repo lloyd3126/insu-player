@@ -15,7 +15,7 @@ The import request has this shape:
   "languageCode": "en",
   "title": "Summary title",
   "content": "# Summary title\n\nComplete summary text",
-  "sourceSubtitleArtifactId": "video-proofread-en-r1"
+  "sourceSubtitleArtifactId": "artifact-video-proofread-en-en-r1"
 }
 ~~~
 

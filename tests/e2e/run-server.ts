@@ -77,10 +77,10 @@ writeFileSync(
 )
 const english = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nFor the last month I have been experimenting with vibe coding and collecting the practices that produce measurably better results\n\n00:00:03.000 --> 00:00:06.000\nThe second English sentence\n"
 const chinese = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\n過去一個月我一直在嘗試 Vibe Coding 並整理能帶來明顯更好成果的實作方式\n\n00:00:03.000 --> 00:00:06.000\n第二個繁體中文句子\n"
-const sourceId = "demo-video-source-model-transcript-en-r1"
-const proofreadId = "demo-video-proofread-en-en-r1"
-const translationId = "demo-video-translation-en-zh-TW-r1"
-const segmentationId = "demo-video-segmentation-en-zh-TW-r1"
+const sourceId = "artifact-demo-video-source-model-transcript-en-r1"
+const proofreadId = "artifact-demo-video-proofread-en-en-r1"
+const translationId = "artifact-demo-video-translation-en-zh-TW-r1"
+const segmentationId = "artifact-demo-video-segmentation-en-zh-TW-r1"
 function contentManifest(mode: "proofread" | "translate", outputLanguage: string) {
   return `${JSON.stringify({
   schemaVersion: 5,

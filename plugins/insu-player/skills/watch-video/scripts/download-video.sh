@@ -222,7 +222,7 @@ if [ "$source_kind" = "network-media" ] || [ "$fallback_count" -gt 0 ] || [ -n "
   diagnostic_log=/dev/null
 fi
 
-job_init_args=(--job-dir "$job_dir" --video-id "$video_id" --source-url "$library_source_url" --source-kind "$source_kind" --title "$video_title")
+job_init_args=(--job-dir "$job_dir" "--video-id=$video_id" --source-url "$library_source_url" --source-kind "$source_kind" --title "$video_title")
 if [ -n "$video_duration" ]; then
   job_init_args+=(--duration-seconds "$video_duration")
 fi
@@ -352,7 +352,7 @@ selected_attempt_dir=""
 best_available_height=""
 
 video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \
-  --job-dir "$job_dir" --video-id "$video_id" 2>/dev/null || true)
+  --job-dir "$job_dir" "--video-id=$video_id" 2>/dev/null || true)
 if [ -n "$video_file" ]; then
   caption_note "Using the active verified media rendition."
 else
@@ -382,7 +382,7 @@ data = json.load(sys.stdin)
 data["id"] = sys.argv[1]
 json.dump(data, sys.stdout)
 ' "$video_id" | "$CAPTION_PYTHON" "$media_catalog_script" discover \
-      --job-dir "$job_dir" --video-id "$video_id" --output "$media_discovery_file" >/dev/null
+      --job-dir "$job_dir" "--video-id=$video_id" --output "$media_discovery_file" >/dev/null
 
     for height in $quality_heights; do
       case "$height" in ''|*[!0-9]*) caption_die "invalid planned media height: $height" ;; esac
@@ -460,12 +460,12 @@ if [ -n "$selected_height" ]; then
   "$CAPTION_PYTHON" "$media_quality_script" "${finalize_args[@]}" >/dev/null
   caption_job_state update --job-dir "$job_dir" --state downloading --stage media_publish --message "正在發佈已驗證影音" --progress 95 --clear-error >/dev/null
   "$CAPTION_PYTHON" "$media_catalog_script" publish \
-    --job-dir "$job_dir" --video-id "$video_id" \
+    --job-dir "$job_dir" "--video-id=$video_id" \
     --source-file "$media_probe_file" --selection "$media_selection_file" \
     --discovery "$media_discovery_file" \
     --requested-height "$selected_height" --activate >/dev/null
   video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \
-    --job-dir "$job_dir" --video-id "$video_id")
+    --job-dir "$job_dir" "--video-id=$video_id")
   cleanup_attempt_dir "$selected_attempt_dir"
   if [ "$selected_height" -lt "$best_available_height" ]; then
     caption_note "warning: selected ${selected_height}p after fresh retries of higher-quality streams failed; see $media_selection_file"

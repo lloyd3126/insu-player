@@ -114,7 +114,7 @@ fi
 
 job_dir="$CAPTION_JOBS/$video_id"
 [ -d "$job_dir" ] || caption_die "job not found: $job_dir"
-artifact_id="$video_id-$artifact_kind-$source_language-$output_language-r$artifact_revision"
+artifact_id="artifact-$video_id-$artifact_kind-$source_language-$output_language-r$artifact_revision"
 artifact_dir="$job_dir/subtitle-work/artifacts/$artifact_id"
 artifact_input="$artifact_dir/input.vtt"
 artifact_output="$artifact_dir/output.vtt"

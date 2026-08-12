@@ -98,6 +98,7 @@ export function openAppDatabase(databasePath: string, schemaFile: string) {
     }
     sqlite.exec("PRAGMA journal_mode = WAL")
     sqlite.exec("PRAGMA synchronous = NORMAL")
+    sqlite.exec("PRAGMA busy_timeout = 30000")
     const db = drizzle({ client: sqlite, schema })
     for (const candidate of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
       if (existsSync(candidate)) chmodSync(candidate, 0o600)

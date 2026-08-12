@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
 import {
   chmodSync,
@@ -114,8 +115,8 @@ const media: MediaOperations = {
   },
 }
 
-function seedJob() {
-  const job = path.join(workspace, "jobs", "demo-video")
+function seedJob(videoId = "demo-video") {
+  const job = path.join(workspace, "jobs", videoId)
   const renditionRoot = path.join(job, "source", "renditions")
   mkdirSync(renditionRoot, { recursive: true })
   mkdirSync(path.join(job, "logs"), { recursive: true })
@@ -127,7 +128,7 @@ function seedJob() {
     path.join(job, "media-work", "catalog.json"),
     `${JSON.stringify({
       schemaVersion: 1,
-      videoId: "demo-video",
+      videoId,
       revision: 1,
       activeRenditionId: "720p-demo",
       availability: { discoveredAt: null, formats: [] },
@@ -151,8 +152,8 @@ function seedJob() {
       operation: null,
     })}\n`,
   )
-  const sourceId = "demo-video-source-model-transcript-en-r1"
-  const translationId = "demo-video-translation-en-zh-TW-r1"
+  const sourceId = `artifact-${videoId}-source-model-transcript-en-r1`
+  const translationId = `artifact-${videoId}-translation-en-zh-TW-r1`
   const sourceRoot = path.join(job, "subtitle-work", "artifacts", sourceId)
   const translationRoot = path.join(job, "subtitle-work", "artifacts", translationId)
   mkdirSync(sourceRoot, { recursive: true })
@@ -244,7 +245,7 @@ function seedJob() {
   writeFileSync(path.join(job, "logs", "workflow.log"), "downloaded\nreflowed\n")
   return {
       schemaVersion: 3,
-      videoId: "demo-video",
+      videoId,
       title: "雙語測試影音",
       sourceUrl: "https://example.test/video",
       sourceKind: "page",
@@ -317,6 +318,30 @@ function seedJob() {
         { at: "2026-08-08T01:00:00.000Z", state: "ready", stage: "complete", message: "完成" },
       ],
   }
+}
+
+function insertStatus(status: ReturnType<typeof seedJob>) {
+  sqlite
+    .query(
+      "INSERT INTO media_items (video_id, title, source_url, state, effective_state, stage, progress, message, created_at, updated_at, completed_at, last_error, watchable, size_bytes, thumbnail_url, watch_url, has_log, duration_seconds, record_json, record_revision, projected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0, ?, ?, 1, ?)",
+    )
+    .run(
+      status.videoId,
+      status.title,
+      status.sourceUrl,
+      status.state,
+      status.state,
+      status.stage,
+      status.progress,
+      status.message,
+      status.createdAt,
+      status.updatedAt,
+      status.completedAt,
+      status.lastError,
+      status.durationSeconds,
+      JSON.stringify(status),
+      status.updatedAt,
+    )
 }
 
 function mutateStatus(
@@ -397,27 +422,7 @@ beforeEach(() => {
   const opened = openAppDatabase(path.join(workspace, "app.db"), schema)
   sqlite = opened.sqlite
   database = opened.db
-  sqlite
-    .query(
-      "INSERT INTO media_items (video_id, title, source_url, state, effective_state, stage, progress, message, created_at, updated_at, completed_at, last_error, watchable, size_bytes, thumbnail_url, watch_url, has_log, duration_seconds, record_json, record_revision, projected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, 0, ?, ?, 1, ?)",
-    )
-    .run(
-      status.videoId,
-      status.title,
-      status.sourceUrl,
-      status.state,
-      status.state,
-      status.stage,
-      status.progress,
-      status.message,
-      status.createdAt,
-      status.updatedAt,
-      status.completedAt,
-      status.lastError,
-      status.durationSeconds,
-      JSON.stringify(status),
-      status.updatedAt,
-    )
+  insertStatus(status)
   const jobs = new JobRepository(workspace, opened.db)
   const mediaSessions = new MediaSessionService(workspace)
   jobRepository = jobs
@@ -570,14 +575,84 @@ describe("Hono application", () => {
       .query("select video_id, effective_state from media_items")
       .get() as { video_id: string; effective_state: string }
     expect(projected).toEqual({ video_id: "demo-video", effective_state: "ready" })
-    const artifactCount = sqlite
+    const artifactCountBeforeDetail = sqlite
       .query("select count(*) as count from subtitle_artifacts")
       .get() as { count: number }
-    expect(artifactCount.count).toBe(2)
-    const activeTrackCount = sqlite
+    expect(artifactCountBeforeDetail.count).toBe(0)
+
+    const detail = await app.request(
+      "http://127.0.0.1:4178/api/jobs/demo-video",
+    )
+    expect(detail.status).toBe(200)
+    const artifactCountAfterDetail = sqlite
+      .query("select count(*) as count from subtitle_artifacts")
+      .get() as { count: number }
+    expect(artifactCountAfterDetail.count).toBe(2)
+    const activeTrackCountAfterDetail = sqlite
       .query("select count(*) as count from active_subtitle_tracks")
       .get() as { count: number }
-    expect(activeTrackCount.count).toBe(2)
+    expect(activeTrackCountAfterDetail.count).toBe(2)
+  })
+
+  test("serves external video IDs that begin with an underscore", async () => {
+    const videoId = "_leading-video"
+    const status = seedJob(videoId)
+    insertStatus(status)
+
+    const library = await app.request("http://127.0.0.1:4178/api/library")
+    expect(library.status).toBe(200)
+    expect(await library.json()).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "media",
+          job: expect.objectContaining({ videoId }),
+        }),
+      ]),
+    })
+
+    const playerConfig = await app.request(
+      `http://127.0.0.1:4178/watch/${videoId}/config.js`,
+    )
+    expect(playerConfig.status).toBe(200)
+    expect(await playerConfig.text()).toContain(videoId)
+
+    const subtitles = await app.request(
+      `http://127.0.0.1:4178/api/jobs/${videoId}/subtitles`,
+    )
+    expect(subtitles.status).toBe(200)
+    expect(await subtitles.json()).toMatchObject({
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({
+          id: `artifact-${videoId}-source-model-transcript-en-r1`,
+        }),
+      ]),
+    })
+  })
+
+  test("keeps the library readable while subtitle progress owns the write lock", async () => {
+    seedDownloadItem({
+      itemId: "library-lock-demo",
+      operationId: "operation-lock-demo",
+      sourceUrl: "https://example.test/video",
+      videoId: "demo-video",
+    })
+    expect(downloadQueueService.list()).toMatchObject({
+      items: [{ id: "library-lock-demo", kind: "media" }],
+    })
+
+    const writer = new Database(path.join(workspace, "app.db"))
+    writer.exec("PRAGMA journal_mode = WAL")
+    writer.exec("BEGIN IMMEDIATE")
+    try {
+      const response = await app.request("http://127.0.0.1:4178/api/library")
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        items: [{ kind: "media", id: "library-lock-demo" }],
+      })
+    } finally {
+      writer.exec("ROLLBACK")
+      writer.close()
+    }
   })
 
   test("downloads the exact extension package and pairs once without storing raw secrets", async () => {
@@ -904,12 +979,12 @@ describe("Hono application", () => {
     expect(artifactCaptions.status).toBe(200)
     expect(await artifactCaptions.json()).toMatchObject({
       artifact: { kind: "translation" },
-      baselineTrackId: "demo-video-translation-en-zh-TW-r1-input_sentence",
+      baselineTrackId: "artifact-demo-video-translation-en-zh-TW-r1-input_sentence",
       rows: [
         {
           cues: {
-            "demo-video-translation-en-zh-TW-r1-input_sentence": "Complete sentence",
-            "demo-video-translation-en-zh-TW-r1-output_sentence": "完整句子",
+            "artifact-demo-video-translation-en-zh-TW-r1-input_sentence": "Complete sentence",
+            "artifact-demo-video-translation-en-zh-TW-r1-output_sentence": "完整句子",
           },
         },
       ],
@@ -940,11 +1015,11 @@ describe("Hono application", () => {
       rows: Array<{ cues: Record<string, string> }>
     }
     expect(comparison.baselineTrackId).toBe(
-      "demo-video-source-model-transcript-en-r1-source_raw",
+      "artifact-demo-video-source-model-transcript-en-r1-source_raw",
     )
     expect(comparison.rows[0].cues).toEqual({
-      "demo-video-source-model-transcript-en-r1-source_raw": "Complete sentence",
-      "demo-video-translation-en-zh-TW-r1-output_sentence": "完整句子",
+      "artifact-demo-video-source-model-transcript-en-r1-source_raw": "Complete sentence",
+      "artifact-demo-video-translation-en-zh-TW-r1-output_sentence": "完整句子",
     })
 
     const forbiddenActivation = await app.request(
@@ -957,7 +1032,7 @@ describe("Hono application", () => {
         },
         body: JSON.stringify({
           languageCode: "zh-TW",
-          trackId: "demo-video-translation-en-zh-TW-r1-output_sentence",
+          trackId: "artifact-demo-video-translation-en-zh-TW-r1-output_sentence",
         }),
       },
     )
@@ -973,7 +1048,7 @@ describe("Hono application", () => {
         },
         body: JSON.stringify({
           languageCode: "zh-TW",
-          trackId: "demo-video-translation-en-zh-TW-r1-output_sentence",
+          trackId: "artifact-demo-video-translation-en-zh-TW-r1-output_sentence",
         }),
       },
     )
@@ -991,7 +1066,7 @@ describe("Hono application", () => {
       .query("SELECT record_json FROM media_items WHERE video_id = ?")
       .get("demo-video") as { record_json: string }
     expect(JSON.parse(savedRecord.record_json).activeSubtitleTracks).toEqual({
-      "zh-TW": "demo-video-translation-en-zh-TW-r1-output_sentence",
+      "zh-TW": "artifact-demo-video-translation-en-zh-TW-r1-output_sentence",
     })
 
     const media = await app.request(
@@ -1245,7 +1320,7 @@ describe("Hono application", () => {
     const subtitleTarget = {
       kind: "subtitle-artifact",
       videoId: "demo-video",
-      artifactId: "demo-video-translation-en-zh-TW-r1",
+      artifactId: "artifact-demo-video-translation-en-zh-TW-r1",
     } as const
     const subtitlePreview = await app.request(
       "http://127.0.0.1:4178/api/removals/preview",
@@ -1878,7 +1953,7 @@ describe("Hono application", () => {
 
   test("imports immutable text and mind-map summary revisions with exact dependencies", async () => {
     const origin = "http://127.0.0.1:4178"
-    const translationId = "demo-video-translation-en-zh-TW-r1"
+    const translationId = "artifact-demo-video-translation-en-zh-TW-r1"
     const text = await app.request(`${origin}/api/jobs/demo-video/summaries/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: origin },
@@ -1895,7 +1970,7 @@ describe("Hono application", () => {
       activeArtifactIds: { text: string }
     }
     const textId = textPayload.activeArtifactIds.text
-    expect(textId).toBe("demo-video-text-zh-TW-r1")
+    expect(textId).toBe("summary-demo-video-text-zh-TW-r1")
 
     const mindmap = await app.request(`${origin}/api/jobs/demo-video/summaries/import`, {
       method: "POST",

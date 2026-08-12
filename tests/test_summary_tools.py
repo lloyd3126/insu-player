@@ -36,13 +36,13 @@ class SummaryToolTests(unittest.TestCase):
             "--kind",
             "text",
             "--video-id",
-            "demo-video",
+            "_demo-video",
             "--language",
             "zh-TW",
             "--title",
             "重點摘要",
             "--source-subtitle-artifact-id",
-            "demo-proofread-en-r1",
+            "artifact-_demo-video-proofread-en-en-r1",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -52,7 +52,7 @@ class SummaryToolTests(unittest.TestCase):
                 "languageCode": "zh-TW",
                 "title": "重點摘要",
                 "content": "# 重點摘要\n\n這是根據字幕整理的完整摘要。",
-                "sourceSubtitleArtifactId": "demo-proofread-en-r1",
+                "sourceSubtitleArtifactId": "artifact-_demo-video-proofread-en-en-r1",
             },
         )
 
@@ -60,18 +60,17 @@ class SummaryToolTests(unittest.TestCase):
         arguments = (
             "--kind",
             "mindmap",
-            "--video-id",
-            "demo-video",
+            "--video-id=-demo-video",
             "--language",
             "zh-TW",
             "--title",
             "重點心智圖",
             "--source-summary-artifact-id",
-            "demo-text-zh-TW-r1",
+            "summary--demo-video-text-zh-TW-r1",
         )
         valid = self.run_validator(
             MINDMAP_VALIDATOR,
-            "# 重點心智圖\n- [第一部分](/player/demo-video?time=12.5)\n  - 核心觀點",
+            "# 重點心智圖\n- [第一部分](/player/-demo-video?time=12.5)\n  - 核心觀點",
             *arguments,
         )
         self.assertEqual(valid.returncode, 0, valid.stderr)

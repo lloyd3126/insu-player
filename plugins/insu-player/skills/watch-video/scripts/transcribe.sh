@@ -71,7 +71,7 @@ audio_file="$source_dir/audio.m4a"
 media_catalog_script="$SCRIPT_DIR/media_catalog.py"
 [ -f "$media_catalog_script" ] || caption_die "media catalog helper is missing: $media_catalog_script"
 video_file=$("$CAPTION_PYTHON" "$media_catalog_script" active-path \
-  --job-dir "$job_dir" --video-id "$video_id" 2>/dev/null || true)
+  --job-dir "$job_dir" "--video-id=$video_id" 2>/dev/null || true)
 caption_require_file "$video_file"
 mkdir -p "$whisper_dir" "$CAPTION_MODELS" "$job_dir/logs"
 
@@ -159,7 +159,7 @@ caption_job_state transcription "${transcription_args[@]}" >/dev/null
 import_args=("$CAPTION_WORKSPACE" "$video_id" "$language_code" "$vtt_file" --source-type model-transcript --processor-provider "$provider_name" --processor-service "$provider_service" --timing-unit-kind word)
 if [ -n "$model_name" ]; then import_args+=(--processor-model "$model_name"); fi
 "$SCRIPT_DIR/import-caption.sh" "${import_args[@]}"
-timing_source_artifact="$video_id-source-model-transcript-$language_code-r1"
+timing_source_artifact="artifact-$video_id-source-model-transcript-$language_code-r1"
 manual_reference_artifacts=()
 manual_reference_count=0
 while IFS= read -r reference_artifact; do

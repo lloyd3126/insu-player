@@ -322,7 +322,7 @@ export class SummaryService {
       }
     }
     const revision = latestRevision + 1
-    const artifactId = `${videoId}-${request.kind}-${languageCode}-r${revision}`
+    const artifactId = `summary-${videoId}-${request.kind}-${languageCode}-r${revision}`
     const directory = path.join(jobDirectory, "summaries", artifactId)
     if (existsSync(directory)) {
       throw new SummaryOperationError("summary artifact already exists", "artifact-exists", 409)

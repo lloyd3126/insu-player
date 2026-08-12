@@ -1197,12 +1197,12 @@ def validate_registered_content(
         if len(content.encode("utf-8")) > summary_validator.MAX_BYTES:
             raise MigrationError(f"summary content is too large: {artifact_id}")
         if kind == "text":
-            if dependency_type != "subtitle" or not summary_validator.SAFE_ID.fullmatch(dependency_id):
+            if dependency_type != "subtitle" or not summary_validator.ARTIFACT_ID.fullmatch(dependency_id):
                 raise MigrationError(f"text summary dependency is invalid: {artifact_id}")
             if not summary_validator.LANGUAGE.fullmatch(language):
                 raise MigrationError(f"text summary language is invalid: {artifact_id}")
         elif kind == "mindmap":
-            if dependency_type != "summary" or not mindmap_validator.SAFE_ID.fullmatch(dependency_id):
+            if dependency_type != "summary" or not mindmap_validator.ARTIFACT_ID.fullmatch(dependency_id):
                 raise MigrationError(f"mind map dependency is invalid: {artifact_id}")
             if not mindmap_validator.LANGUAGE.fullmatch(language):
                 raise MigrationError(f"mind map language is invalid: {artifact_id}")

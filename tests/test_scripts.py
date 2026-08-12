@@ -96,7 +96,7 @@ case "$all_arguments" in
 esac
 case "$all_arguments" in
   *' --dump-single-json '*)
-    metadata_id='test-video'
+    metadata_id=${FAKE_METADATA_ID:-test-video}
     if [ "${FAKE_FALLBACK_DIFFERENT_ID:-0}" = 1 ] && printf '%s' "$all_arguments" | grep -q 'embed.example.test'; then
       metadata_id='direct-stream'
     fi
@@ -114,7 +114,8 @@ case "$all_arguments" in
   *' --write-subs '*)
     directory=$(dirname "$output")
     mkdir -p "$directory"
-    printf 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEnglish\n' > "$directory/test-video.en.vtt"
+    metadata_id=${FAKE_METADATA_ID:-test-video}
+    printf 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEnglish\n' > "$directory/$metadata_id.en.vtt"
     printf '[download] 100.0%%\n'
     exit 0
     ;;
@@ -256,6 +257,34 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             status["assets"]["mediaCatalog"]["path"],
             "media-work/catalog.json",
         )
+
+    def test_download_supports_external_ids_with_leading_separator_characters(self) -> None:
+        for video_id in ("_leading-id", "-leading-id"):
+            with self.subTest(video_id=video_id):
+                self.environment["FAKE_METADATA_ID"] = video_id
+                self.run_script(
+                    "download-video.sh",
+                    str(self.workspace),
+                    f"https://example.test/watch?v={video_id}",
+                    "--language",
+                    "en",
+                    "--proofread",
+                )
+                status = read_media_record(self.workspace, video_id)
+                self.assertEqual(status["videoId"], video_id)
+                self.assertEqual(
+                    status["subtitleArtifacts"][0]["id"],
+                    f"artifact-{video_id}-source-manual-cc-en-r1",
+                )
+                self.assertTrue(
+                    (
+                        self.workspace
+                        / "jobs"
+                        / video_id
+                        / status["subtitleArtifacts"][0]["tracks"][0]["path"]
+                    ).is_file()
+                )
+        self.environment.pop("FAKE_METADATA_ID", None)
 
     def test_download_links_only_the_explicit_queue_item(self) -> None:
         source_url = "https://example.test/watch?v=test-video"
@@ -935,12 +964,12 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                     "sourceLanguage": "en",
                     "outputLanguage": "fr",
                     "sourceTranscript": str(transcript),
-                    "timingSourceArtifactId": "test-video-source-model-transcript-en-r1",
-                    "sourceContentArtifactId": "test-video-source-model-transcript-en-r1",
+                    "timingSourceArtifactId": "artifact-test-video-source-model-transcript-en-r1",
+                    "sourceContentArtifactId": "artifact-test-video-source-model-transcript-en-r1",
                     "sourceContentKind": "model-transcript",
                     "sourceContentManifest": None,
                     "sourceContentChecksum": None,
-                    "referenceArtifactIds": ["test-video-source-manual-cc-en-r1"],
+                    "referenceArtifactIds": ["artifact-test-video-source-manual-cc-en-r1"],
                     "timingProcessor": {
                         "provider": "local",
                         "service": "openai-whisper",
@@ -986,9 +1015,9 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "--revision",
             "2",
             "--timing-source-artifact",
-            "test-video-source-model-transcript-en-r1",
+            "artifact-test-video-source-model-transcript-en-r1",
             "--text-reference-artifact",
-            "test-video-source-manual-cc-en-r1",
+            "artifact-test-video-source-manual-cc-en-r1",
             "--manifest",
             str(manifest),
         )
@@ -1009,14 +1038,14 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         self.assertEqual(
             artifact["dependencies"],
             [
-                {"relation": "timing-source", "artifactId": "test-video-source-model-transcript-en-r1"},
-                {"relation": "content-source", "artifactId": "test-video-source-model-transcript-en-r1"},
-                {"relation": "text-reference", "artifactId": "test-video-source-manual-cc-en-r1"},
+                {"relation": "timing-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
+                {"relation": "content-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
+                {"relation": "text-reference", "artifactId": "artifact-test-video-source-manual-cc-en-r1"},
             ],
         )
         self.assertEqual(
             artifact["manifestPath"],
-            "subtitle-work/artifacts/test-video-translation-en-fr-r2/manifest.json",
+            "subtitle-work/artifacts/artifact-test-video-translation-en-fr-r2/manifest.json",
         )
         self.assertEqual(
             (job_dir / artifact["manifestPath"]).read_text(encoding="utf-8"),
@@ -1027,12 +1056,12 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
                     "sourceLanguage": "en",
                     "outputLanguage": "fr",
                     "sourceTranscript": str(transcript),
-                    "timingSourceArtifactId": "test-video-source-model-transcript-en-r1",
-                    "sourceContentArtifactId": "test-video-source-model-transcript-en-r1",
+                    "timingSourceArtifactId": "artifact-test-video-source-model-transcript-en-r1",
+                    "sourceContentArtifactId": "artifact-test-video-source-model-transcript-en-r1",
                     "sourceContentKind": "model-transcript",
                     "sourceContentManifest": None,
                     "sourceContentChecksum": None,
-                    "referenceArtifactIds": ["test-video-source-manual-cc-en-r1"],
+                    "referenceArtifactIds": ["artifact-test-video-source-manual-cc-en-r1"],
                     "timingProcessor": {
                         "provider": "local",
                         "service": "openai-whisper",
@@ -1090,7 +1119,7 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
             "--revision",
             "3",
             "--timing-source-artifact",
-            "test-video-source-model-transcript-en-r1",
+            "artifact-test-video-source-model-transcript-en-r1",
             "--manifest",
             str(no_reference_manifest),
         )
@@ -1102,8 +1131,8 @@ if [ "$count" -le "$fail_count" ]; then printf '403'; else printf '206'; fi
         self.assertEqual(
             no_reference["dependencies"],
             [
-                {"relation": "timing-source", "artifactId": "test-video-source-model-transcript-en-r1"},
-                {"relation": "content-source", "artifactId": "test-video-source-model-transcript-en-r1"},
+                {"relation": "timing-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
+                {"relation": "content-source", "artifactId": "artifact-test-video-source-model-transcript-en-r1"},
             ],
         )
 

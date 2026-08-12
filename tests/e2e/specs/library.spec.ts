@@ -1111,7 +1111,7 @@ test.describe("library and details @critical", () => {
     await exportDialog.getByRole("button", { name: "關閉" }).click()
     await sourcePreviewTrigger.click()
     await expect(page).toHaveURL(
-      /artifact=demo-video-source-model-transcript-en-r1/,
+      /artifact=artifact-demo-video-source-model-transcript-en-r1/,
     )
     const sourcePreview = page.getByRole("dialog", {
       name: "原始字幕 · r1",
@@ -1333,7 +1333,7 @@ test.describe("library and details @critical", () => {
       },
     }))
     await page.route(
-      "**/api/jobs/demo-video/subtitles/artifacts/demo-video-source-model-transcript-en-r1/captions",
+      "**/api/jobs/demo-video/subtitles/artifacts/artifact-demo-video-source-model-transcript-en-r1/captions",
       (route) =>
         route.fulfill({
           status: 200,

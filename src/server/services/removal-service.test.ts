@@ -53,6 +53,31 @@ describe("RemovalService workspace runtime", () => {
     expect(preview.blocked).toEqual([])
   })
 
+  test("passes a leading-hyphen video ID as one Python option value", async () => {
+    const { workspace, script } = fixture()
+    const runtime = path.join(workspace, ".agent-tools", "insu-player")
+    const executable = path.join(runtime, "python", "bin", "python3")
+    const virtualEnvironment = path.join(runtime, ".venv", "bin")
+    mkdirSync(path.dirname(executable), { recursive: true })
+    mkdirSync(virtualEnvironment, { recursive: true })
+    writeFileSync(
+      executable,
+      `#!/bin/sh
+[ "$6" = "--video-id=-leading-id" ] || exit 2
+printf '%s\n' '{"digest":"${"b".repeat(64)}","blocked":[],"warnings":[]}'
+`,
+    )
+    chmodSync(executable, 0o700)
+    symlinkSync(executable, path.join(virtualEnvironment, "python"))
+
+    const preview = await new RemovalService(workspace, script).preview({
+      kind: "video",
+      videoId: "-leading-id",
+    })
+
+    expect(preview.planDigest).toBe("b".repeat(64))
+  })
+
   test("rejects a venv Python symlink whose target leaves the workspace runtime", async () => {
     const { workspace, script } = fixture()
     const virtualEnvironment = path.join(
